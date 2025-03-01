@@ -1,0 +1,31 @@
+[package]
+name = "seify-bladerf"
+version = "0.1.0"
+edition = "2021"
+authors = ["Ratzrattillo <11601995+ratzrattillo@users.noreply.github.com>"]
+repository = "https://github.com/ratzrattillo/seify-bladerf"
+readme = "README.md"
+documentation = "https://docs.rs/seify-bladerf/"
+description = "Fully Rust native BladeRF driver, powered by nusb"
+license = "MIT"
+keywords = ["sdr", "rf", "bladerf"]
+categories = ["api-bindings"]
+
+[features]
+default = ["nusb"] # , "rusb"
+nusb = ["dep:nusb"]
+rusb = ["dep:rusb"]
+
+[dependencies]
+anyhow = "1.0"
+env_logger = "0.11"
+atomic_enum = "0.3"
+futures-lite = "2.6"
+log = "0.4"
+thiserror = "2.0"
+nusb = { version = "0.1", optional = true }
+rusb = { version = "0.9", features = ["vendored"], optional = true }
+
+#[dev-dependencies]
+#anyhow = "1.0"
+#env_logger = "0.11"
