@@ -2,7 +2,7 @@ use anyhow::Result;
 // use seify_bladerf::backend::nusb::NusbBackend;
 // use seify_bladerf::backend::rusb::RusbBackend;
 // use seify_bladerf::backend::{UsbBackend, UsbBackendMarker};
-use seify_bladerf::board::bladerf1::BladeRf1;
+use libbladerf_rs::board::bladerf1::BladeRf1;
 //use seify_bladerf::backend::nusb::NusbBackend;
 //use seify_bladerf::backend::BladeRfBackend;
 //use seify_bladerf::board::bladerf1::BladeRf1;

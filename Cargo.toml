@@ -1,7 +1,7 @@
 [package]
-name = "seify-bladerf"
+name = "libbladerf-rs"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 authors = ["Ratzrattillo <11601995+ratzrattillo@users.noreply.github.com>"]
 repository = "https://github.com/ratzrattillo/seify-bladerf"
 readme = "README.md"

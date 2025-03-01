@@ -1,5 +1,5 @@
 # seify-bladerf
-
+cargo run --example info
 
 For debugging via Wireshark under Arch:
 ```bash
