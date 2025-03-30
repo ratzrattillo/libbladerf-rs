@@ -14,7 +14,7 @@ categories = ["api-bindings"]
 [features]
 default = ["nusb"] # , "rusb"
 nusb = ["dep:nusb"]
-rusb = ["dep:rusb"]
+# rusb = ["dep:rusb"]
 
 [dependencies]
 anyhow = "1.0"
@@ -24,7 +24,8 @@ futures-lite = "2.6"
 log = "0.4"
 thiserror = "2.0"
 nusb = { version = "0.1", optional = true }
-rusb = { version = "0.9", features = ["vendored"], optional = true }
+# rusb = { version = "0.9", features = ["vendored"], optional = true }
+tokio = { version = "1", features = ["full"]}
 
 #[dev-dependencies]
 #anyhow = "1.0"

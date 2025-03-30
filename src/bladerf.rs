@@ -1,6 +1,6 @@
 use futures_lite::future::block_on;
-use nusb::transfer::RequestBuffer;
 use nusb::Interface;
+use nusb::transfer::RequestBuffer;
 
 #[macro_export]
 macro_rules! bladerf_channel_rx {

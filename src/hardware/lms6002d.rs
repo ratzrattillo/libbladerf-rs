@@ -1,9 +1,9 @@
-use crate::bladerf::{BladerfLoopback, BLADERF_MODULE_RX, BLADERF_MODULE_TX};
-use crate::board::bladerf1::{BladerfLnaGain, BLADERF_FREQUENCY_MAX, BLADERF_FREQUENCY_MIN};
+use crate::bladerf::{BLADERF_MODULE_RX, BLADERF_MODULE_TX, BladerfLoopback};
+use crate::board::bladerf1::{BLADERF_FREQUENCY_MAX, BLADERF_FREQUENCY_MIN, BladerfLnaGain};
+use crate::nios::Nios;
 use crate::nios::constants::{NIOS_PKT_8X8_TARGET_LMS6, NIOS_PKT_FLAG_READ, NIOS_PKT_FLAG_WRITE};
 use crate::nios::packet8x8::NiosPacket8x8;
-use crate::nios::Nios;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use nusb::Interface;
 // use std::cmp::PartialEq;
 

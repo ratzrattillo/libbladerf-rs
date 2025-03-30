@@ -2,7 +2,7 @@ use anyhow::Result;
 // use seify_bladerf::backend::nusb::NusbBackend;
 // use seify_bladerf::backend::rusb::RusbBackend;
 // use seify_bladerf::backend::{UsbBackend, UsbBackendMarker};
-use libbladerf_rs::board::bladerf1::BladeRf1;
+use libbladerf_rs::board::bladerf1::{BladeRf1, BladeRfDirection, BladerfFormat};
 //use seify_bladerf::backend::nusb::NusbBackend;
 //use seify_bladerf::backend::BladeRfBackend;
 //use seify_bladerf::board::bladerf1::BladeRf1;
@@ -14,8 +14,15 @@ use libbladerf_rs::board::bladerf1::BladeRf1;
 // use seify_bladerf::nios::packet8x32::NiosPacket8x32;
 // use seify_bladerf::nios::packet8x8::NiosPacket8x8;
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     env_logger::init();
+
+    // TODO: To start RX stream, try:
+    // /home/jl/sdr/bladeRF/host/libraries/libbladeRF/src/board/bladerf1/bladerf1.c:2848
+    //static int bladerf1_sync_rx
+    //https://www.nuand.com/libbladeRF-doc/v2.5.0/group___f_n___s_t_r_e_a_m_i_n_g___a_s_y_n_c.html#gab3d5bbea596957d7fd4e4eceb1e27faf
+    //bladerf_stream
 
     // TODO: Buffer sizes do not fit. Somehow only 64Byte are received instead of 80 Byte when using BulkIN with NUSB
 
@@ -56,6 +63,13 @@ fn main() -> Result<()> {
     let languages = bladerf.get_supported_languages()?;
     println!("{:x?}", languages);
     bladerf.initialize()?;
+
+    // bladerf.reset()?;
+
+    bladerf.perform_format_config(BladeRfDirection::BladerfRx, BladerfFormat::BladerfFormatPacketMeta)?;
+    // bladerf.async_run_stream().await;
+    bladerf.perform_format_deconfig(BladeRfDirection::BladerfRx)?;
+
 
     //bladerf.hello();
     // for descriptor in bladerf.interface().descriptors(){

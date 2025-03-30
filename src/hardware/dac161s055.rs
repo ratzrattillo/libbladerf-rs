@@ -1,8 +1,8 @@
+use crate::nios::Nios;
 use crate::nios::constants::{
-    NIOS_PKT_8X16_TARGET_VCTCXO_DAC, NIOS_PKT_8X8_TARGET_LMS6, NIOS_PKT_FLAG_WRITE,
+    NIOS_PKT_8X8_TARGET_LMS6, NIOS_PKT_8X16_TARGET_VCTCXO_DAC, NIOS_PKT_FLAG_WRITE,
 };
 use crate::nios::packet8x16::NiosPacket8x16;
-use crate::nios::Nios;
 use anyhow::Result;
 use nusb::Interface;
 

@@ -1,9 +1,11 @@
-use anyhow::anyhow;
 use crate::bladerf::BladerfRationalRate;
-use crate::board::bladerf1::{BLADERF_SAMPLERATE_MIN, BLADERF_SMB_FREQUENCY_MAX, BLADERF_SMB_FREQUENCY_MIN};
+use crate::board::bladerf1::{
+    BLADERF_SAMPLERATE_MIN, BLADERF_SMB_FREQUENCY_MAX, BLADERF_SMB_FREQUENCY_MIN,
+};
+use crate::nios::Nios;
 use crate::nios::constants::{NIOS_PKT_8X8_TARGET_SI5338, NIOS_PKT_FLAG_READ, NIOS_PKT_FLAG_WRITE};
 use crate::nios::packet8x8::NiosPacket8x8;
-use crate::nios::Nios;
+use anyhow::anyhow;
 use nusb::Interface;
 
 use crate::bladerf_channel_rx;
@@ -470,22 +472,25 @@ impl SI5338 {
         Ok(actual.integer as u32)
     }
 
-    pub fn set_rational_smb_freq(&self, rate: &BladerfRationalRate) -> anyhow::Result<BladerfRationalRate> {
+    pub fn set_rational_smb_freq(
+        &self,
+        rate: &BladerfRationalRate,
+    ) -> anyhow::Result<BladerfRationalRate> {
         let mut rate_reduced = rate.clone();
 
         /* Enforce minimum and maximum frequencies */
         Self::rational_reduce(&mut rate_reduced);
 
         if rate_reduced.integer < BLADERF_SMB_FREQUENCY_MIN as u64 {
-            return Err(anyhow!("provided SMB freq violates minimum"))
+            return Err(anyhow!("provided SMB freq violates minimum"));
         } else if rate_reduced.integer > BLADERF_SMB_FREQUENCY_MAX as u64 {
-            return Err(anyhow!("provided SMB freq violates maximum"))
+            return Err(anyhow!("provided SMB freq violates maximum"));
         }
 
         Ok(self.set_rational_multisynth(3, SI5338_EN_A, rate_reduced)?)
     }
 
-    pub fn set_smb_freq(&self, rate: u32)-> anyhow::Result<u32> {
+    pub fn set_smb_freq(&self, rate: u32) -> anyhow::Result<u32> {
         let mut req = BladerfRationalRate::default();
         println!("Setting integer SMB frequency: {}", rate);
         req.integer = rate as u64;

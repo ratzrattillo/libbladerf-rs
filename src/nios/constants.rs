@@ -60,7 +60,7 @@ pub const NIOS_PKT_8X32_TARGET_ADF4351: u8 = 0x02; /* XB-200 ADF4351 register ac
 pub const NIOS_PKT_8X32_TARGET_RFFE_CSR: u8 = 0x03; /* RFFE control & status GPIO */
 pub const NIOS_PKT_8X32_TARGET_ADF400X: u8 = 0x04; /* ADF400x config */
 pub const NIOS_PKT_8X32_TARGET_FASTLOCK: u8 = 0x05; /* Save AD9361 fast lock profile
-                                                     * to Nios */
+ * to Nios */
 
 /* Target IDs */
 

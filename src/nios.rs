@@ -1,8 +1,8 @@
 use crate::nios::packet_generic::NiosPacket;
 use anyhow::anyhow;
 use futures_lite::future::block_on;
-use nusb::transfer::RequestBuffer;
 use nusb::Interface;
+use nusb::transfer::RequestBuffer;
 
 pub mod constants;
 pub mod packet16x64;
@@ -15,7 +15,7 @@ mod packet_generic;
 
 pub trait Nios {
     fn nios_send(&self, endpoint_in: u8, endpoint_out: u8, pkt: Vec<u8>)
-        -> anyhow::Result<Vec<u8>>;
+    -> anyhow::Result<Vec<u8>>;
 }
 impl Nios for Interface {
     fn nios_send(
