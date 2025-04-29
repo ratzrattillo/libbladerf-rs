@@ -1,4 +1,5 @@
 use anyhow::Result;
+use std::time::Duration;
 // use seify_bladerf::backend::nusb::NusbBackend;
 // use seify_bladerf::backend::rusb::RusbBackend;
 // use seify_bladerf::backend::{UsbBackend, UsbBackendMarker};
@@ -13,6 +14,8 @@ use libbladerf_rs::board::bladerf1::{BladeRf1, BladeRfDirection, BladerfFormat};
 // use seify_bladerf::nios::constants::{NIOS_PKT_8X32_TARGET_CONTROL, NIOS_PKT_FLAG_READ};
 // use seify_bladerf::nios::packet8x32::NiosPacket8x32;
 // use seify_bladerf::nios::packet8x8::NiosPacket8x8;
+
+use libbladerf_rs::board::bladerf1::BLADERF_MODULE_RX;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -61,15 +64,32 @@ async fn main() -> Result<()> {
         .build()?;
 
     let languages = bladerf.get_supported_languages()?;
-    println!("{:x?}", languages);
+    println!("{languages:x?}");
     bladerf.initialize()?;
 
     // bladerf.reset()?;
 
-    bladerf.perform_format_config(BladeRfDirection::BladerfRx, BladerfFormat::BladerfFormatPacketMeta)?;
-    // bladerf.async_run_stream().await;
-    bladerf.perform_format_deconfig(BladeRfDirection::BladerfRx)?;
+    // Contains mostly setup of buffers and FW version checks...
+    // bladerf1_sync_config(
+    //      perform_format_config
+    //      int sync_init(
+    //          int sync_worker_init(struct bladerf_sync *s)
+    //              int async_init_stream(
+    //                  dev->backend->init_stream(lstream, num_transfers); -> static int lusb_init_stream( in /home/user/sdr/bladeRF/host/libraries/libbladeRF/src/backend/usb/libusb.c
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    bladerf.perform_format_config(
+        BladeRfDirection::BladerfRx,
+        BladerfFormat::BladerfFormatSc16Q11,
+    )?;
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    bladerf.bladerf_enable_module(BLADERF_MODULE_RX, true)?;
+    tokio::time::sleep(Duration::from_secs(1)).await;
 
+    bladerf.async_run_stream().await;
+
+    bladerf.perform_format_deconfig(BladeRfDirection::BladerfRx)?;
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    bladerf.bladerf_enable_module(BLADERF_MODULE_RX, false)?;
 
     //bladerf.hello();
     // for descriptor in bladerf.interface().descriptors(){

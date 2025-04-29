@@ -1,11 +1,12 @@
+#![allow(dead_code)]
+
 use crate::bladerf::{BLADERF_MODULE_RX, BLADERF_MODULE_TX, BladerfLoopback};
 use crate::board::bladerf1::{BLADERF_FREQUENCY_MAX, BLADERF_FREQUENCY_MIN, BladerfLnaGain};
 use crate::nios::Nios;
-use crate::nios::constants::{NIOS_PKT_8X8_TARGET_LMS6, NIOS_PKT_FLAG_READ, NIOS_PKT_FLAG_WRITE};
-use crate::nios::packet8x8::NiosPacket8x8;
+use crate::nios::constants::NIOS_PKT_8X8_TARGET_LMS6;
 use anyhow::{Result, anyhow};
+use libnios_rs::packet::NiosPkt8x8;
 use nusb::Interface;
-// use std::cmp::PartialEq;
 
 const ENDPOINT_OUT: u8 = 0x02;
 const ENDPOINT_IN: u8 = 0x82;
@@ -472,28 +473,30 @@ impl LMS6002D {
         Self { interface }
     }
     pub fn read(&self, addr: u8) -> Result<u8> {
-        let mut request = NiosPacket8x8::new();
-        request.set(NIOS_PKT_8X8_TARGET_LMS6, NIOS_PKT_FLAG_READ, addr, 0x0);
+        type NiosPkt = NiosPkt8x8;
+
+        let request = NiosPkt::new(NIOS_PKT_8X8_TARGET_LMS6, NiosPkt::FLAG_READ, addr, 0x0);
 
         let response = self
             .interface
-            .nios_send(ENDPOINT_IN, ENDPOINT_OUT, request.into_vec())?;
-        Ok(NiosPacket8x8::reuse(response).data())
+            .nios_send(ENDPOINT_IN, ENDPOINT_OUT, request.into())?;
+        Ok(NiosPkt::reuse(response).data())
     }
 
     pub fn write(&self, addr: u8, data: u8) -> Result<u8> {
-        let mut request = NiosPacket8x8::new();
-        request.set(NIOS_PKT_8X8_TARGET_LMS6, NIOS_PKT_FLAG_WRITE, addr, data);
+        type NiosPkt = NiosPkt8x8;
+
+        let request = NiosPkt::new(NIOS_PKT_8X8_TARGET_LMS6, NiosPkt::FLAG_WRITE, addr, data);
 
         let response = self
             .interface
-            .nios_send(ENDPOINT_IN, ENDPOINT_OUT, request.into_vec())?;
-        Ok(NiosPacket8x8::reuse(response).data())
+            .nios_send(ENDPOINT_IN, ENDPOINT_OUT, request.into())?;
+        Ok(NiosPkt::reuse(response).data())
     }
 
     pub fn set(&self, addr: u8, mask: u8) -> Result<()> {
         let mut data = self.read(addr)?;
-        data = data | mask;
+        data |= mask;
         self.write(addr, data)?;
         Ok(())
     }
@@ -521,7 +524,7 @@ impl LMS6002D {
         } else {
             data &= !(1 << shift);
         }
-        Ok(self.write(addr, data)?)
+        self.write(addr, data)
     }
 
     pub fn config_charge_pumps(&self, module: u8) -> Result<u8> {
@@ -533,21 +536,21 @@ impl LMS6002D {
 
         // Set PLL Ichp current
         let mut data = self.read(base + 6)?;
-        data = data & !0x1f;
-        data = data | 0x0c;
+        data &= !0x1f;
+        data |= 0x0c;
         self.write(base + 6, data)?;
 
         // Set Iup current
         data = self.read(base + 7)?;
-        data = data & !0x1f;
-        data = data | 0x03;
+        data &= !0x1f;
+        data |= 0x03;
         self.write(base + 7, data)?;
 
         // Set Idn current
         data = self.read(base + 8)?;
-        data = data & !0x1f;
-        data = data | 0x03;
-        Ok(self.write(base + 8, data)?)
+        data &= !0x1f;
+        data |= 0x03;
+        self.write(base + 8, data)
     }
 
     /* This is a linear interpolation of our experimentally identified
@@ -558,27 +561,24 @@ impl LMS6002D {
         let num: f32 = VCOCAP_EST_RANGE as f32;
         let f_diff: f32 = (f_target - f_low) as f32;
 
-        let mut vcocap = ((num / denom * f_diff) + 0.5 + VCOCAP_EST_MIN as f32) as u8;
+        let vcocap = ((num / denom * f_diff) + 0.5 + VCOCAP_EST_MIN as f32) as u8;
 
         if vcocap > VCOCAP_MAX_VALUE {
-            println!(
-                "Clamping VCOCAP estimate from {} to {}",
-                vcocap, VCOCAP_MAX_VALUE
-            );
+            println!("Clamping VCOCAP estimate from {vcocap} to {VCOCAP_MAX_VALUE}");
             vcocap.clamp(0, VCOCAP_MAX_VALUE)
         } else {
-            println!("VCOCAP estimate: {}", vcocap);
+            println!("VCOCAP estimate: {vcocap}");
             vcocap
         }
     }
 
     pub fn calculate_tuning_params(mut freq: u32) -> Result<LmsFreq> {
-        let vco_x: u64;
-        let mut temp: u64;
-        //let nint: u16;
-        //let nfrac: u32;
+        // let vco_x: u64;
+        // let mut temp: u64;
+        // let nint: u16;
+        // let nfrac: u32;
         let freqsel: u8 = BANDS[0].value;
-        //let i: u8 = 0;
+        // let i: u8 = 0;
         let mut f: LmsFreq = LmsFreq::default();
         const REF_CLOCK: u64 = LMS_REFERENCE_HZ as u64;
 
@@ -613,10 +613,10 @@ impl LMS6002D {
         f.vcocap = Self::estimate_vcocap(freq, freq_range.low as u32, freq_range.high as u32);
 
         /* Calculate integer portion of the frequency value */
-        vco_x = 1 << ((freqsel & 7) - 3);
+        let vco_x = 1 << ((freqsel & 7) - 3);
         assert!(vco_x <= u8::MAX as u64);
         f.x = vco_x as u8;
-        temp = (vco_x * freq as u64) / REF_CLOCK;
+        let mut temp = (vco_x * freq as u64) / REF_CLOCK;
         assert!(temp <= u16::MAX as u64);
         f.nint = temp as u16;
 
@@ -646,7 +646,7 @@ impl LMS6002D {
         assert!(vcocap <= VCOCAP_MAX_VALUE);
         // println!("Writing VCOCAP=%u\n", vcocap);
 
-        Ok(self.write(base + 9, vcocap | vcocap_reg_state)?)
+        self.write(base + 9, vcocap | vcocap_reg_state)
 
         // if (status != 0) {
         // log_debug("VCOCAP write failed: %d\n", status);
@@ -657,11 +657,9 @@ impl LMS6002D {
 
     pub fn lms_get_loopback_mode(&self) -> Result<BladerfLoopback> {
         let mut loopback = BladerfLoopback::BladerfLbNone;
-        let mut lben_lbrfen: u8 = 0;
-        let mut loopbben: u8 = 0;
 
-        lben_lbrfen = self.read(0x08)?;
-        loopbben = self.read(0x46)?;
+        let lben_lbrfen = self.read(0x08)?;
+        let loopbben = self.read(0x46)?;
 
         match lben_lbrfen & 0x7 {
             LBRFEN_LNA1 => {
@@ -718,7 +716,7 @@ impl LMS6002D {
 
         let lb_enabled: bool = self.is_loopback_enabled()?;
 
-        if lb_enabled == false {
+        if !lb_enabled {
             /* Loopback not enabled - update the PLL output buffer. */
             let selout = if low_band { 1 } else { 2 };
             regval = (freqsel << 2) | selout;
@@ -735,7 +733,7 @@ impl LMS6002D {
     pub const VCOCAP_MAX_LOW_HIGH: u8 = 12;
 
     pub fn vtune_high_to_norm(&self, base: u8, mut vcocap: u8, vcocap_reg_state: u8) -> Result<u8> {
-        let mut vtune: u8 = 0xff;
+        // let mut vtune: u8 = 0xff;
 
         for _ in 0..VTUNE_MAX_ITERATIONS {
             if vcocap >= VCOCAP_MAX_VALUE {
@@ -747,10 +745,10 @@ impl LMS6002D {
 
             self.write_vcocap(base, vcocap, vcocap_reg_state)?;
 
-            vtune = self.get_vtune(base, VTUNE_DELAY_SMALL)?;
+            let vtune = self.get_vtune(base, VTUNE_DELAY_SMALL)?;
 
             if vtune == VCO_NORM {
-                println!("VTUNE NORM @ VCOCAP={}", vcocap);
+                println!("VTUNE NORM @ VCOCAP={vcocap}");
                 // println!("VTUNE HIGH @ VCOCAP={}", *vtune_high_limit);
                 return Ok(vcocap - 1);
             }
@@ -764,13 +762,10 @@ impl LMS6002D {
     }
 
     pub fn vtune_norm_to_high(&self, base: u8, mut vcocap: u8, vcocap_reg_state: u8) -> Result<u8> {
-        let mut vtune: u8 = 0xff;
+        // let mut vtune: u8 = 0xff;
 
         for _ in 0..VTUNE_MAX_ITERATIONS {
-            println!(
-                "base: {}, vcocap: {}, vcocap_reg_state: {}",
-                base, vcocap, vcocap_reg_state
-            );
+            println!("base: {base}, vcocap: {vcocap}, vcocap_reg_state: {vcocap_reg_state}");
 
             if vcocap == 0 {
                 println!("vtune_norm_to_high: VCOCAP hit min value.");
@@ -781,11 +776,11 @@ impl LMS6002D {
 
             self.write_vcocap(base, vcocap, vcocap_reg_state)?;
 
-            vtune = self.get_vtune(base, VTUNE_DELAY_SMALL)?;
-            println!("vtune: {}", vtune);
+            let vtune = self.get_vtune(base, VTUNE_DELAY_SMALL)?;
+            println!("vtune: {vtune}");
 
             if vtune == VCO_HIGH {
-                println!("VTUNE HIGH @ VCOCAP={}", vcocap);
+                println!("VTUNE HIGH @ VCOCAP={vcocap}");
                 return Ok(vcocap);
             }
         }
@@ -799,7 +794,7 @@ impl LMS6002D {
     }
 
     pub fn vtune_low_to_norm(&self, base: u8, mut vcocap: u8, vcocap_reg_state: u8) -> Result<u8> {
-        let mut vtune: u8 = 0xff;
+        // let mut vtune: u8 = 0xff;
 
         for _ in 0..VTUNE_MAX_ITERATIONS {
             if vcocap == 0 {
@@ -811,10 +806,10 @@ impl LMS6002D {
 
             self.write_vcocap(base, vcocap, vcocap_reg_state)?;
 
-            vtune = self.get_vtune(base, VTUNE_DELAY_SMALL)?;
+            let vtune = self.get_vtune(base, VTUNE_DELAY_SMALL)?;
 
             if vtune == VCO_NORM {
-                println!("VTUNE NORM @ VCOCAP={}", vcocap);
+                println!("VTUNE NORM @ VCOCAP={vcocap}");
                 return Ok(vcocap + 1);
             }
         }
@@ -834,7 +829,7 @@ impl LMS6002D {
         vcocap: &mut u8,
         vcocap_reg_state: u8,
     ) -> Result<()> {
-        let mut vtune: u8 = 0;
+        // let mut vtune: u8 = 0;
         const MAX_RETRIES: u32 = 15;
         let limit: u8 = if target_value == VCO_HIGH {
             0
@@ -846,39 +841,33 @@ impl LMS6002D {
         assert!(target_value == VCO_HIGH || target_value == VCO_LOW);
 
         for i in 0..MAX_RETRIES {
-            vtune = self.get_vtune(base, 0)?;
+            let vtune = self.get_vtune(base, 0)?;
 
             if vtune == target_value {
-                println!("VTUNE reached {} at iteration {}", target_value, i);
+                println!("VTUNE reached {target_value} at iteration {i}");
                 return Ok(());
             } else {
-                println!("VTUNE was {}. Waiting and retrying...", vtune);
+                println!("VTUNE was {vtune}. Waiting and retrying...");
 
                 //VTUNE_BUSY_WAIT(10);
             }
         }
 
-        println!(
-            "Timed out while waiting for VTUNE={}. Walking VCOCAP...\n",
-            target_value
-        );
+        println!("Timed out while waiting for VTUNE={target_value}. Walking VCOCAP...\n");
 
         while *vcocap != limit {
             *vcocap = (*vcocap as i8 + inc) as u8;
 
             self.write_vcocap(base, *vcocap, vcocap_reg_state)?;
 
-            vtune = self.get_vtune(base, VTUNE_DELAY_SMALL)?;
+            let vtune = self.get_vtune(base, VTUNE_DELAY_SMALL)?;
             if vtune == target_value {
-                println!("VTUNE={} reached with VCOCAP={}", vtune, vcocap);
+                println!("VTUNE={vtune} reached with VCOCAP={vcocap}");
                 return Ok(());
             }
         }
 
-        println!(
-            "VTUNE did not reach {}. Tuning may not be nominal.",
-            target_value
-        );
+        println!("VTUNE did not reach {target_value}. Tuning may not be nominal.");
         Ok(())
 
         // #   ifdef ERROR_ON_NO_VTUNE_LIMIT
@@ -907,13 +896,13 @@ impl LMS6002D {
     pub fn tune_vcocap(&self, vcocap_est: u8, base: u8, vcocap_reg_state: u8) -> Result<u8> {
         // let mut status: i32 = 0;
         let mut vcocap: u8 = vcocap_est;
-        let mut vtune: u8 = 0;
+        // let mut vtune: u8 = 0;
         let mut vtune_high_limit: u8 = VCOCAP_MAX_VALUE; /* Where VCOCAP puts use into VTUNE HIGH region */
         let mut vtune_low_limit: u8 = 0; /* Where VCOCAP puts use into VTUNE LOW region */
 
         //RESET_BUSY_WAIT_COUNT();
 
-        vtune = self.get_vtune(base, VTUNE_DELAY_LARGE)?;
+        let mut vtune = self.get_vtune(base, VTUNE_DELAY_LARGE)?;
 
         match vtune {
             VCO_HIGH => {
@@ -943,7 +932,7 @@ impl LMS6002D {
                         vcocap = vtune_high_limit + VCOCAP_MAX_LOW_HIGH;
                     } else {
                         vcocap = VCOCAP_MAX_VALUE;
-                        println!("Clamping VCOCAP to {}.", vcocap);
+                        println!("Clamping VCOCAP to {vcocap}.");
                     }
                 }
                 _ => {
@@ -955,10 +944,10 @@ impl LMS6002D {
 
             self.write_vcocap(base, vcocap, vcocap_reg_state)?;
 
-            println!("Waiting for VTUNE LOW @ VCOCAP={}", vcocap);
+            println!("Waiting for VTUNE LOW @ VCOCAP={vcocap}");
             self.wait_for_vtune_value(base, VCO_LOW, &mut vcocap, vcocap_reg_state)?;
 
-            println!("Walking VTUNE LOW to NORM from VCOCAP={}", vcocap);
+            println!("Walking VTUNE LOW to NORM from VCOCAP={vcocap}");
             vtune_low_limit = self.vtune_low_to_norm(base, vcocap, vcocap_reg_state)?;
         } else {
             /* We determined our VTUNE LOW limit. Try to force ourselves up to
@@ -972,7 +961,7 @@ impl LMS6002D {
                         vcocap = vtune_low_limit - VCOCAP_MAX_LOW_HIGH;
                     } else {
                         vcocap = 0;
-                        println!("Clamping VCOCAP to {}.", vcocap);
+                        println!("Clamping VCOCAP to {vcocap}.");
                     }
                 }
                 _ => {
@@ -984,19 +973,19 @@ impl LMS6002D {
 
             self.write_vcocap(base, vcocap, vcocap_reg_state)?;
 
-            println!("Waiting for VTUNE HIGH @ VCOCAP={}", vcocap);
+            println!("Waiting for VTUNE HIGH @ VCOCAP={vcocap}");
             self.wait_for_vtune_value(base, VCO_HIGH, &mut vcocap, vcocap_reg_state)?;
 
-            println!("Walking VTUNE HIGH to NORM from VCOCAP={}", vcocap);
+            println!("Walking VTUNE HIGH to NORM from VCOCAP={vcocap}");
             vtune_high_limit = self.vtune_high_to_norm(base, vcocap, vcocap_reg_state)?;
         }
 
         vcocap = vtune_high_limit + (vtune_low_limit - vtune_high_limit) / 2;
 
-        println!("VTUNE LOW:   {}", vtune_low_limit);
-        println!("VTUNE NORM:  {}", vcocap);
-        println!("VTUNE Est:   {}", vcocap_est); // , vcocap_est - vcocap
-        println!("VTUNE HIGH:  {}", vtune_high_limit);
+        println!("VTUNE LOW:   {vtune_low_limit}");
+        println!("VTUNE NORM:  {vcocap}");
+        println!("VTUNE Est:   {vcocap_est}"); // , vcocap_est - vcocap
+        println!("VTUNE HIGH:  {vtune_high_limit}");
 
         // #       if LMS_COUNT_BUSY_WAITS
         //     println!("Busy waits:  %u\n", busy_wait_count);
@@ -1031,10 +1020,10 @@ impl LMS6002D {
             0x10
         };
 
-        let mut data: u8 = 0;
-        let mut vcocap_reg_state: u8 = 0;
+        // let mut data: u8 = 0;
+        // let mut vcocap_reg_state: u8 = 0;
         // let mut status: u8 = 0;
-        //let mut dsm_status: i32 = 0;
+        // let mut dsm_status: i32 = 0;
 
         /* Utilize atomic writes to the PLL registers, if possible. This
          * "multiwrite" is indicated by the MSB being set. */
@@ -1049,7 +1038,7 @@ impl LMS6002D {
         f.vcocap_result = 0xff;
 
         /* Turn on the DSMs */
-        data = self.read(0x09)?;
+        let mut data = self.read(0x09)?;
         data |= 0x05;
         self.write(0x09, data)?; //.expect("Failed to turn on DSMs\n");
 
@@ -1060,7 +1049,7 @@ impl LMS6002D {
         if result.is_err() {
             self.turn_off_dsms()?;
         }
-        vcocap_reg_state = result?;
+        let mut vcocap_reg_state = result?;
 
         vcocap_reg_state &= !0x3f;
 
@@ -1075,7 +1064,7 @@ impl LMS6002D {
         }
 
         data = (f.nint >> 1) as u8;
-        result = self.write(pll_base + 0, data);
+        result = self.write(pll_base, data);
         if result.is_err() {
             self.turn_off_dsms()?;
         }
@@ -1123,12 +1112,12 @@ impl LMS6002D {
     pub fn turn_off_dsms(&self) -> Result<u8> {
         let mut data = self.read(0x09)?;
         data &= !0x05;
-        Ok(self.write(0x09, data)?)
+        self.write(0x09, data)
     }
 
     pub fn set_frequency(&self, channel: u8, frequency: u32) -> Result<LmsFreq> {
         let mut f = Self::calculate_tuning_params(frequency)?;
-        println!("{:?}", f);
+        println!("{f:?}");
 
         self.set_precalculated_frequency(channel, &mut f)?;
         Ok(f)

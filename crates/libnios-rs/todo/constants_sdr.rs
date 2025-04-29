@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 /* IDs 0x80 through 0xff will not be assigned by Nuand. These are reserved
  * for user customizations */
 pub const NIOS_PKT_TARGET_USR1: u8 = 0x80;

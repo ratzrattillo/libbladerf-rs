@@ -1,7 +1,3 @@
-use futures_lite::future::block_on;
-use nusb::Interface;
-use nusb::transfer::RequestBuffer;
-
 #[macro_export]
 macro_rules! bladerf_channel_rx {
     ($ch:expr) => {
@@ -16,28 +12,13 @@ macro_rules! bladerf_channel_tx {
 }
 
 /**
- * @defgroup FN_LOOPBACK Internal loopback
- *
- * The bladeRF provides a variety of loopback modes to aid in development and
- * testing.
- *
- * In general, the digital or baseband loopback modes provide the most "ideal"
- * operating conditions, while the internal RF loopback modes introduce more of
- * the typical nonidealities of analog systems.
- *
- * These functions are thread-safe.
- *
- * @{
- */
-
-/**
  * Mapping of human-readable names to loopback modes
  */
 pub struct BladerfLoopbackModes {
     /**< Name of loopback mode */
-    name: String,
+    _name: String,
     /**< Loopback mode enumeration */
-    mode: BladerfLoopback,
+    _mode: BladerfLoopback,
 }
 
 /**
@@ -136,22 +117,22 @@ pub enum BladerfGainMode {
 }
 
 #[allow(dead_code)]
-pub(crate) const BLADERF_MODULE_RX: u8 = bladerf_channel_rx!(0);
+pub const BLADERF_MODULE_RX: u8 = bladerf_channel_rx!(0);
 #[allow(dead_code)]
-pub(crate) const BLADERF_MODULE_TX: u8 = bladerf_channel_tx!(0);
+pub const BLADERF_MODULE_TX: u8 = bladerf_channel_tx!(0);
 
 pub trait BladeRf {
     //fn nios_send(&self, endpoint_in: u8, endpoint_out: u8, pkt: Vec<u8>) -> Result<Vec<u8>>;
 }
 
 #[derive(Clone, Default)]
-pub(crate) struct BladerfRationalRate {
+pub struct BladerfRationalRate {
     /* Integer portion */
-    pub(crate) integer: u64,
+    pub integer: u64,
     /* Numerator in fractional portion */
-    pub(crate) num: u64,
+    pub num: u64,
     /* Denominator in fractional portion. This must be greater than 0. */
-    pub(crate) den: u64,
+    pub den: u64,
 }
 
 #[repr(u8)]
@@ -170,38 +151,3 @@ pub enum DescriptorTypes {
     Default = 0x06,
     BOS = 0x0f,
 }
-
-impl Into<u8> for StringDescriptors {
-    fn into(self) -> u8 {
-        self as u8
-    }
-}
-
-impl Into<u8> for DescriptorTypes {
-    fn into(self) -> u8 {
-        self as u8
-    }
-}
-
-// pub trait Nios {
-//     fn nios_send(&self, endpoint_in: u8, endpoint_out: u8, pkt: Vec<u8>)
-//         -> anyhow::Result<Vec<u8>>;
-// }
-// impl Nios for Interface {
-//     fn nios_send(
-//         &self,
-//         endpoint_in: u8,
-//         endpoint_out: u8,
-//         pkt: Vec<u8>,
-//     ) -> anyhow::Result<Vec<u8>> {
-//         println!("BulkOut: {:x?}", pkt);
-//         let response = block_on(self.bulk_out(endpoint_out, pkt)).into_result()?;
-//         // let reuse = response.reuse();
-//         // let len = reuse.capacity();
-//         let response =
-//             block_on(self.bulk_in(endpoint_in, RequestBuffer::reuse(response.reuse(), 16)))
-//                 .into_result()?;
-//         println!("BulkIn:  {:x?}", response);
-//         Ok(response)
-//     }
-// }

@@ -1,9 +1,7 @@
 use crate::nios::Nios;
-use crate::nios::constants::{
-    NIOS_PKT_8X8_TARGET_LMS6, NIOS_PKT_8X16_TARGET_VCTCXO_DAC, NIOS_PKT_FLAG_WRITE,
-};
-use crate::nios::packet8x16::NiosPacket8x16;
+use crate::nios::constants::NIOS_PKT_8X16_TARGET_VCTCXO_DAC;
 use anyhow::Result;
+use libnios_rs::packet::NiosPkt8x16;
 use nusb::Interface;
 
 const PERIPHERAL_ENDPOINT_OUT: u8 = 0x02;
@@ -19,11 +17,12 @@ impl DAC161S055 {
     }
 
     pub fn write(&self, value: u16) -> Result<u16> {
-        /* Ensure device is in write-through mode */
-        let mut request = NiosPacket8x16::new();
-        request.set(
+        type NiosPkt = NiosPkt8x16;
+
+        /* Ensure the device is in write-through mode */
+        let mut request = NiosPkt::new(
             NIOS_PKT_8X16_TARGET_VCTCXO_DAC,
-            NIOS_PKT_FLAG_WRITE,
+            NiosPkt::FLAG_WRITE,
             0x28,
             0x0000,
         );
@@ -31,15 +30,15 @@ impl DAC161S055 {
         let response = self.interface.nios_send(
             PERIPHERAL_ENDPOINT_IN,
             PERIPHERAL_ENDPOINT_OUT,
-            request.into_vec(),
+            request.into(),
         )?;
 
         //Ok(NiosPacket8x16::reuse(response).data())
         /* Write DAC value to channel 0 */
-        request = NiosPacket8x16::reuse(response);
+        request = NiosPkt::reuse(response);
         request.set(
             NIOS_PKT_8X16_TARGET_VCTCXO_DAC,
-            NIOS_PKT_FLAG_WRITE,
+            NiosPkt::FLAG_WRITE,
             0x8,
             value,
         );
@@ -47,12 +46,12 @@ impl DAC161S055 {
         let response = self.interface.nios_send(
             PERIPHERAL_ENDPOINT_IN,
             PERIPHERAL_ENDPOINT_OUT,
-            request.into_vec(),
+            request.into(),
         )?;
 
-        Ok(NiosPacket8x16::reuse(response).data())
+        Ok(NiosPkt::reuse(response).data())
 
-        // /* Ensure device is in write-through mode */
+        // /* Ensure the device is in write-through mode */
         // status = dev->backend->vctcxo_dac_write(dev, 0x28, 0x0000);
         // if (status < 0) {
         //     return status;

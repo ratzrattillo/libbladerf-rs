@@ -1,0 +1,12 @@
+[package]
+name = "libnios-rs"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+
+[dev-dependencies]
+anyhow = { version = "1.0"}
+
+[[example]]
+name = "default"

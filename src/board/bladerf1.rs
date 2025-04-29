@@ -1,31 +1,25 @@
-#![allow(private_interfaces)]
+#![allow(private_interfaces, dead_code)]
 
-use std::cmp::PartialEq;
-use std::ops::BitAnd;
-use std::time::Duration;
-//use crate::backend::nusb::NusbBackend;
-//use crate::backend::rusb::RusbBackend;
-//use crate::backend::UsbBackend;
-use anyhow::{Error, Result, anyhow};
+use anyhow::{Result, anyhow};
 use futures_lite::future::block_on;
 use nusb::descriptors::Configuration;
 use nusb::transfer::{ControlOut, ControlType, Recipient};
 use nusb::{Device, Interface};
+use std::cmp::PartialEq;
+use std::time::Duration;
 
 use crate::bladerf::BladerfGainMode::{BladerfGainDefault, BladerfGainMgc};
-use crate::bladerf::{
+pub use crate::bladerf::{
     BLADERF_MODULE_RX, BLADERF_MODULE_TX, BladeRf, BladerfGainMode, DescriptorTypes,
 };
 use crate::hardware::dac161s055::DAC161S055;
 use crate::hardware::lms6002d::LMS6002D;
 use crate::hardware::si5338::SI5338;
 use crate::nios::Nios;
-use crate::nios::constants::{
-    NIOS_PKT_8X32_TARGET_CONTROL, NIOS_PKT_FLAG_READ, NIOS_PKT_FLAG_WRITE,
-};
-use crate::nios::packet8x32::NiosPacket8x32;
+use crate::nios::constants::NIOS_PKT_8X32_TARGET_CONTROL;
 use crate::usb::UsbBackend;
 use crate::{bladerf_channel_rx, bladerf_channel_tx};
+use libnios_rs::packet::NiosPkt8x32;
 
 #[derive(thiserror::Error, Debug)]
 pub enum BladeRfError {
@@ -242,7 +236,7 @@ pub enum BladerfFormat {
      * bladerf_deinterleave_stream_buffer() / bladerf_interleave_stream_buffer()
      * if contiguous blocks of samples are desired.
      */
-    BladerfFormatSc16Q11,
+    BladerfFormatSc16Q11 = 0,
 
     /**
      * This format is the same as the ::BLADERF_FORMAT_SC16_Q11 format, except
@@ -283,7 +277,7 @@ pub enum BladerfFormat {
      * @see STREAMING_FORMAT_METADATA
      * @see The `src/streaming/metadata.h` header in the libbladeRF codebase.
      */
-    BladerfFormatSc16Q11Meta,
+    BladerfFormatSc16Q11Meta = 1,
 
     /**
      * This format is for exchanging packets containing digital payloads with
@@ -324,7 +318,7 @@ pub enum BladerfFormat {
      * @see STREAMING_FORMAT_METADATA
      * @see The `src/streaming/metadata.h` header in the libbladeRF codebase.
      */
-    BladerfFormatPacketMeta,
+    BladerfFormatPacketMeta = 2,
 
     /**
      * Signed, Complex 8-bit Q8. This is the native format of the DAC data.
@@ -380,7 +374,7 @@ pub enum BladerfFormat {
      * bladerf_deinterleave_stream_buffer() / bladerf_interleave_stream_buffer()
      * if contiguous blocks of samples are desired.
      */
-    BladerfFormatSc8Q7,
+    BladerfFormatSc8Q7 = 3,
 
     /**
      * This format is the same as the ::BLADERF_FORMAT_SC8_Q7 format, except
@@ -421,7 +415,7 @@ pub enum BladerfFormat {
      * @see STREAMING_FORMAT_METADATA
      * @see The `src/streaming/metadata.h` header in the libbladeRF codebase.
      */
-    BladerfFormatSc8Q7Meta,
+    BladerfFormatSc8Q7Meta = 4,
 }
 
 /**
@@ -500,45 +494,47 @@ impl BladeRf1 {
         const ENDPOINT_OUT: u8 = 0x02;
         const ENDPOINT_IN: u8 = 0x82;
 
-        let mut request = NiosPacket8x32::new();
-        request.set(NIOS_PKT_8X32_TARGET_CONTROL, NIOS_PKT_FLAG_READ, 0x0, 0x0);
+        type NiosPkt = NiosPkt8x32;
+
+        let request = NiosPkt::new(NIOS_PKT_8X32_TARGET_CONTROL, NiosPkt::FLAG_READ, 0x0, 0x0);
         let response = self
             .interface
-            .nios_send(ENDPOINT_IN, ENDPOINT_OUT, request.into_vec())?;
-        Ok(NiosPacket8x32::reuse(response).data())
+            .nios_send(ENDPOINT_IN, ENDPOINT_OUT, request.into())?;
+        Ok(NiosPkt::reuse(response).data())
     }
 
     fn config_gpio_write(&self, mut data: u32) -> Result<()> {
         const ENDPOINT_OUT: u8 = 0x02;
         const ENDPOINT_IN: u8 = 0x82;
 
+        type NiosPkt = NiosPkt8x32;
+
         enum DeviceSpeed {
-            BladerfDeviceSpeedUnknown,
-            BladerfDeviceSpeedHigh,
-            BladerfDeviceSpeedSuper,
+            Unknown,
+            High,
+            Super,
         }
 
         // TODO: Get usb speed dynamically
-        let device_speed: DeviceSpeed = DeviceSpeed::BladerfDeviceSpeedSuper;
+        let device_speed: DeviceSpeed = DeviceSpeed::Super;
         match device_speed {
-            DeviceSpeed::BladerfDeviceSpeedUnknown => {
-                println!("DeviceSpeed::BladerfDeviceSpeedUnknown");
+            DeviceSpeed::Unknown => {
+                println!("DeviceSpeed::Unknown");
             }
-            DeviceSpeed::BladerfDeviceSpeedHigh => {
-                println!("DeviceSpeed::BladerfDeviceSpeedUnknown");
-                data = data | (BLADERF_GPIO_FEATURE_SMALL_DMA_XFER as u32);
+            DeviceSpeed::High => {
+                println!("DeviceSpeed::High");
+                data |= BLADERF_GPIO_FEATURE_SMALL_DMA_XFER as u32;
             }
-            DeviceSpeed::BladerfDeviceSpeedSuper => {
-                println!("DeviceSpeed::BladerfDeviceSpeedUnknown");
-                data = data & (!BLADERF_GPIO_FEATURE_SMALL_DMA_XFER as u32);
+            DeviceSpeed::Super => {
+                println!("DeviceSpeed::Super");
+                data &= !BLADERF_GPIO_FEATURE_SMALL_DMA_XFER as u32;
             }
         }
 
-        let mut request = NiosPacket8x32::new();
-        request.set(NIOS_PKT_8X32_TARGET_CONTROL, NIOS_PKT_FLAG_WRITE, 0x0, data);
+        let request = NiosPkt::new(NIOS_PKT_8X32_TARGET_CONTROL, NiosPkt::FLAG_WRITE, 0x0, data);
         let _response = self
             .interface
-            .nios_send(ENDPOINT_IN, ENDPOINT_OUT, request.into_vec())?;
+            .nios_send(ENDPOINT_IN, ENDPOINT_OUT, request.into())?;
         Ok(())
     }
 
@@ -646,7 +642,7 @@ impl BladeRf1 {
             // /* Set the default gain mode */
             self.set_gain_mode(bladerf_channel_rx!(0), BladerfGainDefault)?;
         } else {
-            println!("[*] Init - Device already initialized: {:#04x}", cfg);
+            println!("[*] Init - Device already initialized: {cfg:#04x}");
             //board_data->tuning_mode = tuning_get_default_mode(dev);
         }
 
@@ -674,13 +670,14 @@ impl BladeRf1 {
         Ok(())
     }
 
+    pub fn bladerf_enable_module(&self, module: u8, enable: bool) -> Result<u8> {
+        self.lms.enable_rffe(module, enable)
+    }
+
     pub fn set_frequency(&self, channel: u8, frequency: u64) -> Result<()> {
         //let dc_cal = if channel == bladerf_channel_rx!(0) { cal_dc.rx } else { cal.dc_tx };
 
-        println!(
-            "Setting Frequency on channel {} to {}Hz",
-            channel, frequency
-        );
+        println!("Setting Frequency on channel {channel} to {frequency}Hz");
 
         // Ommit XB200 settings here
 
@@ -700,7 +697,7 @@ impl BladeRf1 {
             config_gpio &= !BLADERF_GPIO_AGC_ENABLE;
         }
 
-        Ok(self.config_gpio_write(config_gpio)?)
+        self.config_gpio_write(config_gpio)
     }
 
     // static int bladerf1_set_frequency(struct bladerf *dev,
@@ -937,7 +934,7 @@ impl BladeRf1 {
     /// Get BladeRf1 Serial number
     pub fn get_configuration_descriptor(&self, descriptor_index: u8) -> Result<Vec<u8>> {
         let descriptor = self.device.get_descriptor(
-            DescriptorTypes::Configuration.into(),
+            DescriptorTypes::Configuration as u8,
             descriptor_index,
             0x00,
             Duration::from_secs(1),
@@ -993,7 +990,7 @@ impl BladeRf1 {
 
         //int status = 0;
         let mut use_timestamps: bool = false;
-        let other_using_timestamps: bool = false;
+        let _other_using_timestamps: bool = false;
 
         // status = requires_timestamps(format, &use_timestamps);
         // if (status != 0) {
@@ -1001,7 +998,7 @@ impl BladeRf1 {
         //     return status;
         // }
 
-        let other = match dir {
+        let _other = match dir {
             BladeRfDirection::BladerfRx => BladeRfDirection::BladerfTx,
             BladeRfDirection::BladerfTx => BladeRfDirection::BladerfRx,
         };
@@ -1016,18 +1013,26 @@ impl BladeRf1 {
 
         let mut gpio_val = self.config_gpio_read()?;
 
+        println!("gpio_val {gpio_val:#08x}");
         if format == BladerfFormat::BladerfFormatPacketMeta {
             gpio_val |= BLADERF_GPIO_PACKET;
             use_timestamps = true;
+            println!("BladerfFormat::BladerfFormatPacketMeta");
         } else {
             gpio_val &= !BLADERF_GPIO_PACKET;
+            println!("else");
         }
+        println!("gpio_val {gpio_val:#08x}");
 
         if use_timestamps {
-            gpio_val |= (BLADERF_GPIO_TIMESTAMP | BLADERF_GPIO_TIMESTAMP_DIV2);
+            println!("use_timestamps");
+            gpio_val |= BLADERF_GPIO_TIMESTAMP | BLADERF_GPIO_TIMESTAMP_DIV2;
         } else {
+            println!("dont use_timestamps");
             gpio_val &= !(BLADERF_GPIO_TIMESTAMP | BLADERF_GPIO_TIMESTAMP_DIV2);
         }
+
+        println!("gpio_val {gpio_val:#08x}");
 
         self.config_gpio_write(gpio_val)?;
         // if (status == 0) {
@@ -1076,13 +1081,15 @@ impl BladeRf1 {
         let mut queue = self.interface.bulk_in_queue(0x81);
 
         let n_transfers = 8;
-        let transfer_size = 256;
+        let transfer_size = 8192; // Must be a multiple of 1024
 
         while queue.pending() < n_transfers {
             queue.submit(RequestBuffer::new(transfer_size));
+            println!("submitted_transfers: {}", queue.pending());
         }
 
         loop {
+            println!("waiting...");
             let completion = block_on(queue.next_complete());
             //handle_data(&completion.data); // your function
             println!("{:?}", &completion.data);

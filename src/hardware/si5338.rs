@@ -1,11 +1,13 @@
+#![allow(dead_code)]
+
 use crate::bladerf::BladerfRationalRate;
 use crate::board::bladerf1::{
     BLADERF_SAMPLERATE_MIN, BLADERF_SMB_FREQUENCY_MAX, BLADERF_SMB_FREQUENCY_MIN,
 };
 use crate::nios::Nios;
-use crate::nios::constants::{NIOS_PKT_8X8_TARGET_SI5338, NIOS_PKT_FLAG_READ, NIOS_PKT_FLAG_WRITE};
-use crate::nios::packet8x8::NiosPacket8x8;
+use crate::nios::constants::NIOS_PKT_8X8_TARGET_SI5338;
 use anyhow::anyhow;
+use libnios_rs::packet::NiosPkt8x8;
 use nusb::Interface;
 
 use crate::bladerf_channel_rx;
@@ -23,7 +25,7 @@ const SI5338_EN_B: u8 = 0x02;
  * Each si5338 multisynth module can be set independently
  */
 #[derive(Clone, Default)]
-struct Si5338Multisynth {
+pub struct Si5338Multisynth {
     /* Multisynth to program (0-3) */
     index: u8,
 
@@ -61,23 +63,23 @@ impl SI5338 {
         Self { interface }
     }
     pub fn read(&self, addr: u8) -> anyhow::Result<u8> {
-        let mut request = NiosPacket8x8::new();
-        request.set(NIOS_PKT_8X8_TARGET_SI5338, NIOS_PKT_FLAG_READ, addr, 0x0);
+        type NiosPkt = NiosPkt8x8;
+        let request = NiosPkt::new(NIOS_PKT_8X8_TARGET_SI5338, NiosPkt::FLAG_READ, addr, 0x0);
 
         let response = self
             .interface
-            .nios_send(ENDPOINT_IN, ENDPOINT_OUT, request.into_vec())?;
-        Ok(NiosPacket8x8::reuse(response).data())
+            .nios_send(ENDPOINT_IN, ENDPOINT_OUT, request.into())?;
+        Ok(NiosPkt::reuse(response).data())
     }
 
     pub fn write(&self, addr: u8, data: u8) -> anyhow::Result<u8> {
-        let mut request = NiosPacket8x8::new();
-        request.set(NIOS_PKT_8X8_TARGET_SI5338, NIOS_PKT_FLAG_WRITE, addr, data);
+        type NiosPkt = NiosPkt8x8;
+        let request = NiosPkt::new(NIOS_PKT_8X8_TARGET_SI5338, NiosPkt::FLAG_WRITE, addr, data);
 
         let response = self
             .interface
-            .nios_send(ENDPOINT_IN, ENDPOINT_OUT, request.into_vec())?;
-        Ok(NiosPacket8x8::reuse(response).data())
+            .nios_send(ENDPOINT_IN, ENDPOINT_OUT, request.into())?;
+        Ok(NiosPkt::reuse(response).data())
     }
 
     /**
@@ -99,8 +101,6 @@ impl SI5338 {
     }
 
     pub fn rational_reduce(r: &mut BladerfRationalRate) {
-        let val: u64;
-
         if (r.den > 0) && (r.num >= r.den) {
             /* Get whole number */
             let whole: u64 = r.num / r.den;
@@ -109,7 +109,7 @@ impl SI5338 {
         }
 
         /* Reduce fraction */
-        val = Self::gcd(r.num, r.den);
+        let val = Self::gcd(r.num, r.den);
         if val > 0 {
             r.num /= val;
             r.den /= val;
@@ -153,10 +153,10 @@ impl SI5338 {
          */
 
         /* p1 = (a * c + b) * 128 / c - 512 */
-        let mut temp: u64;
-        temp = ms.a as u64 * ms.c as u64 + ms.b as u64;
-        temp = temp * 128;
-        temp = temp / ms.c as u64 - 512;
+        let mut temp = ms.a as u64 * ms.c as u64 + ms.b as u64;
+        temp *= 128;
+        temp /= ms.c as u64;
+        temp -= 512;
         assert!(temp <= u32::MAX as u64);
         ms.p1 = temp as u32;
         //ms.p1 = ms->a * ms->c + ms->b;
@@ -165,7 +165,7 @@ impl SI5338 {
 
         /* p2 = (b * 128) % c */
         temp = ms.b as u64 * 128;
-        temp = temp % ms.c as u64;
+        temp %= ms.c as u64;
         assert!(temp <= u32::MAX as u64);
         ms.p2 = temp as u32;
 
@@ -173,18 +173,22 @@ impl SI5338 {
         ms.p3 = ms.c;
 
         // log_verbose("MSx P1: 0x%8.8x (%u) P2: 0x%8.8x (%u) P3: 0x%8.8x (%u)\n", ms.p1, ms.p1, ms.p2, ms.p2, ms.p3, ms.p3);
+        println!("{:016x} {:016x} {:016x}", ms.p1, ms.p2, ms.p3);
 
         /* Regs */
-        ms.regs[0] = ms.p1 as u8 & 0xff;
-        ms.regs[1] = (ms.p1 >> 8) as u8 & 0xff;
-        ms.regs[2] = ((ms.p2 & 0x3f) << 2) as u8 | ((ms.p1 >> 16) as u8 & 0x3);
-        ms.regs[3] = (ms.p2 >> 6) as u8 & 0xff;
-        ms.regs[4] = (ms.p2 >> 14) as u8 & 0xff;
-        ms.regs[5] = (ms.p2 >> 22) as u8 & 0xff;
-        ms.regs[6] = ms.p3 as u8 & 0xff;
-        ms.regs[7] = (ms.p3 >> 8) as u8 & 0xff;
-        ms.regs[8] = (ms.p3 >> 16) as u8 & 0xff;
-        ms.regs[9] = (ms.p3 >> 24) as u8 & 0xff;
+        /* Could probably be also expressed with to_le_bytes() or unsafe copy operations */
+        ms.regs[0] = ms.p1 as u8;
+        ms.regs[1] = (ms.p1 >> 8) as u8;
+        ms.regs[2] = (((ms.p2 & 0x3f) << 2) | ((ms.p1 >> 16) & 0x3)) as u8;
+        ms.regs[3] = (ms.p2 >> 6) as u8;
+        ms.regs[4] = (ms.p2 >> 14) as u8;
+        ms.regs[5] = (ms.p2 >> 22) as u8;
+        ms.regs[6] = ms.p3 as u8;
+        ms.regs[7] = (ms.p3 >> 8) as u8;
+        ms.regs[8] = (ms.p3 >> 16) as u8;
+        ms.regs[9] = (ms.p3 >> 24) as u8;
+
+        // ms.regs[6..].copy_from_slice(ms.p3.to_le_bytes().as_slice());
     }
 
     /**
@@ -197,7 +201,7 @@ impl SI5338 {
      *  (p1, p2, p3), (a, b, c) and actual are populated
      */
     pub fn unpack_regs(ms: &mut Si5338Multisynth) {
-        let mut temp: u64 = 0;
+        // let mut temp: u64 = 0;
 
         /* Zeroize */
         ms.p1 = 0;
@@ -228,7 +232,7 @@ impl SI5338 {
         ms.a = (ms.p1 + 512) / 128;
 
         /* b = (((p1+512)-128*a)*c + (b % c) + 64)/128 */
-        temp = (ms.p1 as u64 + 512) - 128 * (ms.a as u64);
+        let mut temp = (ms.p1 as u64 + 512) - 128 * (ms.a as u64);
         temp = (temp * ms.c as u64) + ms.p2 as u64;
         temp = (temp + 64) / 128;
         assert!(temp <= u32::MAX as u64);
@@ -267,13 +271,13 @@ impl SI5338 {
     pub fn write_multisynth(&self, ms: &Si5338Multisynth) -> anyhow::Result<u8> {
         let mut val = self.read(36 + ms.index)?;
         val |= ms.enable;
-        println!("Wrote enable register: {:x}", val);
+        println!("Wrote enable register: {val:x}");
         self.write(36 + ms.index, val)?;
 
         /* Write out the registers */
         for i in 0..ms.regs.len() {
             self.write((ms.base + i as u16) as u8, ms.regs[i])?;
-            println!("Wrote regs[{}]: {}", i, ms.regs[i]);
+            println!("Wrote regs[{i}]: {}", ms.regs[i]);
         }
 
         /* Calculate r_power from c_count */
@@ -288,9 +292,9 @@ impl SI5338 {
         val = 0xc0;
         val |= r_power << 2;
 
-        println!("Wrote r register: {:x}", val);
+        println!("Wrote r register: {val:x}");
 
-        Ok(self.write(ms.index + 31, val)?)
+        self.write(ms.index + 31, val)
     }
 
     pub fn calculate_multisynth(ms: &mut Si5338Multisynth, rate: &BladerfRationalRate) {
@@ -419,7 +423,7 @@ impl SI5338 {
             channel |= SI5338_EN_B;
         }
 
-        Ok(self.set_rational_multisynth(index, channel, rate_reduced)?)
+        self.set_rational_multisynth(index, channel, rate_reduced)
     }
 
     pub fn set_sample_rate(&self, channel: u8, rate_requested: u32) -> anyhow::Result<u32> {
@@ -432,7 +436,7 @@ impl SI5338 {
 
         // log_verbose("Setting integer sample rate: %d\n", rate);
 
-        let mut act = self.set_rational_sample_rate(channel, &mut req)?;
+        let act = self.set_rational_sample_rate(channel, &mut req)?;
 
         if act.num != 0 {
             println!("Non-integer sample rate set from integer sample rate, truncating output.\n");
@@ -445,10 +449,11 @@ impl SI5338 {
     }
 
     pub fn get_rational_sample_rate(&self, ch: u8) -> anyhow::Result<BladerfRationalRate> {
-        let mut ms = Si5338Multisynth::default();
-
         /* Select the multisynth we want to read */
-        ms.index = if ch == bladerf_channel_rx!(0) { 1 } else { 2 };
+        let mut ms = Si5338Multisynth {
+            index: if ch == bladerf_channel_rx!(0) { 1 } else { 2 },
+            ..Default::default()
+        };
 
         /* Update the base address */
         Self::update_base(&mut ms);
@@ -487,12 +492,12 @@ impl SI5338 {
             return Err(anyhow!("provided SMB freq violates maximum"));
         }
 
-        Ok(self.set_rational_multisynth(3, SI5338_EN_A, rate_reduced)?)
+        self.set_rational_multisynth(3, SI5338_EN_A, rate_reduced)
     }
 
     pub fn set_smb_freq(&self, rate: u32) -> anyhow::Result<u32> {
         let mut req = BladerfRationalRate::default();
-        println!("Setting integer SMB frequency: {}", rate);
+        println!("Setting integer SMB frequency: {rate}");
         req.integer = rate as u64;
         req.num = 0;
         req.den = 1;
