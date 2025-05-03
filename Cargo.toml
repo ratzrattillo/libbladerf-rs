@@ -12,7 +12,7 @@ keywords = ["sdr", "rf", "bladerf"]
 categories = ["api-bindings"]
 
 [workspace]
-members = [".", "crates/libnios-rs"]
+members = [".", "crates/bladerf-globals", "crates/bladerf-nios"]
 
 [features]
 default = ["nusb"] # , "rusb"
@@ -30,7 +30,7 @@ thiserror = "2.0"
 nusb = { version = "0.1", optional = true }
 # rusb = { version = "0.9", features = ["vendored"], optional = true }
 tokio = { version = "1", features = ["full"]}
-libnios-rs = { path="crates/libnios-rs" }
+bladerf-nios= { path= "crates/bladerf-nios" }
 
 #[dev-dependencies]
 #anyhow = "1.0"

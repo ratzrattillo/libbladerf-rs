@@ -60,15 +60,15 @@
  *
  */
 
+// use crate::GenericNiosPkt;
+use crate::NiosPktMagic;
 use std::fmt::{Debug, Display, Formatter, LowerHex};
-// use std::mem::ManuallyDrop;
-
-pub const NIOS_PKT_8X8_MAGIC: u8 = 0x41; // 'A'
-pub const NIOS_PKT_8X16_MAGIC: u8 = 0x42; // 'B'
-pub const NIOS_PKT_8X32_MAGIC: u8 = 0x43; // 'C'
-pub const NIOS_PKT_8X64_MAGIC: u8 = 0x44; // 'D'
-pub const NIOS_PKT_16X64_MAGIC: u8 = 0x45; // 'E'
-pub const NIOS_PKT_32X32_MAGIC: u8 = 0x4B; // 'K'
+// pub const NIOS_PKT_8X8_MAGIC: u8 = 0x41; // 'A'
+// pub const NIOS_PKT_8X16_MAGIC: u8 = 0x42; // 'B'
+// pub const NIOS_PKT_8X32_MAGIC: u8 = 0x43; // 'C'
+// pub const NIOS_PKT_8X64_MAGIC: u8 = 0x44; // 'D'
+// pub const NIOS_PKT_16X64_MAGIC: u8 = 0x45; // 'E'
+// pub const NIOS_PKT_32X32_MAGIC: u8 = 0x4B; // 'K'
 
 pub type NiosPkt8x8 = NiosPkt<u8, u8>;
 pub type NiosPkt8x16 = NiosPkt<u8, u16>;
@@ -156,25 +156,20 @@ where
     pub const FLAG_SUCCESS: u8 = 2;
 
     pub const MAGIC: u8 = match (size_of::<A>(), size_of::<D>()) {
-        (1, 1) => NIOS_PKT_8X8_MAGIC,
-        (1, 2) => NIOS_PKT_8X16_MAGIC,
-        (1, 4) => NIOS_PKT_8X32_MAGIC,
-        (1, 8) => NIOS_PKT_8X64_MAGIC,
-        (2, 8) => NIOS_PKT_16X64_MAGIC,
-        (4, 4) => NIOS_PKT_32X32_MAGIC,
+        (1, 1) => NiosPktMagic::_8X8 as u8,
+        (1, 2) => NiosPktMagic::_8X16 as u8,
+        (1, 4) => NiosPktMagic::_8X32 as u8,
+        (1, 8) => NiosPktMagic::_8X64 as u8,
+        (2, 8) => NiosPktMagic::_16X64 as u8,
+        (4, 4) => NiosPktMagic::_32X32 as u8,
         _ => panic!("Wrong type sizes for NIOS packet"),
     };
 
-    // pub fn as_mut_ptr(&mut self) -> *mut u8 {
-    //     self.buf.as_mut_ptr()
-    // }
-    //
     pub fn buf_ptr(&self) -> *const u8 {
         self.buf.as_ptr()
     }
 
     pub fn new(target_id: u8, flags: u8, addr: A, data: D) -> Self {
-        // let mut pkt = Self::from(Vec::<u8>::from([0u8; 16]));
         let mut pkt: NiosPkt<A, D> = vec![0u8; 16].into();
         pkt.set(target_id, flags, addr, data);
         pkt
@@ -186,15 +181,6 @@ where
             .set_flags(flags)
             .set_addr(addr)
             .set_data(data)
-    }
-
-    pub fn reuse(v: Vec<u8>) -> Self {
-        //let v = ManuallyDrop::new(v);
-        Self {
-            //buf: *v.as_array().expect("slice with incorrect length"),
-            buf: v,
-            phantom: Default::default(),
-        }
     }
 
     pub fn validate(&self) -> Result<(), String> {
@@ -215,6 +201,7 @@ where
 
     pub fn magic(&self) -> u8 {
         self.buf[Self::IDX_MAGIC]
+        //self.buf.magic()
     }
     pub fn target_id(&self) -> u8 {
         self.buf[Self::IDX_TARGET_ID]
@@ -249,6 +236,7 @@ where
 
     pub fn set_magic(&mut self, magic: u8) -> &mut Self {
         self.buf[Self::IDX_MAGIC] = magic;
+        //self.buf.set_magic(magic);
         self
     }
     pub fn set_target_id(&mut self, target_id: u8) -> &mut Self {
@@ -281,9 +269,9 @@ where
     A: NumToByte + Debug + Display + LowerHex,
     D: NumToByte + Debug + Display + LowerHex,
 {
-    fn from(v: Vec<u8>) -> Self {
+    fn from(value: Vec<u8>) -> Self {
         Self {
-            buf: v,
+            buf: value,
             phantom: Default::default(),
         }
     }
@@ -305,15 +293,15 @@ where
     D: NumToByte + Debug + Display + LowerHex,
 {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let magic = match self.magic() {
-            NIOS_PKT_8X8_MAGIC => "Nios_8x8",
-            NIOS_PKT_8X16_MAGIC => "Nios_8x16",
-            NIOS_PKT_8X32_MAGIC => "Nios_8x32",
-            NIOS_PKT_8X64_MAGIC => "Nios_8x64",
-            NIOS_PKT_16X64_MAGIC => "Nios_16x64",
-            NIOS_PKT_32X32_MAGIC => "Nios_32x32",
-            _ => "UNKNOWN",
-        };
+        // let magic = match self.magic() {
+        //     NIOS_PKT_8X8_MAGIC => "Nios_8x8",
+        //     NIOS_PKT_8X16_MAGIC => "Nios_8x16",
+        //     NIOS_PKT_8X32_MAGIC => "Nios_8x32",
+        //     NIOS_PKT_8X64_MAGIC => "Nios_8x64",
+        //     NIOS_PKT_16X64_MAGIC => "Nios_16x64",
+        //     NIOS_PKT_32X32_MAGIC => "Nios_32x32",
+        //     _ => "UNKNOWN",
+        // };
         let flags = match self.flags() {
             0x0 => "READ FAILURE",
             0x1 => "WRITE FAILURE",
@@ -321,8 +309,8 @@ where
             0x3 => "WRITE SUCCESS",
             _ => "UNKNOWN",
         };
-        f.debug_struct(&String::from(magic))
-            .field("magic", &format_args!("{:#x}", self.magic()))
+        f.debug_struct("NiosPkt")
+            .field("magic", &format_args!("{:?}", self.magic()))
             .field("target", &format_args!("{:#x}", self.target_id()))
             .field("flags", &String::from(flags))
             .field("addr", &format_args!("{:#x}", self.addr()))

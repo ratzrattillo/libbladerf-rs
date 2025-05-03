@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use libnios_rs::packet::{
+    use bladerf_nios::packet::{
         NiosPkt8x8, NiosPkt8x16, NiosPkt8x32, NiosPkt8x64, NiosPkt16x64, NiosPkt32x32,
     };
 
@@ -15,7 +15,7 @@ mod tests {
         let packet_vec: Vec<u8> = packet.into();
         let ptr1 = packet_vec.as_ptr();
         println!("ptr1: {ptr1:?}");
-        let reused_packet = PktType::reuse(packet_vec);
+        let reused_packet = PktType::from(packet_vec);
         let ptr2 = reused_packet.buf_ptr();
         println!("ptr2: {ptr2:?}");
 

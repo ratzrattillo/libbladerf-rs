@@ -1,0 +1,19 @@
+[package]
+name = "bladerf-nios"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bladerf-globals = { path="../bladerf-globals" }
+
+[dev-dependencies]
+anyhow = { version = "1.0"}
+
+[[example]]
+name = "packet"
+
+[[example]]
+name = "packet_retune"
+
+[[example]]
+name = "packet_retune2"

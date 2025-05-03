@@ -3,9 +3,9 @@
 use crate::bladerf::{BLADERF_MODULE_RX, BLADERF_MODULE_TX, BladerfLoopback};
 use crate::board::bladerf1::{BLADERF_FREQUENCY_MAX, BLADERF_FREQUENCY_MIN, BladerfLnaGain};
 use crate::nios::Nios;
-use crate::nios::constants::NIOS_PKT_8X8_TARGET_LMS6;
 use anyhow::{Result, anyhow};
-use libnios_rs::packet::NiosPkt8x8;
+use bladerf_nios::NIOS_PKT_8X8_TARGET_LMS6;
+use bladerf_nios::packet::NiosPkt8x8;
 use nusb::Interface;
 
 const ENDPOINT_OUT: u8 = 0x02;
@@ -480,7 +480,7 @@ impl LMS6002D {
         let response = self
             .interface
             .nios_send(ENDPOINT_IN, ENDPOINT_OUT, request.into())?;
-        Ok(NiosPkt::reuse(response).data())
+        Ok(NiosPkt::from(response).data())
     }
 
     pub fn write(&self, addr: u8, data: u8) -> Result<u8> {
@@ -491,14 +491,13 @@ impl LMS6002D {
         let response = self
             .interface
             .nios_send(ENDPOINT_IN, ENDPOINT_OUT, request.into())?;
-        Ok(NiosPkt::reuse(response).data())
+        Ok(NiosPkt::from(response).data())
     }
 
-    pub fn set(&self, addr: u8, mask: u8) -> Result<()> {
+    pub fn set(&self, addr: u8, mask: u8) -> Result<u8> {
         let mut data = self.read(addr)?;
         data |= mask;
-        self.write(addr, data)?;
-        Ok(())
+        self.write(addr, data)
     }
 
     pub fn get_vtune(&self, base: u8, _delay: u8) -> Result<u8> {
@@ -513,9 +512,9 @@ impl LMS6002D {
 
     pub fn enable_rffe(&self, module: u8, enable: bool) -> Result<u8> {
         let (addr, shift) = if module == BLADERF_MODULE_TX {
-            (0x40, 0)
+            (0x40u8, 1u8)
         } else {
-            (0x70, 1)
+            (0x70u8, 0u8)
         };
         let mut data = self.read(addr)?;
 
@@ -1040,7 +1039,7 @@ impl LMS6002D {
         /* Turn on the DSMs */
         let mut data = self.read(0x09)?;
         data |= 0x05;
-        self.write(0x09, data)?; //.expect("Failed to turn on DSMs\n");
+        self.write(0x09, data).expect("Failed to turn on DSMs\n");
 
         /* Write the initial vcocap estimate first to allow for adequate time for
          * VTUNE to stabilize. We need to be sure to keep the upper bits of
@@ -1048,6 +1047,7 @@ impl LMS6002D {
         let mut result = self.read(base + 9);
         if result.is_err() {
             self.turn_off_dsms()?;
+            return Err(anyhow!("Failed to read vcocap regstate!"));
         }
         let mut vcocap_reg_state = result?;
 
@@ -1056,36 +1056,57 @@ impl LMS6002D {
         result = self.write_vcocap(base, f.vcocap, vcocap_reg_state);
         if result.is_err() {
             self.turn_off_dsms()?;
+            return Err(anyhow!("Failed to write vcocap_reg_state!"));
         }
 
-        result = self.write_pll_config(module, f.freqsel, (f.flags & LMS_FREQ_FLAGS_LOW_BAND) != 0);
+        let low_band = (f.flags & LMS_FREQ_FLAGS_LOW_BAND) != 0;
+        result = self.write_pll_config(module, f.freqsel, low_band);
         if result.is_err() {
             self.turn_off_dsms()?;
+            return Err(anyhow!("Failed to write pll_config!"));
         }
 
-        data = (f.nint >> 1) as u8;
-        result = self.write(pll_base, data);
-        if result.is_err() {
-            self.turn_off_dsms()?;
+        let mut freq_data = [0u8; 4];
+        freq_data[0] = (f.nint >> 1) as u8;
+        freq_data[1] = (((f.nint & 1) << 7) as u32 | ((f.nfrac >> 16) & 0x7f)) as u8;
+        freq_data[2] = ((f.nfrac >> 8) & 0xff) as u8;
+        freq_data[3] = (f.nfrac & 0xff) as u8;
+
+        for (idx, value) in freq_data.iter().enumerate() {
+            result = self.write(pll_base + idx as u8, *value);
+            if result.is_err() {
+                self.turn_off_dsms()?;
+                return Err(anyhow!("Failed to write pll {}!", pll_base + idx as u8));
+            }
         }
 
-        data = (((f.nint & 1) << 7) as u32 | ((f.nfrac >> 16) & 0x7f)) as u8;
-        result = self.write(pll_base + 1, data);
-        if result.is_err() {
-            self.turn_off_dsms()?;
-        }
-
-        data = ((f.nfrac >> 8) & 0xff) as u8;
-        result = self.write(pll_base + 2, data);
-        if result.is_err() {
-            self.turn_off_dsms()?;
-        }
-
-        data = (f.nfrac & 0xff) as u8;
-        result = self.write(pll_base + 3, data);
-        if result.is_err() {
-            self.turn_off_dsms()?;
-        }
+        // data = (f.nint >> 1) as u8;
+        // result = self.write(pll_base, data);
+        // if result.is_err() {
+        //     self.turn_off_dsms()?;
+        //     return Err(anyhow!("Failed to write pll pll_base + 0!"))
+        // }
+        //
+        // data = (((f.nint & 1) << 7) as u32 | ((f.nfrac >> 16) & 0x7f)) as u8;
+        // result = self.write(pll_base + 1, data);
+        // if result.is_err() {
+        //     self.turn_off_dsms()?;
+        //     return Err(anyhow!("Failed to write pll pll_base + 1!"))
+        // }
+        //
+        // data = ((f.nfrac >> 8) & 0xff) as u8;
+        // result = self.write(pll_base + 2, data);
+        // if result.is_err() {
+        //     self.turn_off_dsms()?;
+        //     return Err(anyhow!("Failed to write pll pll_base + 2!"))
+        // }
+        //
+        // data = (f.nfrac & 0xff) as u8;
+        // result = self.write(pll_base + 3, data);
+        // if result.is_err() {
+        //     self.turn_off_dsms()?;
+        //     return Err(anyhow!("Failed to write pll pll_base + 3!"))
+        // }
 
         /* Perform tuning algorithm unless we've been instructed to just use
          * the VCOCAP hint as-is. */
@@ -1093,20 +1114,11 @@ impl LMS6002D {
             f.vcocap_result = f.vcocap;
         } else {
             /* Walk down VCOCAP values find an optimal values */
+            println!("Tuning VCOCAP...");
             f.vcocap_result = self.tune_vcocap(f.vcocap, base, vcocap_reg_state)?;
         }
 
         Ok(())
-
-        // error:
-        //     /* Turn off the DSMs */
-        //     dsm_status = LMS_READ(dev, 0x09, &data);
-        //     if (dsm_status == 0) {
-        //         data &= ~(0x05);
-        //         dsm_status = LMS_WRITE(dev, 0x09, data);
-        //     }
-
-        //return (status == 0) ? dsm_status : status;
     }
 
     pub fn turn_off_dsms(&self) -> Result<u8> {

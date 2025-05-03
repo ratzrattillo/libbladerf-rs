@@ -1,8 +1,6 @@
-pub(crate) mod constants;
-
 use anyhow::anyhow;
+use bladerf_nios::packet::NiosPkt8x8;
 use futures_lite::future::block_on;
-use libnios_rs::packet::NiosPkt8x8;
 use nusb::Interface;
 use nusb::transfer::RequestBuffer;
 

@@ -1,5 +1,5 @@
 use anyhow::Result;
-use libnios_rs::packet::NiosPkt32x32;
+use bladerf_nios::packet::NiosPkt32x32;
 
 fn main() -> Result<()> {
     type PktType = NiosPkt32x32;
@@ -17,10 +17,10 @@ fn main() -> Result<()> {
     //let _ptr = packet.as_mut_ptr();
 
     // Convert a packet into a vector (underlying buffer is reused)
-    let packet_vec = packet.into();
+    let packet_vec: Vec<u8> = packet.into();
 
     // Convert a vector back into a packet
-    let mut reused_packet = PktType::reuse(packet_vec);
+    let mut reused_packet = PktType::from(packet_vec);
 
     // Check if a valid packet has been created:
     reused_packet.validate().expect("Failed to validate");

@@ -16,10 +16,10 @@ use crate::hardware::dac161s055::DAC161S055;
 use crate::hardware::lms6002d::LMS6002D;
 use crate::hardware::si5338::SI5338;
 use crate::nios::Nios;
-use crate::nios::constants::NIOS_PKT_8X32_TARGET_CONTROL;
 use crate::usb::UsbBackend;
 use crate::{bladerf_channel_rx, bladerf_channel_tx};
-use libnios_rs::packet::NiosPkt8x32;
+use bladerf_nios::NIOS_PKT_8X32_TARGET_CONTROL;
+use bladerf_nios::packet::NiosPkt8x32;
 
 #[derive(thiserror::Error, Debug)]
 pub enum BladeRfError {
@@ -500,10 +500,10 @@ impl BladeRf1 {
         let response = self
             .interface
             .nios_send(ENDPOINT_IN, ENDPOINT_OUT, request.into())?;
-        Ok(NiosPkt::reuse(response).data())
+        Ok(NiosPkt::from(response).data())
     }
 
-    fn config_gpio_write(&self, mut data: u32) -> Result<()> {
+    fn config_gpio_write(&self, mut data: u32) -> Result<u32> {
         const ENDPOINT_OUT: u8 = 0x02;
         const ENDPOINT_IN: u8 = 0x82;
 
@@ -532,10 +532,11 @@ impl BladeRf1 {
         }
 
         let request = NiosPkt::new(NIOS_PKT_8X32_TARGET_CONTROL, NiosPkt::FLAG_WRITE, 0x0, data);
-        let _response = self
+        let response_vec = self
             .interface
             .nios_send(ENDPOINT_IN, ENDPOINT_OUT, request.into())?;
-        Ok(())
+        let response = NiosPkt::from(response_vec);
+        Ok(response.data())
     }
 
     /*
@@ -545,35 +546,60 @@ impl BladeRf1 {
         self.interface.set_alt_setting(0x01)?;
         println!("[*] Init - Set Alt Setting to 0x01");
 
+        // Out: 43010000000000000000000000000000
+        // In:  43010200000000000000000000000000
         let cfg = self.config_gpio_read()?;
         if (cfg & 0x7f) == 0 {
             println!("[*] Init - Default GPIO value \"{cfg}\" found - initializing device");
             /* Set the GPIO pins to enable the LMS and select the low band */
+            // Out: 43010100005700000000000000000000
+            // In:  43010300005700000000000000000000
             self.config_gpio_write(0x57)?;
 
             /* Disable the front ends */
             println!("[*] Init - Disabling RX and TX Frontend");
+            // Out: 41000000400000000000000000000000
+            // In:  41000200400200000000000000000000
+            // Out: 41000100400000000000000000000000
+            // In:  41000300400000000000000000000000
             self.lms.enable_rffe(BLADERF_MODULE_TX, false)?;
+            println!("{BLADERF_MODULE_TX}");
+
+            // Out: 41000000700000000000000000000000
+            // In:  41000200700200000000000000000000
+            // Out: 41000100700000000000000000000000
+            // In:  41000300700000000000000000000000
             self.lms.enable_rffe(BLADERF_MODULE_RX, false)?;
+            println!("{BLADERF_MODULE_RX}");
 
             /* Set the internal LMS register to enable RX and TX */
             println!("[*] Init - Set LMS register to enable RX and TX");
+            // Out: 41000100053e00000000000000000000
+            // In:  41000300053e00000000000000000000
             self.lms.write(0x05, 0x3e)?;
 
             /* LMS FAQ: Improve TX spurious emission performance */
             println!("[*] Init - Set LMS register to enable RX and TX");
+            // Out: 41000100474000000000000000000000
+            // In:  41000300474000000000000000000000
             self.lms.write(0x47, 0x40)?;
 
             /* LMS FAQ: Improve ADC performance */
             println!("[*] Init - Set register to improve ADC performance");
+            // Out: 41000100592900000000000000000000
+            // In:  41000300592900000000000000000000
             self.lms.write(0x59, 0x29)?;
 
             /* LMS FAQ: Common mode voltage for ADC */
             println!("[*] Init - Set Common mode voltage for ADC");
+            // Out: 41000100643600000000000000000000
+            // In:  41000300643600000000000000000000
             self.lms.write(0x64, 0x36)?;
 
             /* LMS FAQ: Higher LNA Gain */
             println!("[*] Init - Set Higher LNA Gain");
+            // Out: 41000100793700000000000000000000
+            // In:  41000300793700000000000000000000
             self.lms.write(0x79, 0x37)?;
 
             /* Power down DC calibration comparators until they are need, as they
@@ -581,54 +607,105 @@ impl BladeRf1 {
              * (This is documented in the LMS6 FAQ). */
 
             println!("[*] Init - Power down TX LPF DC cal comparator");
+            // Out: 410000003f0000000000000000000000
+            // In:  410002003f0000000000000000000000
+            // Out: 410001003f8000000000000000000000
+            // In:  410003003f8000000000000000000000
             self.lms.set(0x3f, 0x80)?; /* TX LPF DC cal comparator */
 
             println!("[*] Init - Power down RX LPF DC cal comparator");
+            // Out: 410000005f0000000000000000000000
+            // In:  410002005f1f00000000000000000000
+            // Out: 410001005f9f00000000000000000000
+            // In:  410003005f9f00000000000000000000
             self.lms.set(0x5f, 0x80)?; /* RX LPF DC cal comparator */
 
             println!("[*] Init - Power down RXVGA2A/B DC cal comparators");
+            // Out: 410000006e0000000000000000000000
+            // In:  410002006e0000000000000000000000
+            // Out: 410001006ec000000000000000000000
+            // In:  410003006ec000000000000000000000
             self.lms.set(0x6e, 0xc0)?; /* RXVGA2A/B DC cal comparators */
 
             /* Configure charge pump current offsets */
             println!("[*] Init - Configure TX charge pump current offsets");
+            // Out: 41000000160000000000000000000000
+            // In:  41000200168c00000000000000000000
+            // Out: 41000100160000000000000000000000
+            // In:  41000300168c00000000000000000000
+            // Out: 41000000170000000000000000000000
+            // In:  4100020017e000000000000000000000
+            // Out: 4100010017e300000000000000000000
+            // In:  4100030017e300000000000000000000
+            // Out: 41000000180000000000000000000000
+            // In:  41000200184000000000000000000000
+            // Out: 41000100184300000000000000000000
+            // In:  41000300184300000000000000000000
             let _ = self.lms.config_charge_pumps(BLADERF_MODULE_TX)?;
             println!("[*] Init - Configure RX charge pump current offsets");
+
+            // Out: 41000000260000000000000000000000
+            // In:  41000200268c00000000000000000000
+            // Out: 41000100260000000000000000000000
+            // In:  41000300268c00000000000000000000
+            // Out: 41000000270000000000000000000000
+            // In:  4100020027e000000000000000000000
+            // Out: 4100010027e300000000000000000000
+            // In:  4100030027e300000000000000000000
+            // Out: 41000000280000000000000000000000
+            // In:  41000200284000000000000000000000
+            // Out: 41000100184300000000000000000000
+            // In:  41000300284300000000000000000000
             let _ = self.lms.config_charge_pumps(BLADERF_MODULE_RX)?;
+
+            println!("[*] Init - Set TX Samplerate");
+            // Out: 41010000260000000000000000000000
+            // In:  41010200260000000000000000000000
+            // Out: 41010100260300000000000000000000
+            // In:  41010300260300000000000000000000
+            // Out: 410101004b6600000000000000000000
+            // In:  410103004b6600000000000000000000
+            // Out: 410101004c9c00000000000000000000
+            // In:  410103004c9c00000000000000000000
+            // Out: 410101004d0800000000000000000000
+            // In:  410103004d0800000000000000000000
+            // Out: 410101004e0000000000000000000000
+            // In:  410103004e0000000000000000000000
+            // Out: 410101004f0000000000000000000000
+            // In:  410103004f0000000000000000000000
+            // Out: 41010100500000000000000000000000
+            // In:  41010300500000000000000000000000
+            // Out: 41010100510500000000000000000000
+            // In:  41010300510500000000000000000000
+            // Out: 41010100520000000000000000000000
+            // In:  41010300520000000000000000000000
+            // Out: 41010100530000000000000000000000
+            // In:  41010300530000000000000000000000
+            // Out: 41010100540000000000000000000000
+            // In:  41010300540000000000000000000000
+            // Out: 4101010021c800000000000000000000
+            // In : 4101030021c800000000000000000000
+            let _actual_tx = self
+                .si5338
+                .set_sample_rate(bladerf_channel_tx!(0), 1000000)?;
+
+            println!("[*] Init - Set RX Samplerate");
+            // Out: As above but slightly different (Matches original packets)
+            // In:  As above but slightly different (Matches original packets)
+            let _actual_rx = self
+                .si5338
+                .set_sample_rate(bladerf_channel_rx!(0), 1000000)?;
 
             // SI5338 Packet: Magic: 0x54, 8x 0xff, Channel (int), 4Byte Frequency
             // With TX Channel: {0x54, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x0, 0x0, 0x0, 0x0, 0x40, 0x0, 0x0};
             // With RX Channel: {0x54, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x0, 0x0, 0x0, 0x0, 0x80, 0x0, 0x0};
             // Basically  nios_si5338_read == nios 8x8 read
 
-            /* Set a default samplerate */
-
-            // BUG: Actual:
-            // BulkOut: [41, 1, 1, 0, 0, 66, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-            // BulkIn:  [41, 1, 3, 0, 0, 66, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-            // Should be:
-            // BulkOut: [41, 1, 1, 0, 4b, 66, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-            // BulkIn:  [41, 1, 3, 0, 4b, 66, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-            // Seems like ms.base in line 127 of si5338.rs is 0 instead of 0x4b
-
-            println!("[*] Init - Set TX Samplerate");
-            let _actual_tx = self
-                .si5338
-                .set_sample_rate(bladerf_channel_tx!(0), 1000000)?;
-
-            println!("[*] Init - Set RX Samplerate");
-            let _actual_rx = self
-                .si5338
-                .set_sample_rate(bladerf_channel_rx!(0), 1000000)?;
-
-            //board_data->tuning_mode = tuning_get_default_mode(dev);
+            // board_data->tuning_mode = tuning_get_default_mode(dev);
 
             self.set_frequency(bladerf_channel_tx!(0), 2447000000)?;
 
             self.set_frequency(bladerf_channel_rx!(0), 2484000000)?;
-            // status = dev->board->set_frequency(dev, BLADERF_CHANNEL_RX(0), 2484000000U);
-            // if (status != 0) {
-            //     return status;
-            // }
 
             // /* Set the calibrated VCTCXO DAC value */
             // TODO: board_data.dac_trim instead of 0
@@ -681,11 +758,31 @@ impl BladeRf1 {
 
         // Ommit XB200 settings here
 
-        self.lms.set_frequency(channel, frequency as u32)?;
+        // TODO: The tuning mode should be read from the board config
+        // In the packet captures, this is where the changes happen:
+        // -  Packet No. 317 in rx-BladeRFTest-unix-filtered.pcapng
+        // -  Packet No. 230 in rx-rusttool-filtered.pcapng
+        // This is maybe due to the tuning mode being FPGA and not Host
+        enum TuningMode {
+            Host,
+            Fpga,
+        }
+        let mode = TuningMode::Host;
+        // For tuning HOST Tuning Mode:
+        match mode {
+            TuningMode::Host => {
+                self.lms.set_frequency(channel, frequency as u32)?;
+                // status = band_select(dev, ch, frequency < BLADERF1_BAND_HIGH);
+            }
+            TuningMode::Fpga => {
+                //status = dev->board->schedule_retune(dev, ch, BLADERF_RETUNE_NOW, frequency, NULL);
+            }
+        }
+
         Ok(())
     }
 
-    pub fn set_gain_mode(&self, channel: u8, mode: BladerfGainMode) -> Result<()> {
+    pub fn set_gain_mode(&self, channel: u8, mode: BladerfGainMode) -> Result<u32> {
         if channel != BLADERF_MODULE_RX {
             return Err(anyhow!("Operation only supported on RX channel"));
         }

@@ -5,9 +5,9 @@ use crate::board::bladerf1::{
     BLADERF_SAMPLERATE_MIN, BLADERF_SMB_FREQUENCY_MAX, BLADERF_SMB_FREQUENCY_MIN,
 };
 use crate::nios::Nios;
-use crate::nios::constants::NIOS_PKT_8X8_TARGET_SI5338;
 use anyhow::anyhow;
-use libnios_rs::packet::NiosPkt8x8;
+use bladerf_nios::NIOS_PKT_8X8_TARGET_SI5338;
+use bladerf_nios::packet::NiosPkt8x8;
 use nusb::Interface;
 
 use crate::bladerf_channel_rx;
@@ -69,7 +69,7 @@ impl SI5338 {
         let response = self
             .interface
             .nios_send(ENDPOINT_IN, ENDPOINT_OUT, request.into())?;
-        Ok(NiosPkt::reuse(response).data())
+        Ok(NiosPkt::from(response).data())
     }
 
     pub fn write(&self, addr: u8, data: u8) -> anyhow::Result<u8> {
@@ -79,7 +79,7 @@ impl SI5338 {
         let response = self
             .interface
             .nios_send(ENDPOINT_IN, ENDPOINT_OUT, request.into())?;
-        Ok(NiosPkt::reuse(response).data())
+        Ok(NiosPkt::from(response).data())
     }
 
     /**

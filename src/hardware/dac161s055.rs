@@ -1,7 +1,7 @@
 use crate::nios::Nios;
-use crate::nios::constants::NIOS_PKT_8X16_TARGET_VCTCXO_DAC;
 use anyhow::Result;
-use libnios_rs::packet::NiosPkt8x16;
+use bladerf_nios::NIOS_PKT_8X16_TARGET_VCTCXO_DAC;
+use bladerf_nios::packet::NiosPkt8x16;
 use nusb::Interface;
 
 const PERIPHERAL_ENDPOINT_OUT: u8 = 0x02;
@@ -35,7 +35,7 @@ impl DAC161S055 {
 
         //Ok(NiosPacket8x16::reuse(response).data())
         /* Write DAC value to channel 0 */
-        request = NiosPkt::reuse(response);
+        request = NiosPkt::from(response);
         request.set(
             NIOS_PKT_8X16_TARGET_VCTCXO_DAC,
             NiosPkt::FLAG_WRITE,
@@ -49,7 +49,7 @@ impl DAC161S055 {
             request.into(),
         )?;
 
-        Ok(NiosPkt::reuse(response).data())
+        Ok(NiosPkt::from(response).data())
 
         // /* Ensure the device is in write-through mode */
         // status = dev->backend->vctcxo_dac_write(dev, 0x28, 0x0000);
