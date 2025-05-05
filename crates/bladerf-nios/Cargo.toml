@@ -5,9 +5,9 @@ edition = "2024"
 
 [dependencies]
 bladerf-globals = { path="../bladerf-globals" }
+anyhow = { version = "1.0"}
 
 [dev-dependencies]
-anyhow = { version = "1.0"}
 
 [[example]]
 name = "packet"

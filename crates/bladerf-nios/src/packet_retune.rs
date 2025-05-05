@@ -62,16 +62,8 @@
  */
 use crate::NiosPktMagic;
 use bladerf_globals::{BLADERF_MODULE_RX, BLADERF_MODULE_TX};
-// /* Specify this value instead of a timestamp to clear the retune queue */
-// pub const NIOS_PKT_RETUNE_CLEAR_QUEUE: u64 = u64::MAX; // -1
-//
-// /* Denotes no tune word is supplied. */
-// pub const NIOS_PKT_RETUNE_NO_HINT: u8 = 0xff;
-//
-// /* Denotes that the retune should not be scheduled - it should occur "now" */
-// pub const NIOS_PKT_RETUNE_NOW: u64 = 0x00;
-//
-// pub const PACK_TXRX_FREQSEL(module_, freqsel_) \ (freqsel_ & 0x3f)
+
+//pub const PACK_TXRX_FREQSEL(module_, freqsel_) \ (freqsel_ & 0x3f)
 
 pub struct NiosPktRetuneRequest {
     buf: Vec<u8>,
@@ -100,6 +92,15 @@ impl NiosPktRetuneRequest {
     pub(crate) const FLAG_TX: u8 = 1 << 7;
     pub(crate) const FLAG_QUICK_TUNE: u8 = 1 << 6;
     pub(crate) const FLAG_LOW_BAND: u8 = 1 << 7;
+
+    /* Specify this value instead of a timestamp to clear the retune queue */
+    pub const CLEAR_QUEUE: u64 = u64::MAX; // -1
+
+    /* Denotes no tune word is supplied. */
+    pub const NO_HINT: u8 = 0xff;
+
+    /* Denotes that the retune should not be scheduled - it should occur "now" */
+    pub const RETUNE_NOW: u64 = 0x00;
 
     /* Maximum field sizes / masks */
     const NINT_MASK: u16 = 0x01ff; // Max 9bit in size
@@ -415,7 +416,7 @@ impl From<NiosPktRetuneRequest> for Vec<u8> {
  *      flags[7:2]    Reserved. Set to 0.
  */
 
-struct NiosPktRetuneResponse {
+pub struct NiosPktRetuneResponse {
     buf: Vec<u8>,
 }
 impl NiosPktRetuneResponse {

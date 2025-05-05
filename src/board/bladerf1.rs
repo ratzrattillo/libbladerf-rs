@@ -20,6 +20,7 @@ use crate::usb::UsbBackend;
 use crate::{bladerf_channel_rx, bladerf_channel_tx};
 use bladerf_nios::NIOS_PKT_8X32_TARGET_CONTROL;
 use bladerf_nios::packet::NiosPkt8x32;
+use bladerf_nios::packet_retune::{Band, NiosPktRetuneRequest};
 
 #[derive(thiserror::Error, Debug)]
 pub enum BladeRfError {
@@ -461,14 +462,12 @@ pub const BLADERF1_USB_VID: u16 = 0x2CF0;
 pub const BLADERF1_USB_PID: u16 = 0x5246;
 
 pub struct BladeRf1 {
-    #[allow(dead_code)]
     device: Device,
-    #[allow(dead_code)]
     pub interface: Interface,
     lms: LMS6002D,
     si5338: SI5338,
     dac: DAC161S055,
-    //xb200: Option<XB200>,
+    // xb200: Option<XB200>,
 }
 
 // impl BitAnd<u8> for BladeRfChannelLayout {
@@ -751,6 +750,56 @@ impl BladeRf1 {
         self.lms.enable_rffe(module, enable)
     }
 
+    // Todo: Implement band select for set_frequency
+    pub fn band_select(&self, module: u8, band: Band) -> Result<u32> {
+        //const uint32_t band = low_band ? 2 : 1;
+        let band_value = match band {
+            Band::Low => 2,
+            Band::High => 1,
+        };
+
+        println!("Selecting %s band. {band:?}");
+
+        self.lms.select_band(module, band)?;
+        // status = lms_select_band(dev, module, low_band);
+        // if (status != 0) {
+        //     return status;
+        // }
+
+        let mut gpio = self.config_gpio_read()?;
+        // #ifndef BLADERF_NIOS_BUILD
+        //     status = dev->backend->config_gpio_read(dev, &gpio);
+        // #else
+        //     status = CONFIG_GPIO_READ(dev, &gpio);
+        // #endif
+        //     if (status != 0) {
+        //         return status;
+        //     }
+
+        // gpio &= !(module == BLADERF_MODULE_TX ? (3 << 3) : (3 << 5));
+        let shift = if module == BLADERF_MODULE_TX {
+            3 << 3
+        } else {
+            3 << 5
+        };
+        gpio &= !shift;
+
+        // gpio |= (module == BLADERF_MODULE_TX ? (band << 3) : (band << 5));
+        let shift = if module == BLADERF_MODULE_TX {
+            band_value << 3
+        } else {
+            band_value << 5
+        };
+        gpio |= !shift;
+
+        // #ifndef BLADERF_NIOS_BUILD
+        //     return dev->backend->config_gpio_write(dev, gpio);
+        // #else
+        //     return CONFIG_GPIO_WRITE(dev, gpio);
+        // #endif
+        self.config_gpio_write(gpio)
+    }
+
     pub fn set_frequency(&self, channel: u8, frequency: u64) -> Result<()> {
         //let dc_cal = if channel == bladerf_channel_rx!(0) { cal_dc.rx } else { cal.dc_tx };
 
@@ -767,15 +816,21 @@ impl BladeRf1 {
             Host,
             Fpga,
         }
-        let mode = TuningMode::Host;
+        let mode = TuningMode::Fpga;
         // For tuning HOST Tuning Mode:
         match mode {
             TuningMode::Host => {
                 self.lms.set_frequency(channel, frequency as u32)?;
+                // Todo: Band Select
                 // status = band_select(dev, ch, frequency < BLADERF1_BAND_HIGH);
             }
             TuningMode::Fpga => {
-                //status = dev->board->schedule_retune(dev, ch, BLADERF_RETUNE_NOW, frequency, NULL);
+                self.lms.schedule_retune(
+                    channel,
+                    NiosPktRetuneRequest::RETUNE_NOW,
+                    frequency as u32,
+                    None,
+                )?;
             }
         }
 

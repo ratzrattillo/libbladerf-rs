@@ -6,6 +6,7 @@ use crate::nios::Nios;
 use anyhow::{Result, anyhow};
 use bladerf_nios::NIOS_PKT_8X8_TARGET_LMS6;
 use bladerf_nios::packet::NiosPkt8x8;
+use bladerf_nios::packet_retune::{Band, NiosPktRetuneRequest, Tune};
 use nusb::Interface;
 
 const ENDPOINT_OUT: u8 = 0x02;
@@ -311,7 +312,7 @@ pub const LMS_FREQ_FLAGS_FORCE_VCOCAP: u8 = 1 << 1;
  */
 pub const LMS_FREQ_XB_200_ENABLE: u8 = 1 << 7;
 
-/*
+/**
  * This bit indicates the quicktune is for the RX module, not setting this bit
  * indicates the quicktune is for the TX module.
  */
@@ -1127,11 +1128,165 @@ impl LMS6002D {
         self.write(0x09, data)
     }
 
+    pub fn select_pa(&self, pa: LmsPa) -> Result<u8> {
+        // status = LMS_READ(dev, 0x44, &data);
+        let mut data = self.read(0x44)?;
+
+        /* Disable PA1, PA2, and AUX PA - we'll enable as requested below. */
+        data &= !0x1C;
+
+        /* AUX PA powered down */
+        data |= 1 << 1;
+
+        match pa {
+            LmsPa::PaAux => {
+                data &= !(1 << 1); /* Power up the AUX PA */
+            }
+            LmsPa::Pa1 => {
+                data |= 2 << 2; /* PA_EN[2:0] = 010 - Enable PA1 */
+            }
+            LmsPa::Pa2 => {
+                data |= 4 << 2; /* PA_EN[2:0] = 100 - Enable PA2 */
+            }
+            LmsPa::PaNone => {}
+        }
+
+        // match pa {
+        // case PA_AUX:
+        // data &= ~(1 << 1);  /* Power up the AUX PA */
+        // break;
+        //
+        // case PA_1:
+        // data |= (2 << 2);   /* PA_EN[2:0] = 010 - Enable PA1 */
+        // break;
+        //
+        // case PA_2:
+        // data |= (4 << 2);   /* PA_EN[2:0] = 100 - Enable PA2 */
+        // break;
+        //
+        // case PA_NONE:
+        // break;
+        //
+        // default:
+        // assert(!"Invalid PA selection");
+        // status = BLADERF_ERR_INVAL;
+        // }
+
+        // if (status == 0) {
+        // status = LMS_WRITE(dev, 0x44, data);
+        // }
+        self.write(0x44, data)
+    }
+
+    /* Select which LNA to enable */
+    pub fn select_lna(&self, lna: LmsLna) -> Result<u8> {
+        let mut data = self.read(0x75)?;
+        // status = LMS_READ(dev, 0x75, &data);
+        // if (status != 0) {
+        //     return status;
+        // }
+
+        data &= !(3 << 4);
+        data |= (lna as u8 & 3) << 4;
+
+        // return LMS_WRITE(dev, 0x75, data);
+        self.write(0x75, data)
+    }
+
+    pub fn select_band(&self, module: u8, band: Band) -> Result<u8> {
+        /* If loopback mode disabled, avoid changing the PA or LNA selection,
+         * as these need to remain are powered down or disabled */
+        // status = is_loopback_enabled(dev);
+        // if (status < 0) {
+        //     return status;
+        // } else if (status > 0) {
+        //     return 0;
+        // }
+        if self.is_loopback_enabled()? {
+            println!("Loopback enabled!");
+            return Ok(0);
+        }
+
+        // if (module == BLADERF_MODULE_TX) {
+        //     lms_pa pa = low_band ? PA_1 : PA_2;
+        //     status = lms_select_pa(dev, pa);
+        // } else {
+        //     lms_lna lna = low_band ? LNA_1 : LNA_2;
+        //     status = lms_select_lna(dev, lna);
+        // }
+        if module == BLADERF_MODULE_TX {
+            let lms_pa = if band == Band::Low {
+                LmsPa::Pa1
+            } else {
+                LmsPa::Pa2
+            };
+            self.select_pa(lms_pa)
+        } else {
+            let lms_lna = if band == Band::Low {
+                LmsLna::Lna1
+            } else {
+                LmsLna::Lna2
+            };
+            self.select_lna(lms_lna)
+        }
+    }
+
     pub fn set_frequency(&self, channel: u8, frequency: u32) -> Result<LmsFreq> {
         let mut f = Self::calculate_tuning_params(frequency)?;
         println!("{f:?}");
 
         self.set_precalculated_frequency(channel, &mut f)?;
         Ok(f)
+    }
+
+    pub fn schedule_retune(
+        &self,
+        channel: u8,
+        timestamp: u64,
+        frequency: u32,
+        quick_tune: Option<LmsFreq>,
+    ) -> Result<LmsFreq> {
+        let f = if let Some(qt) = quick_tune {
+            qt
+        } else {
+            // if (dev->xb == BLADERF_XB_200) {
+            //     log_info("Consider supplying the quick_tune parameter to"
+            //              " bladerf_schedule_retune() when the XB-200 is enabled.\n");
+            // }
+            Self::calculate_tuning_params(frequency)?
+        };
+
+        println!("{f:?}");
+
+        let band = if f.flags & LMS_FREQ_FLAGS_LOW_BAND != 0 {
+            Band::Low
+        } else {
+            Band::High
+        };
+
+        let tune = if (f.flags & LMS_FREQ_FLAGS_FORCE_VCOCAP) != 0 {
+            Tune::Quick
+        } else {
+            Tune::Normal
+        };
+
+        self.interface.nios_retune(
+            channel, timestamp, f.nint, f.nfrac, f.freqsel, f.vcocap, band, tune, f.xb_gpio,
+        )?;
+        Ok(f)
+    }
+
+    pub fn cancel_scheduled_retunes(&self, channel: u8) -> Result<()> {
+        self.interface.nios_retune(
+            channel,
+            NiosPktRetuneRequest::CLEAR_QUEUE,
+            0,
+            0,
+            0,
+            0,
+            Band::Low,
+            Tune::Normal,
+            0,
+        )
     }
 }

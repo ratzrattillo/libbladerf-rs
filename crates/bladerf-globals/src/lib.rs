@@ -33,3 +33,6 @@ macro_rules! bladerf_channel_is_tx {
 pub const BLADERF_MODULE_RX: u8 = bladerf_channel_rx!(0);
 #[allow(dead_code)]
 pub const BLADERF_MODULE_TX: u8 = bladerf_channel_tx!(0);
+
+pub const ENDPOINT_OUT: u8 = 0x02;
+pub const ENDPOINT_IN: u8 = 0x82;

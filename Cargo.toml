@@ -31,6 +31,7 @@ nusb = { version = "0.1", optional = true }
 # rusb = { version = "0.9", features = ["vendored"], optional = true }
 tokio = { version = "1", features = ["full"]}
 bladerf-nios= { path= "crates/bladerf-nios" }
+bladerf-globals= { path= "crates/bladerf-globals" }
 
 #[dev-dependencies]
 #anyhow = "1.0"
