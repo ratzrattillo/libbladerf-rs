@@ -26,8 +26,8 @@ atomic_enum = "0.3"
 futures-lite = "2.6"
 log = "0.4"
 thiserror = "2.0"
-# nusb = { git = "https://github.com/kevinmehall/nusb", branch="redesign", optional = true }
-nusb = { version = "0.1", optional = true }
+# nusb = { version = "0.1", optional = true }
+nusb = { git = "https://github.com/kevinmehall/nusb", branch="main", optional = true }
 # rusb = { version = "0.9", features = ["vendored"], optional = true }
 tokio = { version = "1", features = ["full"]}
 bladerf-nios= { path= "crates/bladerf-nios" }

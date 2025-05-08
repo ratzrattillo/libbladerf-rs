@@ -1,20 +1,16 @@
 #![allow(dead_code)]
 
-use crate::bladerf::BladerfRationalRate;
 use crate::board::bladerf1::{
     BLADERF_SAMPLERATE_MIN, BLADERF_SMB_FREQUENCY_MAX, BLADERF_SMB_FREQUENCY_MIN,
 };
 use crate::nios::Nios;
 use anyhow::anyhow;
+use bladerf_globals::{
+    BladerfRationalRate, ENDPOINT_IN, ENDPOINT_OUT, bladerf_channel_rx, bladerf_channel_tx,
+};
 use bladerf_nios::NIOS_PKT_8X8_TARGET_SI5338;
 use bladerf_nios::packet::NiosPkt8x8;
 use nusb::Interface;
-
-use crate::bladerf_channel_rx;
-use crate::bladerf_channel_tx;
-
-const ENDPOINT_OUT: u8 = 0x02;
-const ENDPOINT_IN: u8 = 0x82;
 
 const SI5338_F_VCO: u64 = 38400000 * 66;
 const SI5338_EN_A: u8 = 0x01;
@@ -56,29 +52,34 @@ pub struct Si5338Multisynth {
 
 pub struct SI5338 {
     interface: Interface,
+    // ep_bulk_out: &'a mut Endpoint<Bulk, Out>,
+    // ep_bulk_in: &'a mut Endpoint<Bulk, In>,
 }
 
 impl SI5338 {
     pub fn new(interface: Interface) -> Self {
         Self { interface }
     }
-    pub fn read(&self, addr: u8) -> anyhow::Result<u8> {
+
+    pub async fn read(&self, addr: u8) -> anyhow::Result<u8> {
         type NiosPkt = NiosPkt8x8;
         let request = NiosPkt::new(NIOS_PKT_8X8_TARGET_SI5338, NiosPkt::FLAG_READ, addr, 0x0);
 
         let response = self
             .interface
-            .nios_send(ENDPOINT_IN, ENDPOINT_OUT, request.into())?;
+            .nios_send(ENDPOINT_OUT, ENDPOINT_IN, request.into())
+            .await?;
         Ok(NiosPkt::from(response).data())
     }
 
-    pub fn write(&self, addr: u8, data: u8) -> anyhow::Result<u8> {
+    pub async fn write(&self, addr: u8, data: u8) -> anyhow::Result<u8> {
         type NiosPkt = NiosPkt8x8;
         let request = NiosPkt::new(NIOS_PKT_8X8_TARGET_SI5338, NiosPkt::FLAG_WRITE, addr, data);
 
         let response = self
             .interface
-            .nios_send(ENDPOINT_IN, ENDPOINT_OUT, request.into())?;
+            .nios_send(ENDPOINT_OUT, ENDPOINT_IN, request.into())
+            .await?;
         Ok(NiosPkt::from(response).data())
     }
 
@@ -242,20 +243,20 @@ impl SI5338 {
         //log_verbose("Unpacked r: %d\n", ms->r);
     }
 
-    pub fn read_multisynth(&self, ms: &mut Si5338Multisynth) -> anyhow::Result<()> {
+    pub async fn read_multisynth(&self, ms: &mut Si5338Multisynth) -> anyhow::Result<()> {
         /* Read the enable bits */
-        let mut val = self.read(36 + ms.index)?;
+        let mut val = self.read(36 + ms.index).await?;
 
         ms.enable = val & 7;
         // log_verbose("Read enable register: 0x%2.2x\n", val);
 
         /* Read all the multisynth registers */
         for i in 0..ms.regs.len() {
-            ms.regs[i] = self.read(ms.base as u8 + i as u8)?
+            ms.regs[i] = self.read(ms.base as u8 + i as u8).await?
         }
 
         /* Populate the RxDIV value from the register */
-        val = self.read(31 + ms.index)?;
+        val = self.read(31 + ms.index).await?;
 
         /* RxDIV is stored as a power of 2, so restore it on readback */
         // log_verbose("Read r register: 0x%2.2x\n", val);
@@ -268,15 +269,15 @@ impl SI5338 {
         Ok(())
     }
 
-    pub fn write_multisynth(&self, ms: &Si5338Multisynth) -> anyhow::Result<u8> {
-        let mut val = self.read(36 + ms.index)?;
+    pub async fn write_multisynth(&self, ms: &Si5338Multisynth) -> anyhow::Result<u8> {
+        let mut val = self.read(36 + ms.index).await?;
         val |= ms.enable;
         println!("Wrote enable register: {val:x}");
-        self.write(36 + ms.index, val)?;
+        self.write(36 + ms.index, val).await?;
 
         /* Write out the registers */
         for i in 0..ms.regs.len() {
-            self.write((ms.base + i as u16) as u8, ms.regs[i])?;
+            self.write((ms.base + i as u16) as u8, ms.regs[i]).await?;
             println!("Wrote regs[{i}]: {}", ms.regs[i]);
         }
 
@@ -294,7 +295,7 @@ impl SI5338 {
 
         println!("Wrote r register: {val:x}");
 
-        self.write(ms.index + 31, val)
+        self.write(ms.index + 31, val).await
     }
 
     pub fn calculate_multisynth(ms: &mut Si5338Multisynth, rate: &BladerfRationalRate) {
@@ -366,7 +367,7 @@ impl SI5338 {
         Self::pack_regs(ms);
     }
 
-    pub fn set_rational_multisynth(
+    pub async fn set_rational_multisynth(
         &self,
         index: u8,
         channel: u8,
@@ -395,14 +396,14 @@ impl SI5338 {
         Self::calculate_ms_freq(&mut ms, &mut actual);
 
         /* Program it to the part */
-        self.write_multisynth(&ms)?;
+        self.write_multisynth(&ms).await?;
         Ok(BladerfRationalRate {
             integer: actual.integer,
             num: actual.num,
             den: actual.den,
         })
     }
-    pub fn set_rational_sample_rate(
+    pub async fn set_rational_sample_rate(
         &self,
         ch: u8,
         rate: &mut BladerfRationalRate,
@@ -424,9 +425,10 @@ impl SI5338 {
         }
 
         self.set_rational_multisynth(index, channel, rate_reduced)
+            .await
     }
 
-    pub fn set_sample_rate(&self, channel: u8, rate_requested: u32) -> anyhow::Result<u32> {
+    pub async fn set_sample_rate(&self, channel: u8, rate_requested: u32) -> anyhow::Result<u32> {
         let mut req = BladerfRationalRate {
             integer: rate_requested as u64,
             num: 0,
@@ -436,7 +438,7 @@ impl SI5338 {
 
         // log_verbose("Setting integer sample rate: %d\n", rate);
 
-        let act = self.set_rational_sample_rate(channel, &mut req)?;
+        let act = self.set_rational_sample_rate(channel, &mut req).await?;
 
         if act.num != 0 {
             println!("Non-integer sample rate set from integer sample rate, truncating output.\n");
@@ -448,7 +450,7 @@ impl SI5338 {
         //log_verbose("Set actual integer sample rate: %d\n", act.integer);
     }
 
-    pub fn get_rational_sample_rate(&self, ch: u8) -> anyhow::Result<BladerfRationalRate> {
+    pub async fn get_rational_sample_rate(&self, ch: u8) -> anyhow::Result<BladerfRationalRate> {
         /* Select the multisynth we want to read */
         let mut ms = Si5338Multisynth {
             index: if ch == bladerf_channel_rx!(0) { 1 } else { 2 },
@@ -459,15 +461,15 @@ impl SI5338 {
         Self::update_base(&mut ms);
 
         /* Readback */
-        self.read_multisynth(&mut ms)?;
+        self.read_multisynth(&mut ms).await?;
 
         let mut rate = BladerfRationalRate::default();
         Self::calculate_ms_freq(&mut ms, &mut rate);
         Ok(rate)
     }
 
-    pub fn get_sample_rate(&self, ch: u8) -> anyhow::Result<u32> {
-        let actual = self.get_rational_sample_rate(ch)?;
+    pub async fn get_sample_rate(&self, ch: u8) -> anyhow::Result<u32> {
+        let actual = self.get_rational_sample_rate(ch).await?;
 
         if actual.num != 0 {
             println!("Fractional sample rate truncated during integer sample rate retrieval");
@@ -477,7 +479,7 @@ impl SI5338 {
         Ok(actual.integer as u32)
     }
 
-    pub fn set_rational_smb_freq(
+    pub async fn set_rational_smb_freq(
         &self,
         rate: &BladerfRationalRate,
     ) -> anyhow::Result<BladerfRationalRate> {
@@ -493,16 +495,17 @@ impl SI5338 {
         }
 
         self.set_rational_multisynth(3, SI5338_EN_A, rate_reduced)
+            .await
     }
 
-    pub fn set_smb_freq(&self, rate: u32) -> anyhow::Result<u32> {
+    pub async fn set_smb_freq(&self, rate: u32) -> anyhow::Result<u32> {
         let mut req = BladerfRationalRate::default();
         println!("Setting integer SMB frequency: {rate}");
         req.integer = rate as u64;
         req.num = 0;
         req.den = 1;
 
-        let act = self.set_rational_smb_freq(&req)?;
+        let act = self.set_rational_smb_freq(&req).await?;
 
         if act.num != 0 {
             println!("Non-integer SMB frequency set from integer frequency, truncating output.");
@@ -515,7 +518,7 @@ impl SI5338 {
         Ok(act.integer as u32)
     }
 
-    pub fn get_rational_smb_freq(&self) -> anyhow::Result<BladerfRationalRate> {
+    pub async fn get_rational_smb_freq(&self) -> anyhow::Result<BladerfRationalRate> {
         let mut ms = Si5338Multisynth::default();
         let mut rate = BladerfRationalRate::default();
 
@@ -523,15 +526,15 @@ impl SI5338 {
         ms.index = 3;
         Self::update_base(&mut ms);
 
-        self.read_multisynth(&mut ms)?;
+        self.read_multisynth(&mut ms).await?;
 
         Self::calculate_ms_freq(&mut ms, &mut rate);
 
         Ok(rate)
     }
 
-    pub fn get_smb_freq(&self) -> anyhow::Result<u32> {
-        let actual = self.get_rational_smb_freq()?;
+    pub async fn get_smb_freq(&self) -> anyhow::Result<u32> {
+        let actual = self.get_rational_smb_freq().await?;
 
         if actual.num != 0 {
             println!("Fractional SMB frequency truncated during integer SMB frequency retrieval");

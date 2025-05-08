@@ -309,8 +309,14 @@ where
             0x3 => "WRITE SUCCESS",
             _ => "UNKNOWN",
         };
+        // let flags = match self.flags() {
+        //     0x0 => NiosPktFlags::ReadFailure,
+        //     0x1 => NiosPktFlags::WriteFailure,
+        //     0x2 => NiosPktFlags::ReadSuccess,
+        //     0x3 => NiosPktFlags::WriteSuccess,
+        // };
         f.debug_struct("NiosPkt")
-            .field("magic", &format_args!("{:?}", self.magic()))
+            .field("magic", &format_args!("{:#x}", self.magic()))
             .field("target", &format_args!("{:#x}", self.target_id()))
             .field("flags", &String::from(flags))
             .field("addr", &format_args!("{:#x}", self.addr()))

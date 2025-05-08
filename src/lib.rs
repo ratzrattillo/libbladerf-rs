@@ -47,9 +47,7 @@
 //pub mod nios;
 //mod nios_legacy;
 //pub mod backend;
-pub mod bladerf;
 pub mod board;
 pub mod hardware;
 pub mod nios;
-mod types;
 mod usb;

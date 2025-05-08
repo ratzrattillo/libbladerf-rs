@@ -1,4 +1,5 @@
 #![allow(dead_code)]
+extern crate core;
 
 pub mod packet;
 pub mod packet_retune;
@@ -17,6 +18,15 @@ pub enum NiosPktMagic {
     Legacy = 0x4E,  // 'N'
     Retune = 0x54,  // 'T'
     Retune2 = 0x55, // 'U'
+}
+
+#[repr(u8)]
+#[derive(Debug)]
+pub enum NiosPktFlags {
+    ReadFailure = 0x0,
+    WriteFailure = 0x1,
+    ReadSuccess = 0x2,
+    WriteSuccess = 0x3,
 }
 
 /* IDs 0x80 through 0xff will not be assigned by Nuand. These are reserved

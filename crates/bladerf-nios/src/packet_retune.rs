@@ -62,7 +62,7 @@
  */
 use crate::NiosPktMagic;
 use bladerf_globals::{BLADERF_MODULE_RX, BLADERF_MODULE_TX};
-
+use std::fmt::{Debug, Formatter};
 //pub const PACK_TXRX_FREQSEL(module_, freqsel_) \ (freqsel_ & 0x3f)
 
 pub struct NiosPktRetuneRequest {
@@ -103,7 +103,7 @@ impl NiosPktRetuneRequest {
     pub const RETUNE_NOW: u64 = 0x00;
 
     /* Maximum field sizes / masks */
-    const NINT_MASK: u16 = 0x01ff; // Max 9bit in size
+    const NINT_MASK: u16 = 0x1ff; // Max 9bit in size
     const NFRAC_MASK: u32 = 0x7fffff; // Max 23bit in size
     const FREQSEL_MASK: u8 = 0x3f; // Max 5bit in size
     const VCOCAP_MASK: u8 = 0x3f; // Max 5bit in size
@@ -180,36 +180,46 @@ impl NiosPktRetuneRequest {
     }
 
     pub fn set_nint(&mut self, nint: u16) -> &mut Self {
-        assert!(nint <= Self::NINT_MASK);
-        // let pkt_mem = &mut self.buf[Self::IDX_INTFRAC..Self::IDX_INTFRAC + 2];
-        // let mut num = u16::from_le_bytes(pkt_mem.try_into().unwrap());
-        // num &= !NINT_MAX; // Clear nint bits
-        // num |= nint;
-        // pkt_mem.copy_from_slice(&num.to_le_bytes());
+        // Todo: weird case: Decimal number 1019 = 0x3fb is given to this method.
+        // Todo: Resulting packet is containing 0x3fb as nint even though according th the packet layout,
+        // Todo: this number should not be possible, as it needs 10 bit and not 9bit.
+        // assert!(nint <= Self::NINT_MASK);
 
-        self.buf[Self::IDX_INTFRAC] = 0x00; // Clear out first byte
-        self.buf[Self::IDX_INTFRAC + 1] &= 0x01; // Clear the first bit of second byte
+        // self.buf[Self::IDX_INTFRAC] = 0x00; // Clear out first byte
+        // self.buf[Self::IDX_INTFRAC + 1] &= !(0x1 << 7) as u8; // Clear the first bit of second byte
 
-        self.buf[Self::IDX_INTFRAC] = (nint >> 1) as u8;
+        self.buf[Self::IDX_INTFRAC] = (nint >> 1) as u8; // 1019 >> 1 = 509 = 0x1FD as u8 = 0xFD
+        println!("Self::IDX_INTFRAC + 0: {:#x}", self.buf[Self::IDX_INTFRAC]);
         self.buf[Self::IDX_INTFRAC + 1] |= ((nint & 0x1) << 7) as u8;
+        println!(
+            "Self::IDX_INTFRAC + 1: {:#x}",
+            self.buf[Self::IDX_INTFRAC + 1]
+        );
         self
     }
 
     pub fn set_nfrac(&mut self, nfrac: u32) -> &mut Self {
         assert!(nfrac <= Self::NFRAC_MASK);
-        // let pkt_mem = &mut self.buf[Self::IDX_INTFRAC..Self::IDX_INTFRAC + 4];
-        // let mut num = u32::from_le_bytes(pkt_mem.try_into().unwrap());
-        // num &= !NFRAC_MAX; // Clear nfrac bits
-        // num |= nfrac;
-        // pkt_mem.copy_from_slice(&num.to_le_bytes());
 
-        self.buf[Self::IDX_INTFRAC + 1] &= !0x01; // Clear out first bit
-        self.buf[Self::IDX_INTFRAC + 2] = 0x00; // Clear the first bit of second byte
-        self.buf[Self::IDX_INTFRAC + 3] = 0x00; // Clear the first bit of second byte
+        // self.buf[Self::IDX_INTFRAC + 1] &= !0x7f; // Clear out all bits except the first bit
+        // self.buf[Self::IDX_INTFRAC + 2] = 0x00; // Clear second byte
+        // self.buf[Self::IDX_INTFRAC + 3] = 0x00; // Clear third byte
 
-        self.buf[Self::IDX_INTFRAC + 1] |= ((nfrac >> 16) & 0x7f) as u8;
-        self.buf[Self::IDX_INTFRAC + 2] = (nfrac >> 8) as u8;
-        self.buf[Self::IDX_INTFRAC + 3] = nfrac as u8;
+        self.buf[Self::IDX_INTFRAC + 1] |= ((nfrac >> 16) & 0x7f) as u8; // 4893355 >> 16 = 74(0x4A), 0x4A & 0x7f = 0x4A
+        println!(
+            "Self::IDX_INTFRAC + 1: {:#x}",
+            self.buf[Self::IDX_INTFRAC + 1]
+        );
+        self.buf[Self::IDX_INTFRAC + 2] = (nfrac >> 8) as u8; // 4893355 >> 8 = 19114(0x4AAA), as u8 = 0xAA
+        println!(
+            "Self::IDX_INTFRAC + 2: {:#x}",
+            self.buf[Self::IDX_INTFRAC + 2]
+        );
+        self.buf[Self::IDX_INTFRAC + 3] = nfrac as u8; // 4893355 as u8 = 0xAB
+        println!(
+            "Self::IDX_INTFRAC + 3: {:#x}",
+            self.buf[Self::IDX_INTFRAC + 3]
+        );
         self
     }
 
@@ -298,14 +308,17 @@ impl NiosPktRetuneRequest {
     }
 
     pub fn nint(&self) -> u16 {
-        let mask: u16 = 0x01ff;
-        let pkt_mem = &self.buf[Self::IDX_INTFRAC..Self::IDX_INTFRAC + 2];
-        u16::from_le_bytes(pkt_mem.try_into().unwrap()) & mask
+        let mut nint = (self.buf[Self::IDX_INTFRAC] as u16) << 1;
+        nint |= (self.buf[Self::IDX_INTFRAC + 1] as u16) >> 7;
+        println!("nint: {nint:#x?}");
+        nint
     }
 
     pub fn nfrac(&self) -> u32 {
-        let pkt_mem = &self.buf[Self::IDX_INTFRAC..Self::IDX_INTFRAC + 4];
-        u32::from_le_bytes(pkt_mem.try_into().unwrap()) & Self::NFRAC_MASK
+        let mut nfrac: u32 = ((&self.buf[Self::IDX_INTFRAC + 1] & 0x7f) as u32) << 16;
+        nfrac |= (self.buf[Self::IDX_INTFRAC + 2] as u32) << 8;
+        nfrac |= self.buf[Self::IDX_INTFRAC + 3] as u32;
+        nfrac
     }
 
     pub fn freqsel(&self) -> u8 {
@@ -363,6 +376,30 @@ impl From<Vec<u8>> for NiosPktRetuneRequest {
 impl From<NiosPktRetuneRequest> for Vec<u8> {
     fn from(value: NiosPktRetuneRequest) -> Self {
         value.buf
+    }
+}
+
+impl Debug for NiosPktRetuneRequest {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let band = match self.band() {
+            Band::Low => "Band::Low",
+            Band::High => "Band::High",
+        };
+        let tune = match self.tune() {
+            Tune::Normal => "Tune::Normal",
+            Tune::Quick => "Tune::Quick",
+        };
+        f.debug_struct("NiosPktRetuneRequest")
+            .field("magic", &format_args!("{:#x}", self.magic()))
+            .field("timestamp", &format_args!("{:#x}", self.timestamp()))
+            .field("nint", &format_args!("{:#x}", self.nint()))
+            .field("nfrac", &format_args!("{:#x}", self.nfrac()))
+            .field("freqsel", &format_args!("{:#x}", self.freqsel()))
+            .field("vcocap", &format_args!("{:#x}", self.vcocap()))
+            .field("band", &String::from(band))
+            .field("tune", &String::from(tune))
+            .field("xb_gpio", &format_args!("{:#x}", self.xb_gpio()))
+            .finish()
     }
 }
 
@@ -461,5 +498,20 @@ impl From<Vec<u8>> for NiosPktRetuneResponse {
 impl From<NiosPktRetuneResponse> for Vec<u8> {
     fn from(value: NiosPktRetuneResponse) -> Self {
         value.buf
+    }
+}
+
+impl Debug for NiosPktRetuneResponse {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NiosPktRetuneRequest")
+            .field("magic", &format_args!("{:#x}", self.magic()))
+            .field("duration", &format_args!("{:#x}", self.duration()))
+            .field("vcocap", &format_args!("{:#x}", self.vcocap()))
+            .field(
+                "duration_and_vcocap_valid",
+                &format_args!("{}", self.duration_and_vcocap_valid()),
+            )
+            .field("is_success", &format_args!("{}", self.is_success()))
+            .finish()
     }
 }

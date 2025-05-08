@@ -1,4 +1,5 @@
 use anyhow::Result;
+use bladerf_globals::BLADERF_MODULE_RX;
 use std::time::Duration;
 // use seify_bladerf::backend::nusb::NusbBackend;
 // use seify_bladerf::backend::rusb::RusbBackend;
@@ -7,15 +8,12 @@ use libbladerf_rs::board::bladerf1::{BladeRf1, BladeRfDirection, BladerfFormat};
 //use seify_bladerf::backend::nusb::NusbBackend;
 //use seify_bladerf::backend::BladeRfBackend;
 //use seify_bladerf::board::bladerf1::BladeRf1;
-
 // use rusb;
 // use std::time::Duration;
 // use seify_bladerf::board::bladerf1::{BLADERF1_USB_PID, BLADERF1_USB_VID};
 // use seify_bladerf::nios::constants::{NIOS_PKT_8X32_TARGET_CONTROL, NIOS_PKT_FLAG_READ};
 // use seify_bladerf::nios::packet8x32::NiosPacket8x32;
 // use seify_bladerf::nios::packet8x8::NiosPacket8x8;
-
-use libbladerf_rs::board::bladerf1::BLADERF_MODULE_RX;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -60,12 +58,14 @@ async fn main() -> Result<()> {
     // }
 
     let bladerf = BladeRf1::builder()
-        .with_serial("0617f60964e8f3efcbf78adc8ed94c26")?
-        .build()?;
+        .with_serial("0617f60964e8f3efcbf78adc8ed94c26")
+        .await?
+        .build()
+        .await?;
 
-    let languages = bladerf.get_supported_languages()?;
+    let languages = bladerf.get_supported_languages().await?;
     println!("{languages:x?}");
-    bladerf.initialize()?;
+    bladerf.initialize().await?;
 
     // bladerf.reset()?;
 
@@ -77,19 +77,25 @@ async fn main() -> Result<()> {
     //              int async_init_stream(
     //                  dev->backend->init_stream(lstream, num_transfers); -> static int lusb_init_stream( in /home/user/sdr/bladeRF/host/libraries/libbladeRF/src/backend/usb/libusb.c
     tokio::time::sleep(Duration::from_secs(1)).await;
-    bladerf.perform_format_config(
-        BladeRfDirection::BladerfRx,
-        BladerfFormat::BladerfFormatSc16Q11,
-    )?;
+    bladerf
+        .perform_format_config(
+            BladeRfDirection::BladerfRx,
+            BladerfFormat::BladerfFormatSc16Q11,
+        )
+        .await?;
     tokio::time::sleep(Duration::from_secs(1)).await;
-    bladerf.bladerf_enable_module(BLADERF_MODULE_RX, true)?;
+    bladerf
+        .bladerf_enable_module(BLADERF_MODULE_RX, true)
+        .await?;
     tokio::time::sleep(Duration::from_secs(1)).await;
 
-    bladerf.async_run_stream().await;
+    bladerf.async_run_stream().await?;
 
     bladerf.perform_format_deconfig(BladeRfDirection::BladerfRx)?;
     tokio::time::sleep(Duration::from_secs(1)).await;
-    bladerf.bladerf_enable_module(BLADERF_MODULE_RX, false)?;
+    bladerf
+        .bladerf_enable_module(BLADERF_MODULE_RX, false)
+        .await?;
 
     //bladerf.hello();
     // for descriptor in bladerf.interface().descriptors(){

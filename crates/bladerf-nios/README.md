@@ -1,4 +1,4 @@
-# LibNIOS-RS
+# LibBladeRF-RS
 Pure Rust library to create and manipulate NIOSII packets.
 
 The packets created can be sent directly to e.g. a USB device.

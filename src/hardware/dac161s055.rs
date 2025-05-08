@@ -1,14 +1,14 @@
 use crate::nios::Nios;
 use anyhow::Result;
+use bladerf_globals::{ENDPOINT_IN, ENDPOINT_OUT};
 use bladerf_nios::NIOS_PKT_8X16_TARGET_VCTCXO_DAC;
 use bladerf_nios::packet::NiosPkt8x16;
 use nusb::Interface;
 
-const PERIPHERAL_ENDPOINT_OUT: u8 = 0x02;
-const PERIPHERAL_ENDPOINT_IN: u8 = 0x82;
-
 pub struct DAC161S055 {
     interface: Interface,
+    // ep_bulk_out: &'a Endpoint<Bulk, Out>,
+    // ep_bulk_in: &'a Endpoint<Bulk, In>,
 }
 
 impl DAC161S055 {
@@ -16,8 +16,14 @@ impl DAC161S055 {
         Self { interface }
     }
 
-    pub fn write(&self, value: u16) -> Result<u16> {
+    pub async fn write(&self, value: u16) -> Result<u16> {
         type NiosPkt = NiosPkt8x16;
+
+        // /* Ensure the device is in write-through mode */
+        // status = dev->backend->vctcxo_dac_write(dev, 0x28, 0x0000);
+        // if (status < 0) {
+        //     return status;
+        // }
 
         /* Ensure the device is in write-through mode */
         let mut request = NiosPkt::new(
@@ -27,13 +33,18 @@ impl DAC161S055 {
             0x0000,
         );
 
-        let response = self.interface.nios_send(
-            PERIPHERAL_ENDPOINT_IN,
-            PERIPHERAL_ENDPOINT_OUT,
-            request.into(),
-        )?;
+        let response = self
+            .interface
+            .nios_send(ENDPOINT_OUT, ENDPOINT_IN, request.into())
+            .await?;
+        //let response = self.interface.nios_send(request.into()).await?;
 
-        //Ok(NiosPacket8x16::reuse(response).data())
+        // /* Write DAC value to channel 0 */
+        // status = dev->backend->vctcxo_dac_write(dev, 0x08, value);
+        // if (status < 0) {
+        //     return status;
+        // }
+
         /* Write DAC value to channel 0 */
         request = NiosPkt::from(response);
         request.set(
@@ -43,24 +54,14 @@ impl DAC161S055 {
             value,
         );
 
-        let response = self.interface.nios_send(
-            PERIPHERAL_ENDPOINT_IN,
-            PERIPHERAL_ENDPOINT_OUT,
-            request.into(),
-        )?;
+        // let response = self
+        //     .interface
+        //     .nios_send(ENDPOINT_IN, ENDPOINT_OUT, request.into())?;
+        let response = self
+            .interface
+            .nios_send(ENDPOINT_OUT, ENDPOINT_IN, request.into())
+            .await?;
 
         Ok(NiosPkt::from(response).data())
-
-        // /* Ensure the device is in write-through mode */
-        // status = dev->backend->vctcxo_dac_write(dev, 0x28, 0x0000);
-        // if (status < 0) {
-        //     return status;
-        // }
-        //
-        // /* Write DAC value to channel 0 */
-        // status = dev->backend->vctcxo_dac_write(dev, 0x08, value);
-        // if (status < 0) {
-        //     return status;
-        // }
     }
 }

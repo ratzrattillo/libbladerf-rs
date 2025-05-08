@@ -1,26 +1,26 @@
 #![allow(private_interfaces, dead_code)]
 
-use anyhow::{Result, anyhow};
-use futures_lite::future::block_on;
-use nusb::descriptors::Configuration;
-use nusb::transfer::{ControlOut, ControlType, Recipient};
-use nusb::{Device, Interface};
-use std::cmp::PartialEq;
-use std::time::Duration;
-
-use crate::bladerf::BladerfGainMode::{BladerfGainDefault, BladerfGainMgc};
-pub use crate::bladerf::{
-    BLADERF_MODULE_RX, BLADERF_MODULE_TX, BladeRf, BladerfGainMode, DescriptorTypes,
-};
 use crate::hardware::dac161s055::DAC161S055;
-use crate::hardware::lms6002d::LMS6002D;
+use crate::hardware::lms6002d::{BLADERF1_BAND_HIGH, LMS6002D};
 use crate::hardware::si5338::SI5338;
 use crate::nios::Nios;
 use crate::usb::UsbBackend;
-use crate::{bladerf_channel_rx, bladerf_channel_tx};
+use anyhow::{Result, anyhow};
+use bladerf_globals::BladerfGainMode::{BladerfGainDefault, BladerfGainMgc};
+use bladerf_globals::{
+    BLADERF_MODULE_RX, BLADERF_MODULE_TX, BLADERF1_USB_PID, BLADERF1_USB_VID, BladeRf,
+    BladerfGainMode, DescriptorTypes, ENDPOINT_IN, ENDPOINT_OUT, TIMEOUT, bladerf_channel_rx,
+    bladerf_channel_tx,
+};
 use bladerf_nios::NIOS_PKT_8X32_TARGET_CONTROL;
 use bladerf_nios::packet::NiosPkt8x32;
 use bladerf_nios::packet_retune::{Band, NiosPktRetuneRequest};
+use nusb::descriptors::ConfigurationDescriptor;
+use nusb::transfer::{Buffer, Bulk, ControlOut, ControlType, In, Out, Recipient};
+use nusb::{Device, Endpoint, Interface};
+use std::cmp::PartialEq;
+use std::num::NonZero;
+use std::time::Duration;
 
 #[derive(thiserror::Error, Debug)]
 pub enum BladeRfError {
@@ -456,14 +456,60 @@ pub enum BladerfLnaGain {
     BladerfLnaGainMax,
 }
 
-/// BladeRF1 USB vendor ID.
-pub const BLADERF1_USB_VID: u16 = 0x2CF0;
-/// BladeRF1 USB product ID.
-pub const BLADERF1_USB_PID: u16 = 0x5246;
+struct BackendTest {
+    device: Device,
+    interface: Interface,
+    ep_bulk_out: Endpoint<Bulk, Out>,
+    ep_bulk_in: Endpoint<Bulk, In>,
+}
+impl BackendTest {
+    async fn new(dev: Device) -> Result<Self> {
+        let device = dev;
+        let interface = device.detach_and_claim_interface(0).await?;
+        let ep_bulk_out = interface.endpoint::<Bulk, Out>(ENDPOINT_OUT)?;
+        let ep_bulk_in = interface.endpoint::<Bulk, In>(ENDPOINT_IN)?;
+        Ok(Self {
+            device,
+            interface,
+            ep_bulk_out,
+            ep_bulk_in,
+        })
+    }
+
+    pub async fn nios_send(
+        &mut self,
+        //mut ep_bulk_in: Endpoint<Bulk, In>,
+        //mut ep_bulk_out: Endpoint<Bulk, Out>,
+        pkt: Vec<u8>,
+    ) -> anyhow::Result<Vec<u8>> {
+        println!("BulkOut: {pkt:x?}");
+
+        self.ep_bulk_out.submit(Buffer::from(pkt));
+        let mut response = self.ep_bulk_out.next_complete().await;
+        response.status?;
+
+        self.ep_bulk_in.submit(response.buffer);
+        response = self.ep_bulk_in.next_complete().await;
+        response.status?;
+
+        // Todo: This should be a generic NIOS packet type, or just a plain Vec,
+        // Todo: We might not be able to easily check for a success flag, as we do not
+        // Todo: know which kind of packet was sent.
+        // type NiosPkt = NiosPkt8x8;
+        // let nios_pkt = NiosPkt::from(response);
+        // if !nios_pkt.is_success() {
+        //     return Err(anyhow!("operation was unsuccessful!"));
+        // }
+        // println!("BulkIn:  {nios_pkt:x?}");
+        // let response_vec = nios_pkt.into();
+        println!("BulkIn:  {:x?}", response);
+        Ok(response.buffer.into_vec())
+    }
+}
 
 pub struct BladeRf1 {
     device: Device,
-    pub interface: Interface,
+    interface: Interface,
     lms: LMS6002D,
     si5338: SI5338,
     dac: DAC161S055,
@@ -489,23 +535,18 @@ impl BladeRf1 {
         }
     }
 
-    fn config_gpio_read(&self) -> Result<u32> {
-        const ENDPOINT_OUT: u8 = 0x02;
-        const ENDPOINT_IN: u8 = 0x82;
-
+    async fn config_gpio_read(&self) -> Result<u32> {
         type NiosPkt = NiosPkt8x32;
 
         let request = NiosPkt::new(NIOS_PKT_8X32_TARGET_CONTROL, NiosPkt::FLAG_READ, 0x0, 0x0);
         let response = self
             .interface
-            .nios_send(ENDPOINT_IN, ENDPOINT_OUT, request.into())?;
+            .nios_send(ENDPOINT_OUT, ENDPOINT_IN, request.into())
+            .await?;
         Ok(NiosPkt::from(response).data())
     }
 
-    fn config_gpio_write(&self, mut data: u32) -> Result<u32> {
-        const ENDPOINT_OUT: u8 = 0x02;
-        const ENDPOINT_IN: u8 = 0x82;
-
+    async fn config_gpio_write(&self, mut data: u32) -> Result<u32> {
         type NiosPkt = NiosPkt8x32;
 
         enum DeviceSpeed {
@@ -533,7 +574,8 @@ impl BladeRf1 {
         let request = NiosPkt::new(NIOS_PKT_8X32_TARGET_CONTROL, NiosPkt::FLAG_WRITE, 0x0, data);
         let response_vec = self
             .interface
-            .nios_send(ENDPOINT_IN, ENDPOINT_OUT, request.into())?;
+            .nios_send(ENDPOINT_OUT, ENDPOINT_IN, request.into())
+            .await?;
         let response = NiosPkt::from(response_vec);
         Ok(response.data())
     }
@@ -541,19 +583,19 @@ impl BladeRf1 {
     /*
     bladerf1_initialize is wrapped in bladerf1_open
      */
-    pub fn initialize(&self) -> Result<()> {
-        self.interface.set_alt_setting(0x01)?;
+    pub async fn initialize(&self) -> Result<()> {
+        self.interface.set_alt_setting(0x01).await?;
         println!("[*] Init - Set Alt Setting to 0x01");
 
         // Out: 43010000000000000000000000000000
         // In:  43010200000000000000000000000000
-        let cfg = self.config_gpio_read()?;
+        let cfg = self.config_gpio_read().await?;
         if (cfg & 0x7f) == 0 {
             println!("[*] Init - Default GPIO value \"{cfg}\" found - initializing device");
             /* Set the GPIO pins to enable the LMS and select the low band */
             // Out: 43010100005700000000000000000000
             // In:  43010300005700000000000000000000
-            self.config_gpio_write(0x57)?;
+            self.config_gpio_write(0x57).await?;
 
             /* Disable the front ends */
             println!("[*] Init - Disabling RX and TX Frontend");
@@ -561,45 +603,45 @@ impl BladeRf1 {
             // In:  41000200400200000000000000000000
             // Out: 41000100400000000000000000000000
             // In:  41000300400000000000000000000000
-            self.lms.enable_rffe(BLADERF_MODULE_TX, false)?;
+            self.lms.enable_rffe(BLADERF_MODULE_TX, false).await?;
             println!("{BLADERF_MODULE_TX}");
 
             // Out: 41000000700000000000000000000000
             // In:  41000200700200000000000000000000
             // Out: 41000100700000000000000000000000
             // In:  41000300700000000000000000000000
-            self.lms.enable_rffe(BLADERF_MODULE_RX, false)?;
+            self.lms.enable_rffe(BLADERF_MODULE_RX, false).await?;
             println!("{BLADERF_MODULE_RX}");
 
             /* Set the internal LMS register to enable RX and TX */
             println!("[*] Init - Set LMS register to enable RX and TX");
             // Out: 41000100053e00000000000000000000
             // In:  41000300053e00000000000000000000
-            self.lms.write(0x05, 0x3e)?;
+            self.lms.write(0x05, 0x3e).await?;
 
             /* LMS FAQ: Improve TX spurious emission performance */
             println!("[*] Init - Set LMS register to enable RX and TX");
             // Out: 41000100474000000000000000000000
             // In:  41000300474000000000000000000000
-            self.lms.write(0x47, 0x40)?;
+            self.lms.write(0x47, 0x40).await?;
 
             /* LMS FAQ: Improve ADC performance */
             println!("[*] Init - Set register to improve ADC performance");
             // Out: 41000100592900000000000000000000
             // In:  41000300592900000000000000000000
-            self.lms.write(0x59, 0x29)?;
+            self.lms.write(0x59, 0x29).await?;
 
             /* LMS FAQ: Common mode voltage for ADC */
             println!("[*] Init - Set Common mode voltage for ADC");
             // Out: 41000100643600000000000000000000
             // In:  41000300643600000000000000000000
-            self.lms.write(0x64, 0x36)?;
+            self.lms.write(0x64, 0x36).await?;
 
             /* LMS FAQ: Higher LNA Gain */
             println!("[*] Init - Set Higher LNA Gain");
             // Out: 41000100793700000000000000000000
             // In:  41000300793700000000000000000000
-            self.lms.write(0x79, 0x37)?;
+            self.lms.write(0x79, 0x37).await?;
 
             /* Power down DC calibration comparators until they are need, as they
              * have been shown to introduce undesirable artifacts into our signals.
@@ -610,21 +652,21 @@ impl BladeRf1 {
             // In:  410002003f0000000000000000000000
             // Out: 410001003f8000000000000000000000
             // In:  410003003f8000000000000000000000
-            self.lms.set(0x3f, 0x80)?; /* TX LPF DC cal comparator */
+            self.lms.set(0x3f, 0x80).await?; /* TX LPF DC cal comparator */
 
             println!("[*] Init - Power down RX LPF DC cal comparator");
             // Out: 410000005f0000000000000000000000
             // In:  410002005f1f00000000000000000000
             // Out: 410001005f9f00000000000000000000
             // In:  410003005f9f00000000000000000000
-            self.lms.set(0x5f, 0x80)?; /* RX LPF DC cal comparator */
+            self.lms.set(0x5f, 0x80).await?; /* RX LPF DC cal comparator */
 
             println!("[*] Init - Power down RXVGA2A/B DC cal comparators");
             // Out: 410000006e0000000000000000000000
             // In:  410002006e0000000000000000000000
             // Out: 410001006ec000000000000000000000
             // In:  410003006ec000000000000000000000
-            self.lms.set(0x6e, 0xc0)?; /* RXVGA2A/B DC cal comparators */
+            self.lms.set(0x6e, 0xc0).await?; /* RXVGA2A/B DC cal comparators */
 
             /* Configure charge pump current offsets */
             println!("[*] Init - Configure TX charge pump current offsets");
@@ -640,7 +682,7 @@ impl BladeRf1 {
             // In:  41000200184000000000000000000000
             // Out: 41000100184300000000000000000000
             // In:  41000300184300000000000000000000
-            let _ = self.lms.config_charge_pumps(BLADERF_MODULE_TX)?;
+            let _ = self.lms.config_charge_pumps(BLADERF_MODULE_TX).await?;
             println!("[*] Init - Configure RX charge pump current offsets");
 
             // Out: 41000000260000000000000000000000
@@ -655,7 +697,7 @@ impl BladeRf1 {
             // In:  41000200284000000000000000000000
             // Out: 41000100184300000000000000000000
             // In:  41000300284300000000000000000000
-            let _ = self.lms.config_charge_pumps(BLADERF_MODULE_RX)?;
+            let _ = self.lms.config_charge_pumps(BLADERF_MODULE_RX).await?;
 
             println!("[*] Init - Set TX Samplerate");
             // Out: 41010000260000000000000000000000
@@ -686,14 +728,16 @@ impl BladeRf1 {
             // In : 4101030021c800000000000000000000
             let _actual_tx = self
                 .si5338
-                .set_sample_rate(bladerf_channel_tx!(0), 1000000)?;
+                .set_sample_rate(bladerf_channel_tx!(0), 1000000)
+                .await?;
 
             println!("[*] Init - Set RX Samplerate");
             // Out: As above but slightly different (Matches original packets)
             // In:  As above but slightly different (Matches original packets)
             let _actual_rx = self
                 .si5338
-                .set_sample_rate(bladerf_channel_rx!(0), 1000000)?;
+                .set_sample_rate(bladerf_channel_rx!(0), 1000000)
+                .await?;
 
             // SI5338 Packet: Magic: 0x54, 8x 0xff, Channel (int), 4Byte Frequency
             // With TX Channel: {0x54, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x0, 0x0, 0x0, 0x0, 0x40, 0x0, 0x0};
@@ -702,13 +746,23 @@ impl BladeRf1 {
 
             // board_data->tuning_mode = tuning_get_default_mode(dev);
 
-            self.set_frequency(bladerf_channel_tx!(0), 2447000000)?;
+            println!("self.set_frequency(bladerf_channel_tx!(0), 2447000000)?;");
+            // Out: 5400000000000000003fb95555ac1f00
+            // In:  5400000000000000001e030000000000
+            self.set_frequency(bladerf_channel_tx!(0), 2447000000)
+                .await?;
 
-            self.set_frequency(bladerf_channel_rx!(0), 2484000000)?;
+            println!("self.set_frequency(bladerf_channel_rx!(0), 2484000000)?;");
+            // Out: 54000000000000000040b000006c2300
+            // In:  54000000000000000021030000000000
+            self.set_frequency(bladerf_channel_rx!(0), 2484000000)
+                .await?;
 
             // /* Set the calibrated VCTCXO DAC value */
             // TODO: board_data.dac_trim instead of 0
-            self.dac.write(0)?;
+            // Out: 42000100280000000000000000000000
+            // In:  42000300280000000000000000000000
+            self.dac.write(0).await?;
 
             // status = dac161s055_write(dev, board_data->dac_trim);
             // if (status != 0) {
@@ -716,7 +770,13 @@ impl BladeRf1 {
             // }
 
             // /* Set the default gain mode */
-            self.set_gain_mode(bladerf_channel_rx!(0), BladerfGainDefault)?;
+            // Out expected: 4200010008d1ab000000000000000000
+            // Out actual:   42000100080000000000000000000000
+            // In: expected: 4200030008d1ab000000000000000000
+            // In actual:    42000300080000000000000000000000
+            // Todo: Implement AGC table and set mode to BladerfGainDefault
+            self.set_gain_mode(bladerf_channel_rx!(0), BladerfGainMgc)
+                .await?;
         } else {
             println!("[*] Init - Device already initialized: {cfg:#04x}");
             //board_data->tuning_mode = tuning_get_default_mode(dev);
@@ -746,12 +806,12 @@ impl BladeRf1 {
         Ok(())
     }
 
-    pub fn bladerf_enable_module(&self, module: u8, enable: bool) -> Result<u8> {
-        self.lms.enable_rffe(module, enable)
+    pub async fn bladerf_enable_module(&self, module: u8, enable: bool) -> Result<u8> {
+        self.lms.enable_rffe(module, enable).await
     }
 
     // Todo: Implement band select for set_frequency
-    pub fn band_select(&self, module: u8, band: Band) -> Result<u32> {
+    pub async fn band_select(&self, module: u8, band: Band) -> Result<u32> {
         //const uint32_t band = low_band ? 2 : 1;
         let band_value = match band {
             Band::Low => 2,
@@ -760,13 +820,13 @@ impl BladeRf1 {
 
         println!("Selecting %s band. {band:?}");
 
-        self.lms.select_band(module, band)?;
+        self.lms.select_band(module, band).await?;
         // status = lms_select_band(dev, module, low_band);
         // if (status != 0) {
         //     return status;
         // }
 
-        let mut gpio = self.config_gpio_read()?;
+        let mut gpio = self.config_gpio_read().await?;
         // #ifndef BLADERF_NIOS_BUILD
         //     status = dev->backend->config_gpio_read(dev, &gpio);
         // #else
@@ -797,10 +857,10 @@ impl BladeRf1 {
         // #else
         //     return CONFIG_GPIO_WRITE(dev, gpio);
         // #endif
-        self.config_gpio_write(gpio)
+        self.config_gpio_write(gpio).await
     }
 
-    pub fn set_frequency(&self, channel: u8, frequency: u64) -> Result<()> {
+    pub async fn set_frequency(&self, channel: u8, frequency: u64) -> Result<()> {
         //let dc_cal = if channel == bladerf_channel_rx!(0) { cal_dc.rx } else { cal.dc_tx };
 
         println!("Setting Frequency on channel {channel} to {frequency}Hz");
@@ -820,139 +880,70 @@ impl BladeRf1 {
         // For tuning HOST Tuning Mode:
         match mode {
             TuningMode::Host => {
-                self.lms.set_frequency(channel, frequency as u32)?;
-                // Todo: Band Select
-                // status = band_select(dev, ch, frequency < BLADERF1_BAND_HIGH);
+                self.lms.set_frequency(channel, frequency as u32).await?;
+                let band = if frequency < BLADERF1_BAND_HIGH as u64 {
+                    Band::Low
+                } else {
+                    Band::High
+                };
+                self.band_select(channel, band).await?;
             }
             TuningMode::Fpga => {
-                self.lms.schedule_retune(
-                    channel,
-                    NiosPktRetuneRequest::RETUNE_NOW,
-                    frequency as u32,
-                    None,
-                )?;
+                self.lms
+                    .schedule_retune(
+                        channel,
+                        NiosPktRetuneRequest::RETUNE_NOW,
+                        frequency as u32,
+                        None,
+                    )
+                    .await?;
             }
         }
 
         Ok(())
     }
 
-    pub fn set_gain_mode(&self, channel: u8, mode: BladerfGainMode) -> Result<u32> {
+    pub async fn set_gain_mode(&self, channel: u8, mode: BladerfGainMode) -> Result<u32> {
         if channel != BLADERF_MODULE_RX {
             return Err(anyhow!("Operation only supported on RX channel"));
         }
 
-        let mut config_gpio = self.config_gpio_read()?;
+        let mut config_gpio = self.config_gpio_read().await?;
         if mode == BladerfGainDefault {
+            // Default mode is the same as Automatic mode
+            return Err(anyhow!("Todo: Implement AGC Table"));
+            // if (!have_cap(board_data->capabilities, BLADERF_CAP_AGC_DC_LUT)) {
+            //     log_warning("AGC not supported by FPGA. %s\n", MGC_WARN);
+            //     log_info("To enable AGC, %s, then %s\n", FPGA_STR, DCCAL_STR);
+            //     log_debug("%s: expected FPGA >= v0.7.0, got v%u.%u.%u\n",
+            //               __FUNCTION__, board_data->fpga_version.major,
+            //               board_data->fpga_version.minor,
+            //               board_data->fpga_version.patch);
+            //     return BLADERF_ERR_UNSUPPORTED;
+            // }
+            //
+            // if (!board_data->cal.dc_rx) {
+            //     log_warning("RX DC calibration table not found. %s\n", MGC_WARN);
+            //     log_info("To enable AGC, %s\n", DCCAL_STR);
+            //     return BLADERF_ERR_UNSUPPORTED;
+            // }
+            //
+            // if (board_data->cal.dc_rx->version != TABLE_VERSION) {
+            //     log_warning("RX DC calibration table is out-of-date. %s\n",
+            //                 MGC_WARN);
+            //     log_info("To enable AGC, %s\n", DCCAL_STR);
+            //     log_debug("%s: expected version %u, got %u\n", __FUNCTION__,
+            //               TABLE_VERSION, board_data->cal.dc_rx->version);
+            //
+            //     return BLADERF_ERR_UNSUPPORTED;
+            // }
             config_gpio |= BLADERF_GPIO_AGC_ENABLE;
         } else if mode == BladerfGainMgc {
             config_gpio &= !BLADERF_GPIO_AGC_ENABLE;
         }
 
-        self.config_gpio_write(config_gpio)
+        self.config_gpio_write(config_gpio).await
     }
-
-    // static int bladerf1_set_frequency(struct bladerf *dev,
-    // bladerf_channel ch,
-    // bladerf_frequency frequency)
-    // {
-    // struct bladerf1_board_data *board_data = dev->board_data;
-    // const bladerf_xb attached              = dev->xb;
-    // int status;
-    // int16_t dc_i, dc_q;
-    // struct dc_cal_entry entry;
-    // const struct dc_cal_tbl *dc_cal = (ch == BLADERF_CHANNEL_RX(0))
-    // ? board_data->cal.dc_rx
-    // : board_data->cal.dc_tx;
-    //
-    // CHECK_BOARD_STATE(STATE_FPGA_LOADED);
-    //
-    // log_debug("Setting %s frequency to %" BLADERF_PRIuFREQ "\n",
-    // channel2str(ch), frequency);
-    //
-    // if (attached == BLADERF_XB_200) {
-    // if (frequency < BLADERF_FREQUENCY_MIN) {
-    // status = xb200_set_path(dev, ch, BLADERF_XB200_MIX);
-    // if (status) {
-    // return status;
-    // }
-    //
-    // status = xb200_auto_filter_selection(dev, ch, frequency);
-    // if (status) {
-    // return status;
-    // }
-    //
-    // frequency = 1248000000 - frequency;
-    // } else {
-    // status = xb200_set_path(dev, ch, BLADERF_XB200_BYPASS);
-    // if (status) {
-    // return status;
-    // }
-    // }
-    // }
-    //
-    // switch (board_data->tuning_mode) {
-    // case BLADERF_TUNING_MODE_HOST:
-    // status = lms_set_frequency(dev, ch, (uint32_t)frequency);
-    // if (status != 0) {
-    // return status;
-    // }
-    //
-    // status = band_select(dev, ch, frequency < BLADERF1_BAND_HIGH);
-    // break;
-    //
-    // case BLADERF_TUNING_MODE_FPGA: {
-    // status = dev->board->schedule_retune(dev, ch, BLADERF_RETUNE_NOW,
-    // frequency, NULL);
-    // break;
-    // }
-    //
-    // default:
-    // log_debug("Invalid tuning mode: %d\n", board_data->tuning_mode);
-    // status = BLADERF_ERR_INVAL;
-    // break;
-    // }
-    // if (status != 0) {
-    // return status;
-    // }
-    //
-    // if (dc_cal != NULL) {
-    // dc_cal_tbl_entry(dc_cal, (uint32_t)frequency, &entry);
-    //
-    // dc_i = entry.dc_i;
-    // dc_q = entry.dc_q;
-    //
-    // status = lms_set_dc_offset_i(dev, ch, dc_i);
-    // if (status != 0) {
-    // return status;
-    // }
-    //
-    // status = lms_set_dc_offset_q(dev, ch, dc_q);
-    // if (status != 0) {
-    // return status;
-    // }
-    //
-    // if (ch == BLADERF_CHANNEL_RX(0) &&
-    // have_cap(board_data->capabilities, BLADERF_CAP_AGC_DC_LUT)) {
-    // status = dev->backend->set_agc_dc_correction(
-    // dev, entry.max_dc_q, entry.max_dc_i, entry.mid_dc_q,
-    // entry.mid_dc_i, entry.min_dc_q, entry.min_dc_i);
-    // if (status != 0) {
-    // return status;
-    // }
-    //
-    // log_verbose("Set AGC DC offset cal (I, Q) to: Max (%d, %d) "
-    // " Mid (%d, %d) Min (%d, %d)\n",
-    // entry.max_dc_q, entry.max_dc_i, entry.mid_dc_q,
-    // entry.mid_dc_i, entry.min_dc_q, entry.min_dc_i);
-    // }
-    //
-    // log_verbose("Set %s DC offset cal (I, Q) to: (%d, %d)\n",
-    // (ch == BLADERF_CHANNEL_RX(0)) ? "RX" : "TX", dc_i, dc_q);
-    // }
-    //
-    // return 0;
-    // }
 
     // Get BladeRf frequency
     // https://github.com/Nuand/bladeRF/blob/master/host/libraries/libbladeRF/include/libbladeRF.h#L694
@@ -1076,49 +1067,58 @@ impl BladeRf1 {
     // }
 
     /// Get BladeRf1 String descriptor
-    pub fn get_string_descriptor(&self, descriptor_index: u8) -> Result<String> {
-        let descriptor =
-            self.device
-                .get_string_descriptor(descriptor_index, 0x409, Duration::from_secs(1))?;
+    pub async fn get_string_descriptor(&self, descriptor_index: NonZero<u8>) -> Result<String> {
+        let descriptor = self
+            .device
+            .get_string_descriptor(descriptor_index, 0x409, Duration::from_secs(1))
+            .await?;
         Ok(descriptor)
     }
 
     /// Get BladeRf1 Serial number
-    pub fn get_configuration_descriptor(&self, descriptor_index: u8) -> Result<Vec<u8>> {
-        let descriptor = self.device.get_descriptor(
-            DescriptorTypes::Configuration as u8,
-            descriptor_index,
-            0x00,
-            Duration::from_secs(1),
-        )?;
+    pub async fn get_configuration_descriptor(&self, descriptor_index: u8) -> Result<Vec<u8>> {
+        let descriptor = self
+            .device
+            .get_descriptor(
+                DescriptorTypes::Configuration as u8,
+                descriptor_index,
+                0x00,
+                Duration::from_secs(1),
+            )
+            .await?;
         Ok(descriptor)
     }
 
-    pub fn get_supported_languages(&self) -> Result<Vec<u16>> {
+    pub async fn get_supported_languages(&self) -> Result<Vec<u16>> {
         let languages = self
             .device
-            .get_string_descriptor_supported_languages(Duration::from_secs(1))?
+            .get_string_descriptor_supported_languages(Duration::from_secs(1))
+            .await?
             .collect();
 
         Ok(languages)
     }
 
-    pub fn get_configurations(&self) -> Vec<Configuration> {
+    pub fn get_configurations(&self) -> Vec<ConfigurationDescriptor> {
         self.device.configurations().collect()
     }
 
-    pub fn set_configuration(&self, configuration: u16) -> Result<()> {
+    pub async fn set_configuration(&self, configuration: u16) -> Result<()> {
         //self.device.set_configuration(configuration)?;
-        block_on(self.interface.control_out(ControlOut {
-            control_type: ControlType::Standard,
-            recipient: Recipient::Device,
-            request: 0x09, //Request::VersionStringRead as u8,
-            value: configuration,
-            index: 0x00,
-            data: &[],
-        }))
-        .into_result()?;
-        Ok(())
+        Ok(self
+            .interface
+            .control_out(
+                ControlOut {
+                    control_type: ControlType::Standard,
+                    recipient: Recipient::Device,
+                    request: 0x09, //Request::VersionStringRead as u8,
+                    value: configuration,
+                    index: 0x00,
+                    data: &[],
+                },
+                TIMEOUT,
+            )
+            .await?)
     }
 
     /**
@@ -1132,7 +1132,7 @@ impl BladeRf1 {
      *
      * @return 0 on success, BLADERF_ERR_* on failure
      */
-    pub fn perform_format_config(
+    pub async fn perform_format_config(
         &self,
         dir: BladeRfDirection,
         format: BladerfFormat,
@@ -1163,7 +1163,7 @@ impl BladeRf1 {
         //     return BLADERF_ERR_INVAL;
         // }
 
-        let mut gpio_val = self.config_gpio_read()?;
+        let mut gpio_val = self.config_gpio_read().await?;
 
         println!("gpio_val {gpio_val:#08x}");
         if format == BladerfFormat::BladerfFormatPacketMeta {
@@ -1186,7 +1186,7 @@ impl BladeRf1 {
 
         println!("gpio_val {gpio_val:#08x}");
 
-        self.config_gpio_write(gpio_val)?;
+        self.config_gpio_write(gpio_val).await?;
         // if (status == 0) {
         //     board_data->module_format[dir] = format;
         // }
@@ -1227,31 +1227,34 @@ impl BladeRf1 {
         Ok(())
     }
 
-    pub async fn async_run_stream(&self) {
-        use futures_lite::future::block_on;
-        use nusb::transfer::RequestBuffer;
-        let mut queue = self.interface.bulk_in_queue(0x81);
+    pub async fn async_run_stream(&self) -> Result<()> {
+        // TODO: In_ENDPOINT is 0x81 here, not 0x82
+        //let mut queue = self.interface.bulk_in_queue(0x81);
+        //let buf = self.ep_bulk_in.allocate(self.ep_bulk_in.max_packet_size());
+        //self.ep_bulk_in.submit(buf);
+        //let mut ep_bulk_out = self.interface.endpoint::<Bulk, Out>(ep_bulk_out_id)?;
+        let mut ep_bulk_in = self.interface.endpoint::<Bulk, In>(0x81)?;
 
         let n_transfers = 8;
-        let transfer_size = 8192; // Must be a multiple of 1024
 
-        while queue.pending() < n_transfers {
-            queue.submit(RequestBuffer::new(transfer_size));
-            println!("submitted_transfers: {}", queue.pending());
+        let max_packet_size = ep_bulk_in.max_packet_size();
+        println!("Max Packet Size: {max_packet_size}");
+
+        for i in 0..n_transfers {
+            let buffer = ep_bulk_in.allocate(max_packet_size);
+            ep_bulk_in.submit(buffer);
+            println!("submitted_transfers: {i}");
         }
 
         loop {
-            println!("waiting...");
-            let completion = block_on(queue.next_complete());
-            //handle_data(&completion.data); // your function
-            println!("{:?}", &completion.data);
-
-            if completion.status.is_err() {
+            let result = ep_bulk_in.next_complete().await;
+            println!("{result:?}");
+            if result.status.is_err() {
                 break;
             }
-
-            queue.submit(RequestBuffer::reuse(completion.data, transfer_size))
+            ep_bulk_in.submit(result.buffer);
         }
+        Ok(())
     }
 
     // pub async fn bladerf1_stream(&self, stream: &bladerf_stream, layout: BladeRfChannelLayout) -> Result<()> {
@@ -1270,10 +1273,10 @@ impl BladeRf1 {
     //     self.perform_format_deconfig(dir)?;
     // }
 
-    pub fn reset(&self) -> Result<()> {
+    pub async fn reset(&self) -> Result<()> {
         //self.check_api_version(UsbVersion::from_bcd(0x0102))?;
         //self.write_control(Request::Reset, 0, 0, &[])?;
-        self.device.set_configuration(0)?;
+        self.device.set_configuration(0).await?;
 
         Ok(())
     }
@@ -1330,32 +1333,34 @@ impl State for WithDevice {}
 // }
 
 impl BladeRf1Builder<Initial> {
-    pub fn with_first(&self) -> Result<BladeRf1Builder<WithDevice>> {
+    pub async fn with_first(&self) -> Result<BladeRf1Builder<WithDevice>> {
         Ok(BladeRf1Builder {
             // state: self.state.clone(),
             data: WithDevice {
                 device: self
                     .data
                     .backend
-                    .list_devices()?
+                    .list_devices()
+                    .await?
                     .find(|dev| {
                         dev.vendor_id() == BLADERF1_USB_VID && dev.product_id() == BLADERF1_USB_PID
                     })
                     .ok_or(BladeRfError::NotFound)?
-                    .open()?,
+                    .open()
+                    .await?,
             },
         })
     }
-    pub fn with_serial(&self, serial: &str) -> Result<BladeRf1Builder<WithDevice>> {
+    pub async fn with_serial(&self, serial: &str) -> Result<BladeRf1Builder<WithDevice>> {
         Ok(BladeRf1Builder {
             //state: self.state.clone(),
             data: WithDevice {
-                device: self.data.backend.open_by_serial(serial)?,
+                device: self.data.backend.open_by_serial(serial).await?,
             },
         })
     }
 
-    pub fn with_bus_addr(
+    pub async fn with_bus_addr(
         &self,
         bus_number: u8,
         bus_addr: u8,
@@ -1363,29 +1368,41 @@ impl BladeRf1Builder<Initial> {
         Ok(BladeRf1Builder {
             // state: self.state.clone(),
             data: WithDevice {
-                device: self.data.backend.open_by_bus_addr(bus_number, bus_addr)?,
+                device: self
+                    .data
+                    .backend
+                    .open_by_bus_addr(bus_number, bus_addr)
+                    .await?,
             },
         })
     }
 
-    pub fn with_file_descriptor(
+    pub async fn with_file_descriptor(
         &self,
         fd: std::os::fd::OwnedFd,
     ) -> Result<BladeRf1Builder<WithDevice>> {
         Ok(BladeRf1Builder {
             // state: self.state.clone(),
             data: WithDevice {
-                device: self.data.backend.open_by_fd(fd)?,
+                device: self.data.backend.open_by_fd(fd).await?,
             },
         })
     }
 }
 
 impl BladeRf1Builder<WithDevice> {
-    pub fn build(&self) -> Result<Box<BladeRf1>> {
+    pub async fn build(&self) -> Result<Box<BladeRf1>> {
         //Box<dyn BladeRf>
         let device = self.data.device.clone();
-        let interface = device.detach_and_claim_interface(0)?;
+        let interface = device.detach_and_claim_interface(0).await?;
+        // let mut ep_bulk_out = interface.endpoint::<Bulk, Out>(ENDPOINT_OUT)?;
+        // let mut ep_bulk_in = interface.endpoint::<Bulk, In>(ENDPOINT_IN)?;
+        // TODO Have a reference to a backend instance that holds the endpoints needed
+        // TODO Give this reference to the individual Hardware...
+        // let be = BackendTest::new(device).await?;
+        // TODO: Fix this with RefCell<BackendTest> with interior mutability or Mutex?.
+        // Question:: Is it better to claim an endpoint from an interface in each method,
+        // where we need to write data or is it better to have the whole Backend behind a mutex?
         let lms = LMS6002D::new(interface.clone());
         let si5338 = SI5338::new(interface.clone());
         let dac = DAC161S055::new(interface.clone());

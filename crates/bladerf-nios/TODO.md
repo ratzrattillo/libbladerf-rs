@@ -11,3 +11,4 @@
   of allowing the application to decide how to handle such an error
 - Create a crate that contains definitions of macros o enums, which are used everywhere in the code
   (Also in subcrates)
+- Idea: Implement all methods for Generic Packet, even if they do not amke sense (like timestamp etc). Then only add supported methods in the Subtyped packets like e.g. RetuneREquest and RetuneResponse
