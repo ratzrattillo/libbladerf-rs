@@ -6,15 +6,15 @@ use nusb::Interface;
 use nusb::transfer::{Buffer, Bulk, In, Out};
 
 pub trait Nios {
-    async fn nios_send(
+    fn nios_send(
         &self,
         ep_bulk_out_id: u8,
         ep_bulk_in_id: u8,
         //ep_bulk_in: Endpoint<Bulk, In>,
         //ep_bulk_out: Endpoint<Bulk, Out>,
         pkt: Vec<u8>,
-    ) -> anyhow::Result<Vec<u8>>; // pub fn nios_retune(&self, bladerf_channel ch, uint64_t timestamp, uint16_t nint, uint32_t nfrac, uint8_t freqsel, uint8_t vcocap, bool low_band, uint8_t xb_gpio, bool quick_tune) {
-    async fn nios_retune(
+    ) -> impl Future<Output = anyhow::Result<Vec<u8>>>; // pub fn nios_retune(&self, bladerf_channel ch, uint64_t timestamp, uint16_t nint, uint32_t nfrac, uint8_t freqsel, uint8_t vcocap, bool low_band, uint8_t xb_gpio, bool quick_tune) {
+    fn nios_retune(
         &self,
         module: u8,
         timestamp: u64,
@@ -25,7 +25,7 @@ pub trait Nios {
         band: Band,
         tune: Tune,
         xb_gpio: u8,
-    ) -> anyhow::Result<()>;
+    ) -> impl Future<Output = anyhow::Result<()>> + Send;
 }
 
 impl Nios for Interface {

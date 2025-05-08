@@ -903,6 +903,7 @@ impl BladeRf1 {
         Ok(())
     }
 
+    #[allow(unreachable_code)] // TODO: Only while AGC table is not implemented
     pub async fn set_gain_mode(&self, channel: u8, mode: BladerfGainMode) -> Result<u32> {
         if channel != BLADERF_MODULE_RX {
             return Err(anyhow!("Operation only supported on RX channel"));
