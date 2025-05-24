@@ -1256,7 +1256,7 @@ impl BladeRf1 {
         let max_packet_size = 32768;
         println!("Max Packet Size: {max_packet_size}");
 
-        for i in 0..n_transfers {
+        for _i in 0..n_transfers {
             let buffer = ep_bulk_in.allocate(max_packet_size);
             ep_bulk_in.submit(buffer);
             // println!("submitted_transfers: {i}");
