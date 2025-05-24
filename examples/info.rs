@@ -89,6 +89,8 @@ async fn main() -> Result<()> {
         .await?;
     tokio::time::sleep(Duration::from_secs(1)).await;
 
+    bladerf.experimental_control_urb().await?;
+
     bladerf.async_run_stream().await?;
 
     bladerf.perform_format_deconfig(BladeRfDirection::BladerfRx)?;

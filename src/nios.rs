@@ -60,7 +60,7 @@ impl Nios for Interface {
         // }
         // println!("BulkIn:  {nios_pkt:x?}");
         // let response_vec = nios_pkt.into();
-        println!("BulkIn:  {:x?}", response);
+        println!("BulkIn:  {:?}", response);
         Ok(response.buffer.into_vec())
     }
 

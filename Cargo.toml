@@ -14,25 +14,11 @@ categories = ["api-bindings"]
 [workspace]
 members = [".", "crates/bladerf-globals", "crates/bladerf-nios"]
 
-[features]
-default = ["nusb"] # , "rusb"
-nusb = ["dep:nusb"]
-# rusb = ["dep:rusb"]
-
 [dependencies]
 anyhow = "1.0"
 env_logger = "0.11"
-atomic_enum = "0.3"
-futures-lite = "2.6"
-log = "0.4"
 thiserror = "2.0"
-# nusb = { version = "0.1", optional = true }
-nusb = { git = "https://github.com/kevinmehall/nusb", branch="main", optional = true }
-# rusb = { version = "0.9", features = ["vendored"], optional = true }
-tokio = { version = "1", features = ["full"]}
+nusb = { git = "https://github.com/kevinmehall/nusb", branch="main" }
+tokio = { version = "1", features = ["full"]} # Only required for examples. Maybe put this in example only
 bladerf-nios= { path= "crates/bladerf-nios" }
 bladerf-globals= { path= "crates/bladerf-globals" }
-
-#[dev-dependencies]
-#anyhow = "1.0"
-#env_logger = "0.11"

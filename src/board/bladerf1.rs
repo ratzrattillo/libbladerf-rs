@@ -16,7 +16,7 @@ use bladerf_nios::NIOS_PKT_8X32_TARGET_CONTROL;
 use bladerf_nios::packet::NiosPkt8x32;
 use bladerf_nios::packet_retune::{Band, NiosPktRetuneRequest};
 use nusb::descriptors::ConfigurationDescriptor;
-use nusb::transfer::{Buffer, Bulk, ControlOut, ControlType, In, Out, Recipient};
+use nusb::transfer::{Buffer, Bulk, ControlIn, ControlOut, ControlType, In, Out, Recipient};
 use nusb::{Device, Endpoint, Interface};
 use std::cmp::PartialEq;
 use std::num::NonZero;
@@ -1228,28 +1228,43 @@ impl BladeRf1 {
         Ok(())
     }
 
+    pub async fn experimental_control_urb(&self) -> Result<()> {
+        // TODO: Dont know what this is doing
+        let pkt = ControlIn {
+            control_type: ControlType::Vendor,
+            recipient: Recipient::Device,
+            request: 0x4,
+            value: 0x1,
+            index: 0,
+            length: 0x4,
+        };
+        let vec = self
+            .interface
+            .control_in(pkt, Duration::from_secs(5))
+            .await?;
+        println!("Control Response Data: {vec:?}");
+        Ok(())
+    }
+
     pub async fn async_run_stream(&self) -> Result<()> {
         // TODO: In_ENDPOINT is 0x81 here, not 0x82
-        //let mut queue = self.interface.bulk_in_queue(0x81);
-        //let buf = self.ep_bulk_in.allocate(self.ep_bulk_in.max_packet_size());
-        //self.ep_bulk_in.submit(buf);
-        //let mut ep_bulk_out = self.interface.endpoint::<Bulk, Out>(ep_bulk_out_id)?;
         let mut ep_bulk_in = self.interface.endpoint::<Bulk, In>(0x81)?;
 
         let n_transfers = 8;
 
-        let max_packet_size = ep_bulk_in.max_packet_size();
+        // let max_packet_size = ep_bulk_in.max_packet_size();
+        let max_packet_size = 32768;
         println!("Max Packet Size: {max_packet_size}");
 
         for i in 0..n_transfers {
             let buffer = ep_bulk_in.allocate(max_packet_size);
             ep_bulk_in.submit(buffer);
-            println!("submitted_transfers: {i}");
+            // println!("submitted_transfers: {i}");
         }
 
         loop {
             let result = ep_bulk_in.next_complete().await;
-            println!("{result:?}");
+            // println!("{result:?}");
             if result.status.is_err() {
                 break;
             }
