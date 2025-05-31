@@ -1,7 +1,6 @@
-use anyhow::Result;
-use bladerf_nios::packet::NiosPkt32x32;
+use bladerf_nios::packet_generic::NiosPkt32x32;
 
-fn main() -> Result<()> {
+fn main() {
     type PktType = NiosPkt32x32;
 
     // Create a new 32x32 NIOSII packet
@@ -23,7 +22,7 @@ fn main() -> Result<()> {
     let mut reused_packet = PktType::from(packet_vec);
 
     // Check if a valid packet has been created:
-    reused_packet.validate().expect("Failed to validate");
+    // reused_packet.validate().expect("Failed to validate");
 
     // Get individual field of a packet
     let _target_id = reused_packet.target_id();
@@ -36,5 +35,4 @@ fn main() -> Result<()> {
 
     // Check if a packet defines write or read operation
     let _is_write = reused_packet.is_write();
-    Ok(())
 }

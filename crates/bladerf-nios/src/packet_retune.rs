@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 /* This file defines the Host <-> FPGA (NIOS II) packet formats for
  * retune messages. This packet is formatted, as follows. All values are
  * little-endian.
@@ -61,6 +60,7 @@
  * (Notes 4) Band-selection bit = 1 implies "Low band". 0 = "High band"
  */
 use crate::NiosPktMagic;
+use crate::packet_base::GenericNiosPkt;
 use bladerf_globals::{BLADERF_MODULE_RX, BLADERF_MODULE_TX};
 use std::fmt::{Debug, Formatter};
 //pub const PACK_TXRX_FREQSEL(module_, freqsel_) \ (freqsel_ & 0x3f)
@@ -81,12 +81,10 @@ pub enum Tune {
     Quick = 1,
 }
 impl NiosPktRetuneRequest {
-    pub(crate) const IDX_MAGIC: usize = 0;
-    pub(crate) const IDX_TIME: usize = 1;
     pub(crate) const IDX_INTFRAC: usize = 9;
     pub(crate) const IDX_FREQSEL: usize = 13;
     pub(crate) const IDX_BANDSEL: usize = 14;
-    pub(crate) const IDX_RESV: usize = 15;
+    pub(crate) const IDX_RESERVED: usize = 15;
 
     pub(crate) const FLAG_RX: u8 = 1 << 6;
     pub(crate) const FLAG_TX: u8 = 1 << 7;
@@ -103,10 +101,10 @@ impl NiosPktRetuneRequest {
     pub const RETUNE_NOW: u64 = 0x00;
 
     /* Maximum field sizes / masks */
-    const NINT_MASK: u16 = 0x1ff; // Max 9bit in size
-    const NFRAC_MASK: u32 = 0x7fffff; // Max 23bit in size
-    const FREQSEL_MASK: u8 = 0x3f; // Max 5bit in size
-    const VCOCAP_MASK: u8 = 0x3f; // Max 5bit in size
+    // const MASK_NINT: u16 = 0x1ff; // Max 9bit in size
+    const MASK_NFRAC: u32 = 0x7fffff; // Max 23bit in size
+    const MASK_FREQSEL: u8 = 0x3f; // Max 5bit in size
+    const MASK_VCOCAP: u8 = 0x3f; // Max 5bit in size
 
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -151,31 +149,40 @@ impl NiosPktRetuneRequest {
             .set_xb_gpio(xb_gpio)
     }
 
-    // TODO: Improve validation
-    pub fn validate(&self) -> Result<(), String> {
-        if self.magic() != NiosPktMagic::Retune as u8 {
-            return Err("Invalid magic number")?;
-        }
-        // if self.reserved() != 0x00 {
-        //     return Err("Invalid reserved byte")?;
-        // }
-        // if self.padding().iter().any(|x| *x != 0) {
-        //     return Err("Invalid padding")?;
-        // }
-        if self.buf.len() != 16 {
-            return Err("Invalid length")?;
-        }
-        Ok(())
-    }
+    // fn reserved(&self) -> u8 {
+    //     self.buf[Self::IDX_RESERVED]
+    // }
+
+    // use crate::ValidationError;
+    // pub fn validate(&self) -> Result<(), ValidationError> {
+    //     if self.magic() != NiosPktMagic::Retune as u8 {
+    //         return Err(ValidationError::InvalidMagic(self.magic()));
+    //     }
+    //     if self.nint() > Self::MASK_NINT {
+    //         return Err(ValidationError::NintOverflow(self.nint()));
+    //     }
+    //     if self.nfrac() > Self::MASK_NFRAC {
+    //         return Err(ValidationError::NfracOverflow(self.nfrac()));
+    //     }
+    //     if self.vcocap() > Self::MASK_VCOCAP {
+    //         return Err(ValidationError::VcocapOverflow(self.vcocap()));
+    //     }
+    //     if self.freqsel() > Self::MASK_FREQSEL {
+    //         return Err(ValidationError::FreqselOverflow(self.freqsel()));
+    //     }
+    //     if self.buf.len() != 16 {
+    //         return Err(ValidationError::InvalidLength(self.buf.len()));
+    //     }
+    //     Ok(())
+    // }
 
     pub fn set_magic(&mut self, magic: u8) -> &mut Self {
-        self.buf[Self::IDX_MAGIC] = magic;
+        self.buf.set_magic(magic);
         self
     }
 
     pub fn set_timestamp(&mut self, timestamp: u64) -> &mut Self {
-        self.buf[Self::IDX_TIME..Self::IDX_TIME + 8]
-            .copy_from_slice(timestamp.to_le_bytes().as_slice());
+        self.buf.set_duration_or_timestamp(timestamp);
         self
     }
 
@@ -199,7 +206,7 @@ impl NiosPktRetuneRequest {
     }
 
     pub fn set_nfrac(&mut self, nfrac: u32) -> &mut Self {
-        assert!(nfrac <= Self::NFRAC_MASK);
+        assert!(nfrac <= Self::MASK_NFRAC);
 
         // self.buf[Self::IDX_INTFRAC + 1] &= !0x7f; // Clear out all bits except the first bit
         // self.buf[Self::IDX_INTFRAC + 2] = 0x00; // Clear second byte
@@ -243,7 +250,7 @@ impl NiosPktRetuneRequest {
     }
 
     pub fn set_freqsel(&mut self, freqsel: u8, module: u8) -> &mut Self {
-        assert!(freqsel <= Self::FREQSEL_MASK); // Make sure that freqsel does not consume more than 5 bits.
+        assert!(freqsel <= Self::MASK_FREQSEL); // Make sure that freqsel does not consume more than 5 bits.
         self.buf[Self::IDX_FREQSEL] = freqsel;
         match module {
             BLADERF_MODULE_RX => {
@@ -284,27 +291,27 @@ impl NiosPktRetuneRequest {
     }
 
     pub fn set_vcocap(&mut self, vcocap: u8) -> &mut Self {
-        assert!(vcocap <= Self::VCOCAP_MASK); // Make sure that vcocap does not consume more than 5 bits.
-        self.buf[Self::IDX_BANDSEL] &= !Self::VCOCAP_MASK; // Clear bits 0:5
-        self.buf[Self::IDX_BANDSEL] |= vcocap & Self::VCOCAP_MASK; // Set vcocap value and limit it to the allowed 5 bits
+        assert!(vcocap <= Self::MASK_VCOCAP); // Make sure that vcocap does not consume more than 5 bits.
+        self.buf[Self::IDX_BANDSEL] &= !Self::MASK_VCOCAP; // Clear bits 0:5
+        self.buf[Self::IDX_BANDSEL] |= vcocap & Self::MASK_VCOCAP; // Set vcocap value and limit it to the allowed 5 bits
         self
     }
 
     pub fn set_xb_gpio(&mut self, xb_gpio: u8) -> &mut Self {
-        self.buf[Self::IDX_RESV] = xb_gpio;
+        self.buf[Self::IDX_RESERVED] = xb_gpio;
         self
     }
 
     pub fn buf_ptr(&self) -> *const u8 {
         self.buf.as_ptr()
     }
+
     pub fn magic(&self) -> u8 {
-        self.buf[Self::IDX_MAGIC]
+        self.buf.magic()
     }
 
     pub fn timestamp(&self) -> u64 {
-        let pkt_mem = &self.buf[Self::IDX_TIME..Self::IDX_TIME + 8];
-        u64::from_le_bytes(pkt_mem.try_into().unwrap())
+        self.buf.duration_or_timestamp()
     }
 
     pub fn nint(&self) -> u16 {
@@ -322,11 +329,11 @@ impl NiosPktRetuneRequest {
     }
 
     pub fn freqsel(&self) -> u8 {
-        self.buf[Self::IDX_FREQSEL] & Self::FREQSEL_MASK
+        self.buf[Self::IDX_FREQSEL] & Self::MASK_FREQSEL
     }
 
     pub fn vcocap(&self) -> u8 {
-        self.buf[Self::IDX_BANDSEL] & Self::VCOCAP_MASK
+        self.buf[Self::IDX_BANDSEL] & Self::MASK_VCOCAP
     }
 
     pub fn rx_flag(&self) -> u8 {
@@ -353,7 +360,7 @@ impl NiosPktRetuneRequest {
     }
 
     pub fn xb_gpio(&self) -> u8 {
-        self.buf[Self::IDX_RESV]
+        self.buf[Self::IDX_RESERVED]
     }
 
     pub fn module(&self) -> u8 {
@@ -457,27 +464,24 @@ pub struct NiosPktRetuneResponse {
     buf: Vec<u8>,
 }
 impl NiosPktRetuneResponse {
-    const IDX_MAGIC: usize = 0;
-    const IDX_TIME: usize = 1;
     const IDX_VCOCAP: usize = 9;
     const IDX_FLAGS: usize = 10;
-    // const IDX_RESV: usize = 11;
+    // const IDX_RESERVED: usize = 11;
 
-    const VCOCAP_MASK: u8 = 0x3f; // Max 5bit in size
+    const MASK_VCOCAP: u8 = 0x3f; // Max 5bit in size
     const FLAG_DURATION_VCOCAP_VALID: u8 = 0x1;
     const FLAG_SUCCESS: u8 = 0x2;
 
     pub fn magic(&self) -> u8 {
-        self.buf[Self::IDX_MAGIC]
+        self.buf.magic()
     }
 
     pub fn duration(&self) -> u64 {
-        let pkt_mem = &self.buf[Self::IDX_TIME..Self::IDX_TIME + 8];
-        u64::from_le_bytes(pkt_mem.try_into().unwrap())
+        self.buf.duration_or_timestamp()
     }
 
     pub fn vcocap(&self) -> u8 {
-        self.buf[Self::IDX_VCOCAP] & Self::VCOCAP_MASK
+        self.buf[Self::IDX_VCOCAP] & Self::MASK_VCOCAP
     }
 
     pub fn duration_and_vcocap_valid(&self) -> bool {

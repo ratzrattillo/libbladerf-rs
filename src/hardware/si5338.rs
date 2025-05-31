@@ -9,7 +9,7 @@ use bladerf_globals::{
     BladerfRationalRate, ENDPOINT_IN, ENDPOINT_OUT, bladerf_channel_rx, bladerf_channel_tx,
 };
 use bladerf_nios::NIOS_PKT_8X8_TARGET_SI5338;
-use bladerf_nios::packet::NiosPkt8x8;
+use bladerf_nios::packet_generic::NiosPkt8x8;
 use nusb::Interface;
 
 const SI5338_F_VCO: u64 = 38400000 * 66;

@@ -5,7 +5,7 @@ mod tests {
     use bladerf_nios::packet_retune2::NiosPktRetune2Request;
 
     #[test]
-    fn packet_retune2() {
+    fn packet_retune2_request() {
         let module: u8 = BLADERF_MODULE_RX;
         let timestamp: u64 = u64::MAX;
         let nios_profile: u16 = 0xffff;

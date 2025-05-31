@@ -5,7 +5,7 @@ mod tests {
     use bladerf_nios::packet_retune::{Band, NiosPktRetuneRequest, Tune};
 
     #[test]
-    fn packet_retune() {
+    fn packet_retune_request() {
         let module: u8 = BLADERF_MODULE_RX;
         let timestamp: u64 = u64::MAX;
         let nint: u16 = 0x01ff;

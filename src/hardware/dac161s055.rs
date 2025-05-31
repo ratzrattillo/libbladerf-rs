@@ -2,7 +2,7 @@ use crate::nios::Nios;
 use anyhow::Result;
 use bladerf_globals::{ENDPOINT_IN, ENDPOINT_OUT};
 use bladerf_nios::NIOS_PKT_8X16_TARGET_VCTCXO_DAC;
-use bladerf_nios::packet::NiosPkt8x16;
+use bladerf_nios::packet_generic::NiosPkt8x16;
 use nusb::Interface;
 
 pub struct DAC161S055 {

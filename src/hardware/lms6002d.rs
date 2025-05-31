@@ -7,7 +7,7 @@ use bladerf_globals::{
     BLADERF_MODULE_RX, BLADERF_MODULE_TX, BladerfLoopback, ENDPOINT_IN, ENDPOINT_OUT,
 };
 use bladerf_nios::NIOS_PKT_8X8_TARGET_LMS6;
-use bladerf_nios::packet::NiosPkt8x8;
+use bladerf_nios::packet_generic::NiosPkt8x8;
 use bladerf_nios::packet_retune::{Band, NiosPktRetuneRequest, Tune};
 use nusb::Interface;
 

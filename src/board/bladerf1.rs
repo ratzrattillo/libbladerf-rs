@@ -13,7 +13,7 @@ use bladerf_globals::{
     bladerf_channel_tx,
 };
 use bladerf_nios::NIOS_PKT_8X32_TARGET_CONTROL;
-use bladerf_nios::packet::NiosPkt8x32;
+use bladerf_nios::packet_generic::NiosPkt8x32;
 use bladerf_nios::packet_retune::{Band, NiosPktRetuneRequest};
 use nusb::descriptors::ConfigurationDescriptor;
 use nusb::transfer::{Buffer, Bulk, ControlIn, ControlOut, ControlType, In, Out, Recipient};

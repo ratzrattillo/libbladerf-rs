@@ -1,7 +1,7 @@
-#![allow(dead_code)]
 extern crate core;
 
-pub mod packet;
+pub mod packet_base;
+pub mod packet_generic;
 pub mod packet_retune;
 pub mod packet_retune2;
 
@@ -28,6 +28,27 @@ pub enum NiosPktFlags {
     ReadSuccess = 0x2,
     WriteSuccess = 0x3,
 }
+
+// use thiserror::Error;
+// #[derive(Debug, Error, PartialEq)]
+// pub enum ValidationError {
+//     #[error("Invalid Magic Number {0}!")]
+//     InvalidMagic(u8),
+//     #[error("Invalid Reserved Byte {0}!")]
+//     InvalidReserved(u8),
+//     #[error("Nonzero Padding!")]
+//     InvalidPadding(Vec<u8>),
+//     #[error("Invalid Packet Length {0}!")]
+//     InvalidLength(usize),
+//     #[error("Nint too big {0}!")]
+//     NintOverflow(u16),
+//     #[error("Nfrac too big {0}!")]
+//     NfracOverflow(u32),
+//     #[error("Freqsel too big {0}!")]
+//     FreqselOverflow(u8),
+//     #[error("Vcocap too big {0}!")]
+//     VcocapOverflow(u8),
+// }
 
 /* IDs 0x80 through 0xff will not be assigned by Nuand. These are reserved
  * for user customizations */
@@ -90,36 +111,3 @@ pub const NIOS_PKT_32X32_TARGET_EXP: u8 = 0x00; /* Expansion I/O */
 pub const NIOS_PKT_32X32_TARGET_EXP_DIR: u8 = 0x01; /* Expansion I/O Direction reg */
 pub const NIOS_PKT_32X32_TARGET_ADI_AXI: u8 = 0x02; /* ADI AXI Interface */
 pub const NIOS_PKT_32X32_TARGET_WB_MSTR: u8 = 0x03; /* Wishbone Master */
-
-// impl From<u8> for NiosPktMagic {
-//     fn from(value: u8) -> Self {
-//         Self {}
-//     }
-// }
-
-// impl From<NiosPktMagic> for u8 {
-//     fn from(value: NiosPktMagic) -> Self {
-//         value as u8
-//     }
-// }
-
-//pub type GenericPkt = Vec<u8>;
-
-// pub(crate) trait GenericNiosPkt {
-//     // associated type declaration
-//     //type Item;
-//     const IDX_MAGIC: usize = 0;
-//     fn magic(&self) -> u8;
-//
-//     fn set_magic(&mut self, magic: u8) -> &mut Self;
-// }
-// impl GenericNiosPkt for Vec<u8> {
-//     fn magic(&self) -> u8 {
-//         self[Self::IDX_MAGIC]
-//     }
-//
-//     fn set_magic(&mut self, magic: u8) -> &mut Self {
-//         self[Self::IDX_MAGIC] = magic;
-//         self
-//     }
-// }

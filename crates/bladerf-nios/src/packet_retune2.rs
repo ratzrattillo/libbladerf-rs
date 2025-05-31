@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 /* This file defines the Host <-> FPGA (NIOS II) packet formats for
  * retune2 messages. This packet is formatted, as follows. All values are
  * little-endian.
@@ -49,6 +48,7 @@
  *
  */
 use crate::NiosPktMagic;
+use crate::packet_base::GenericNiosPkt;
 use bladerf_globals::BladerfDirection;
 use bladerf_globals::bladerf_channel_is_tx;
 
@@ -57,13 +57,11 @@ pub struct NiosPktRetune2Request {
 }
 
 impl NiosPktRetune2Request {
-    const IDX_MAGIC: usize = 0;
-    const IDX_TIME: usize = 1;
     const IDX_NIOS_PROFILE: usize = 9;
     const IDX_RFFE_PROFILE: usize = 11;
     const IDX_RFFE_PORT: usize = 12;
     const IDX_SPDT: usize = 13;
-    // const IDX_RESV: usize = 14;
+    // const IDX_RESERVED: usize = 14;
 
     /* Specify this value instead of a timestamp to clear the retune2 queue */
     // const CLEAR_QUEUE: u64 = u64::MAX;
@@ -72,7 +70,7 @@ impl NiosPktRetune2Request {
     // const NOW: u64 = u64::MIN;
 
     /* The IS_RX bit embedded in the 'port' parameter of the retune2 packet */
-    const PORT_IS_RX_MASK: u8 = 1 << 7;
+    const MASK_PORT_IS_RX: u8 = 1 << 7;
 
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -106,25 +104,24 @@ impl NiosPktRetune2Request {
             .set_spdt(spdt)
     }
 
-    // TODO: Improve validation
-    pub fn validate(&self) -> Result<(), String> {
-        if self.magic() != NiosPktMagic::Retune2 as u8 {
-            return Err("Invalid magic number")?;
-        }
-        if self.buf.len() != 16 {
-            return Err("Invalid length")?;
-        }
-        Ok(())
-    }
+    // use crate::ValidationError;
+    // pub fn validate(&self) -> Result<(), ValidationError> {
+    //     if self.magic() != NiosPktMagic::Retune2 as u8 {
+    //         return Err(ValidationError::InvalidMagic(self.magic()));
+    //     }
+    //     if self.buf.len() != 16 {
+    //         return Err(ValidationError::InvalidLength(self.buf.len()));
+    //     }
+    //     Ok(())
+    // }
 
     pub fn set_magic(&mut self, magic: u8) -> &mut Self {
-        self.buf[Self::IDX_MAGIC] = magic;
+        self.buf.set_magic(magic);
         self
     }
 
     pub fn set_timestamp(&mut self, timestamp: u64) -> &mut Self {
-        self.buf[Self::IDX_TIME..Self::IDX_TIME + 8]
-            .copy_from_slice(timestamp.to_le_bytes().as_slice());
+        self.buf.set_duration_or_timestamp(timestamp);
         self
     }
 
@@ -141,13 +138,13 @@ impl NiosPktRetune2Request {
 
     pub fn set_port(&mut self, port: u8, module: u8) -> &mut Self {
         /* Clear the IS_RX bit of the port parameter */
-        let mut pkt_port = port & !Self::PORT_IS_RX_MASK;
+        let mut pkt_port = port & !Self::MASK_PORT_IS_RX;
 
         /* Set the IS_RX bit (if needed) */
         pkt_port |= if bladerf_channel_is_tx!(module) != 0 {
             0x0
         } else {
-            Self::PORT_IS_RX_MASK
+            Self::MASK_PORT_IS_RX
         };
 
         self.buf[Self::IDX_RFFE_PORT] = pkt_port;
@@ -160,12 +157,11 @@ impl NiosPktRetune2Request {
     }
 
     pub fn magic(&self) -> u8 {
-        self.buf[Self::IDX_MAGIC]
+        self.buf.magic()
     }
 
     pub fn timestamp(&self) -> u64 {
-        let pkt_mem = &self.buf[Self::IDX_TIME..Self::IDX_TIME + 8];
-        u64::from_le_bytes(pkt_mem.try_into().unwrap())
+        self.buf.duration_or_timestamp()
     }
 
     pub fn nios_profile(&self) -> u16 {
@@ -241,25 +237,22 @@ impl From<NiosPktRetune2Request> for Vec<u8> {
  *      flags[7:2]    Reserved. Set to 0.
  */
 
-struct NiosPktRetune2Response {
+pub struct NiosPktRetune2Response {
     buf: Vec<u8>,
 }
 impl NiosPktRetune2Response {
-    const IDX_MAGIC: usize = 0;
-    const IDX_TIME: usize = 1;
     const IDX_FLAGS: usize = 9;
-    // const IDX_RESV: usize = 10;
+    // const IDX_RESERVED: usize = 10;
 
     const FLAG_TSVTUNE_VALID: u8 = 0x1;
     const FLAG_SUCCESS: u8 = 0x2;
 
     pub fn magic(&self) -> u8 {
-        self.buf[Self::IDX_MAGIC]
+        self.buf.magic()
     }
 
     pub fn duration(&self) -> u64 {
-        let pkt_mem = &self.buf[Self::IDX_TIME..Self::IDX_TIME + 8];
-        u64::from_le_bytes(pkt_mem.try_into().unwrap())
+        self.buf.duration_or_timestamp()
     }
 
     pub fn timestamp_valid(&self) -> bool {

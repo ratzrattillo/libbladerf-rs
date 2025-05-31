@@ -62,6 +62,7 @@
 
 // use crate::GenericNiosPkt;
 use crate::NiosPktMagic;
+use crate::packet_base::GenericNiosPkt;
 use std::fmt::{Debug, Display, Formatter, LowerHex};
 // pub const NIOS_PKT_8X8_MAGIC: u8 = 0x41; // 'A'
 // pub const NIOS_PKT_8X16_MAGIC: u8 = 0x42; // 'B'
@@ -143,7 +144,6 @@ where
     A: NumToByte + Debug + Display + LowerHex,
     D: NumToByte + Debug + Display + LowerHex,
 {
-    pub const IDX_MAGIC: usize = 0;
     pub const IDX_TARGET_ID: usize = 1;
     pub const IDX_FLAGS: usize = 2;
     pub const IDX_RESERVED: usize = 3;
@@ -182,26 +182,8 @@ where
             .set_addr(addr)
             .set_data(data)
     }
-
-    pub fn validate(&self) -> Result<(), String> {
-        if self.magic() != Self::MAGIC {
-            return Err("Invalid magic number")?;
-        }
-        if self.reserved() != 0x00 {
-            return Err("Invalid reserved byte")?;
-        }
-        if self.padding().iter().any(|x| *x != 0) {
-            return Err("Invalid padding")?;
-        }
-        if self.buf.len() != 16 {
-            return Err("Invalid length")?;
-        }
-        Ok(())
-    }
-
     pub fn magic(&self) -> u8 {
-        self.buf[Self::IDX_MAGIC]
-        //self.buf.magic()
+        self.buf.magic()
     }
     pub fn target_id(&self) -> u8 {
         self.buf[Self::IDX_TARGET_ID]
@@ -211,13 +193,13 @@ where
         self.buf[Self::IDX_FLAGS]
     }
 
-    fn reserved(&self) -> u8 {
-        self.buf[Self::IDX_RESERVED]
-    }
-
-    fn padding(&self) -> &[u8] {
-        &self.buf[Self::IDX_PADDING..]
-    }
+    // fn reserved(&self) -> u8 {
+    //     self.buf[Self::IDX_RESERVED]
+    // }
+    //
+    // fn padding(&self) -> &[u8] {
+    //     &self.buf[Self::IDX_PADDING..]
+    // }
 
     pub fn addr(&self) -> A {
         A::from_le_bytes(&self.buf[Self::IDX_ADDR..(Self::IDX_ADDR + size_of::<A>())])
@@ -235,8 +217,8 @@ where
     }
 
     pub fn set_magic(&mut self, magic: u8) -> &mut Self {
-        self.buf[Self::IDX_MAGIC] = magic;
-        //self.buf.set_magic(magic);
+        //self.buf[Self::IDX_MAGIC] = magic;
+        self.buf.set_magic(magic);
         self
     }
     pub fn set_target_id(&mut self, target_id: u8) -> &mut Self {
@@ -262,6 +244,22 @@ where
             .copy_from_slice(data.to_le_bytes_vec().as_slice());
         self
     }
+
+    // pub fn validate(&self) -> Result<(), ValidationError> {
+    //     if self.magic() != Self::MAGIC {
+    //         return Err(ValidationError::InvalidMagic(self.magic()));
+    //     }
+    //     if self.reserved() != 0x00 {
+    //         return Err(ValidationError::InvalidReserved(self.reserved()));
+    //     }
+    //     if self.padding().iter().any(|x| *x != 0) {
+    //         return Err(ValidationError::InvalidPadding(self.padding().to_vec()));
+    //     }
+    //     if self.buf.len() != 16 {
+    //         return Err(ValidationError::InvalidLength(self.buf.len()));
+    //     }
+    //     Ok(())
+    // }
 }
 
 impl<A, D> From<Vec<u8>> for NiosPkt<A, D>
