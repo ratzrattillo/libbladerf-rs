@@ -4,20 +4,18 @@ use crate::hardware::dac161s055::DAC161S055;
 use crate::hardware::lms6002d::{BLADERF1_BAND_HIGH, LMS6002D};
 use crate::hardware::si5338::SI5338;
 use crate::nios::Nios;
-use crate::usb::UsbBackend;
 use anyhow::{Result, anyhow};
 use bladerf_globals::BladerfGainMode::{BladerfGainDefault, BladerfGainMgc};
 use bladerf_globals::{
-    BLADERF_MODULE_RX, BLADERF_MODULE_TX, BLADERF1_USB_PID, BLADERF1_USB_VID, BladeRf,
-    BladerfGainMode, DescriptorTypes, ENDPOINT_IN, ENDPOINT_OUT, TIMEOUT, bladerf_channel_rx,
-    bladerf_channel_tx,
+    BLADERF_MODULE_RX, BLADERF_MODULE_TX, BLADERF1_USB_PID, BLADERF1_USB_VID, BladerfGainMode,
+    DescriptorTypes, ENDPOINT_IN, ENDPOINT_OUT, TIMEOUT, bladerf_channel_rx, bladerf_channel_tx,
 };
 use bladerf_nios::NIOS_PKT_8X32_TARGET_CONTROL;
 use bladerf_nios::packet_generic::NiosPkt8x32;
 use bladerf_nios::packet_retune::{Band, NiosPktRetuneRequest};
 use nusb::descriptors::ConfigurationDescriptor;
-use nusb::transfer::{Buffer, Bulk, ControlIn, ControlOut, ControlType, In, Out, Recipient};
-use nusb::{Device, Endpoint, Interface};
+use nusb::transfer::{Bulk, ControlIn, ControlOut, ControlType, In, Recipient};
+use nusb::{Device, DeviceInfo, Interface};
 use std::cmp::PartialEq;
 use std::num::NonZero;
 use std::time::Duration;
@@ -456,57 +454,6 @@ pub enum BladerfLnaGain {
     BladerfLnaGainMax,
 }
 
-struct BackendTest {
-    device: Device,
-    interface: Interface,
-    ep_bulk_out: Endpoint<Bulk, Out>,
-    ep_bulk_in: Endpoint<Bulk, In>,
-}
-impl BackendTest {
-    async fn new(dev: Device) -> Result<Self> {
-        let device = dev;
-        let interface = device.detach_and_claim_interface(0).await?;
-        let ep_bulk_out = interface.endpoint::<Bulk, Out>(ENDPOINT_OUT)?;
-        let ep_bulk_in = interface.endpoint::<Bulk, In>(ENDPOINT_IN)?;
-        Ok(Self {
-            device,
-            interface,
-            ep_bulk_out,
-            ep_bulk_in,
-        })
-    }
-
-    pub async fn nios_send(
-        &mut self,
-        //mut ep_bulk_in: Endpoint<Bulk, In>,
-        //mut ep_bulk_out: Endpoint<Bulk, Out>,
-        pkt: Vec<u8>,
-    ) -> anyhow::Result<Vec<u8>> {
-        println!("BulkOut: {pkt:x?}");
-
-        self.ep_bulk_out.submit(Buffer::from(pkt));
-        let mut response = self.ep_bulk_out.next_complete().await;
-        response.status?;
-
-        self.ep_bulk_in.submit(response.buffer);
-        response = self.ep_bulk_in.next_complete().await;
-        response.status?;
-
-        // Todo: This should be a generic NIOS packet type, or just a plain Vec,
-        // Todo: We might not be able to easily check for a success flag, as we do not
-        // Todo: know which kind of packet was sent.
-        // type NiosPkt = NiosPkt8x8;
-        // let nios_pkt = NiosPkt::from(response);
-        // if !nios_pkt.is_success() {
-        //     return Err(anyhow!("operation was unsuccessful!"));
-        // }
-        // println!("BulkIn:  {nios_pkt:x?}");
-        // let response_vec = nios_pkt.into();
-        println!("BulkIn:  {:x?}", response);
-        Ok(response.buffer.into_vec())
-    }
-}
-
 pub struct BladeRf1 {
     device: Device,
     interface: Interface,
@@ -516,23 +463,72 @@ pub struct BladeRf1 {
     // xb200: Option<XB200>,
 }
 
-// impl BitAnd<u8> for BladeRfChannelLayout {
-//     type Output = BladeRfDirection;
-//
-//     fn bitand(self, rhs: u8) -> Self::Output {
-//         self & rhs
-//     }
-// }
-
 // We use the Builder pattern together with the type-state pattern here to model the flow of creating a BladeRf1 instance.
 // See for example: https://cliffle.com/blog/rust-typestate/
 impl BladeRf1 {
-    pub fn builder() -> BladeRf1Builder<Initial> {
-        BladeRf1Builder {
-            data: Initial {
-                backend: UsbBackend {},
-            },
-        }
+    async fn list_bladerf1() -> Result<impl Iterator<Item = DeviceInfo>> {
+        Ok(nusb::list_devices().await?.filter(|dev| {
+            dev.vendor_id() == BLADERF1_USB_VID && dev.product_id() == BLADERF1_USB_PID
+        }))
+    }
+
+    async fn build(device: Device) -> Result<Box<Self>> {
+        //let device = device;
+        let interface = device.detach_and_claim_interface(0).await?;
+        // let mut ep_bulk_out = interface.endpoint::<Bulk, Out>(ENDPOINT_OUT)?;
+        // let mut ep_bulk_in = interface.endpoint::<Bulk, In>(ENDPOINT_IN)?;
+        // TODO Have a reference to a backend instance that holds the endpoints needed
+        // TODO Give this reference to the individual Hardware...
+        // let be = BackendTest::new(device).await?;
+        // TODO: Fix this with RefCell<BackendTest> with interior mutability or Mutex?.
+        // Question:: Is it better to claim an endpoint from an interface in each method,
+        // where we need to write data or is it better to have the whole Backend behind a mutex?
+        let lms = LMS6002D::new(interface.clone());
+        let si5338 = SI5338::new(interface.clone());
+        let dac = DAC161S055::new(interface.clone());
+
+        Ok(Box::new(Self {
+            device,
+            interface,
+            lms,
+            si5338,
+            dac,
+        }))
+    }
+
+    pub async fn from_first() -> Result<Box<Self>> {
+        let device = Self::list_bladerf1()
+            .await?
+            .next()
+            .ok_or(BladeRfError::NotFound)?
+            .open()
+            .await?;
+        Self::build(device).await
+    }
+    pub async fn from_serial(serial: &str) -> Result<Box<Self>> {
+        let device = Self::list_bladerf1()
+            .await?
+            .find(|dev| dev.serial_number() == Some(serial))
+            .ok_or(BladeRfError::NotFound)?
+            .open()
+            .await?;
+        Self::build(device).await
+    }
+
+    pub async fn from_bus_addr(bus_number: u8, bus_addr: u8) -> Result<Box<Self>> {
+        let device = Self::list_bladerf1()
+            .await?
+            .find(|dev| dev.busnum() == bus_number && dev.device_address() == bus_addr)
+            .ok_or(BladeRfError::NotFound)?
+            .open()
+            .await?;
+        Self::build(device).await
+    }
+
+    pub async fn from_fd(fd: std::os::fd::OwnedFd) -> Result<Box<Self>> {
+        let device = Device::from_fd(fd).await?;
+        // TODO: Do check on device, if it really is a bladerf
+        Self::build(device).await
     }
 
     async fn config_gpio_read(&self) -> Result<u32> {
@@ -1297,140 +1293,3 @@ impl BladeRf1 {
         Ok(())
     }
 }
-
-// S is the state parameter. We require it to impl
-// our ResponseState trait (below) to prevent users
-// from trying weird types like HttpResponse<u8>.
-pub struct BladeRf1Builder<S: State> {
-    //state: Box<ActualState>,
-    data: S,
-}
-
-// State type options.
-// zero-variant enum pattern to ensure that types exist only as types, and not as values
-// Types like this are broadly referred to as phantom types
-
-//struct ActualState {  }
-pub struct Initial {
-    backend: UsbBackend,
-}
-
-// pub struct WithBackend {
-//     backend: UsbBackend,
-// }
-pub struct WithDevice {
-    device: Device,
-}
-
-pub trait State {}
-impl State for Initial {}
-//impl State for WithBackend {}
-impl State for WithDevice {}
-
-// impl BladeRf1Builder<Initial> {
-//     #[cfg(feature = "nusb")]
-//     pub fn with_nusb_backend(&mut self) -> BladeRf1Builder<WithBackend> {
-//         BladeRf1Builder {
-//             //state: self.state.clone(),
-//             data: WithBackend {
-//                 backend: Arc::new(Box::new(NusbBackend {})),
-//             },
-//         }
-//     }
-//     #[cfg(feature = "rusb")]
-//     pub fn with_rusb_backend(&mut self) -> BladeRf1Builder<WithBackend> {
-//         BladeRf1Builder {
-//             //state: self.state.clone(),
-//             data: WithBackend {
-//                 backend: Arc::new(Box::new(RusbBackend {})),
-//             },
-//         }
-//     }
-// }
-
-impl BladeRf1Builder<Initial> {
-    pub async fn with_first(&self) -> Result<BladeRf1Builder<WithDevice>> {
-        Ok(BladeRf1Builder {
-            // state: self.state.clone(),
-            data: WithDevice {
-                device: self
-                    .data
-                    .backend
-                    .list_devices()
-                    .await?
-                    .find(|dev| {
-                        dev.vendor_id() == BLADERF1_USB_VID && dev.product_id() == BLADERF1_USB_PID
-                    })
-                    .ok_or(BladeRfError::NotFound)?
-                    .open()
-                    .await?,
-            },
-        })
-    }
-    pub async fn with_serial(&self, serial: &str) -> Result<BladeRf1Builder<WithDevice>> {
-        Ok(BladeRf1Builder {
-            //state: self.state.clone(),
-            data: WithDevice {
-                device: self.data.backend.open_by_serial(serial).await?,
-            },
-        })
-    }
-
-    pub async fn with_bus_addr(
-        &self,
-        bus_number: u8,
-        bus_addr: u8,
-    ) -> Result<BladeRf1Builder<WithDevice>> {
-        Ok(BladeRf1Builder {
-            // state: self.state.clone(),
-            data: WithDevice {
-                device: self
-                    .data
-                    .backend
-                    .open_by_bus_addr(bus_number, bus_addr)
-                    .await?,
-            },
-        })
-    }
-
-    pub async fn with_file_descriptor(
-        &self,
-        fd: std::os::fd::OwnedFd,
-    ) -> Result<BladeRf1Builder<WithDevice>> {
-        Ok(BladeRf1Builder {
-            // state: self.state.clone(),
-            data: WithDevice {
-                device: self.data.backend.open_by_fd(fd).await?,
-            },
-        })
-    }
-}
-
-impl BladeRf1Builder<WithDevice> {
-    pub async fn build(&self) -> Result<Box<BladeRf1>> {
-        //Box<dyn BladeRf>
-        let device = self.data.device.clone();
-        let interface = device.detach_and_claim_interface(0).await?;
-        // let mut ep_bulk_out = interface.endpoint::<Bulk, Out>(ENDPOINT_OUT)?;
-        // let mut ep_bulk_in = interface.endpoint::<Bulk, In>(ENDPOINT_IN)?;
-        // TODO Have a reference to a backend instance that holds the endpoints needed
-        // TODO Give this reference to the individual Hardware...
-        // let be = BackendTest::new(device).await?;
-        // TODO: Fix this with RefCell<BackendTest> with interior mutability or Mutex?.
-        // Question:: Is it better to claim an endpoint from an interface in each method,
-        // where we need to write data or is it better to have the whole Backend behind a mutex?
-        let lms = LMS6002D::new(interface.clone());
-        let si5338 = SI5338::new(interface.clone());
-        let dac = DAC161S055::new(interface.clone());
-
-        Ok(Box::new(BladeRf1 {
-            device,
-            interface,
-            lms,
-            si5338,
-            dac,
-        }))
-    }
-}
-
-impl BladeRf for BladeRf1 {}

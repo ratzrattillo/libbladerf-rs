@@ -3,8 +3,6 @@
 
 use std::time::Duration;
 
-mod types;
-
 #[macro_export]
 macro_rules! bladerf_channel_rx {
     ($ch:expr) => {
@@ -136,10 +134,6 @@ pub enum BladerfGainMode {
      * typically requires additional configuration for ideal performance.
      */
     BladerfGainHybridAgc,
-}
-
-pub trait BladeRf {
-    //fn nios_send(&self, endpoint_in: u8, endpoint_out: u8, pkt: Vec<u8>) -> Result<Vec<u8>>;
 }
 
 #[derive(Clone, Default)]
