@@ -10,10 +10,8 @@ pub trait Nios {
         &self,
         ep_bulk_out_id: u8,
         ep_bulk_in_id: u8,
-        //ep_bulk_in: Endpoint<Bulk, In>,
-        //ep_bulk_out: Endpoint<Bulk, Out>,
         pkt: Vec<u8>,
-    ) -> impl Future<Output = anyhow::Result<Vec<u8>>>; // pub fn nios_retune(&self, bladerf_channel ch, uint64_t timestamp, uint16_t nint, uint32_t nfrac, uint8_t freqsel, uint8_t vcocap, bool low_band, uint8_t xb_gpio, bool quick_tune) {
+    ) -> impl Future<Output = anyhow::Result<Vec<u8>>>;
     fn nios_retune(
         &self,
         module: u8,
@@ -31,8 +29,6 @@ pub trait Nios {
 impl Nios for Interface {
     async fn nios_send(
         &self,
-        //mut ep_bulk_in: Endpoint<Bulk, In>,
-        //mut ep_bulk_out: Endpoint<Bulk, Out>,
         ep_bulk_out_id: u8,
         ep_bulk_in_id: u8,
         pkt: Vec<u8>,
@@ -115,22 +111,3 @@ impl Nios for Interface {
         Ok(())
     }
 }
-
-// pub async fn nios_send(
-//     ep_bulk_out: &mut Endpoint<Bulk, Out>,
-//     ep_bulk_in: &mut Endpoint<Bulk, In>,
-//     pkt: Vec<u8>,
-// ) -> anyhow::Result<Vec<u8>> {
-//     println!("BulkOut: {pkt:x?}");
-//
-//     ep_bulk_out.submit(Buffer::from(pkt));
-//     let mut response = ep_bulk_out.next_complete().await;
-//     response.status?;
-//
-//     ep_bulk_in.submit(response.buffer);
-//     response = ep_bulk_in.next_complete().await;
-//     response.status?;
-//
-//     println!("BulkIn:  {:x?}", response);
-//     Ok(response.buffer.into_vec())
-// }

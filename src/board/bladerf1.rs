@@ -8,7 +8,8 @@ use anyhow::{Result, anyhow};
 use bladerf_globals::BladerfGainMode::{BladerfGainDefault, BladerfGainMgc};
 use bladerf_globals::{
     BLADERF_MODULE_RX, BLADERF_MODULE_TX, BLADERF1_USB_PID, BLADERF1_USB_VID, BladerfGainMode,
-    DescriptorTypes, ENDPOINT_IN, ENDPOINT_OUT, TIMEOUT, bladerf_channel_rx, bladerf_channel_tx,
+    DescriptorTypes, ENDPOINT_IN, ENDPOINT_OUT, StringDescriptors, TIMEOUT, bladerf_channel_rx,
+    bladerf_channel_tx,
 };
 use bladerf_nios::NIOS_PKT_8X32_TARGET_CONTROL;
 use bladerf_nios::packet_generic::NiosPkt8x32;
@@ -463,8 +464,6 @@ pub struct BladeRf1 {
     // xb200: Option<XB200>,
 }
 
-// We use the Builder pattern together with the type-state pattern here to model the flow of creating a BladeRf1 instance.
-// See for example: https://cliffle.com/blog/rust-typestate/
 impl BladeRf1 {
     async fn list_bladerf1() -> Result<impl Iterator<Item = DeviceInfo>> {
         Ok(nusb::list_devices().await?.filter(|dev| {
@@ -473,13 +472,9 @@ impl BladeRf1 {
     }
 
     async fn build(device: Device) -> Result<Box<Self>> {
-        //let device = device;
         let interface = device.detach_and_claim_interface(0).await?;
-        // let mut ep_bulk_out = interface.endpoint::<Bulk, Out>(ENDPOINT_OUT)?;
-        // let mut ep_bulk_in = interface.endpoint::<Bulk, In>(ENDPOINT_IN)?;
         // TODO Have a reference to a backend instance that holds the endpoints needed
         // TODO Give this reference to the individual Hardware...
-        // let be = BackendTest::new(device).await?;
         // TODO: Fix this with RefCell<BackendTest> with interior mutability or Mutex?.
         // Question:: Is it better to claim an endpoint from an interface in each method,
         // where we need to write data or is it better to have the whole Backend behind a mutex?
@@ -529,6 +524,26 @@ impl BladeRf1 {
         let device = Device::from_fd(fd).await?;
         // TODO: Do check on device, if it really is a bladerf
         Self::build(device).await
+    }
+
+    pub async fn serial(&self) -> Result<String> {
+        self.get_string_descriptor(NonZero::try_from(StringDescriptors::Serial as u8)?)
+            .await
+    }
+
+    pub async fn manufacturer(&self) -> Result<String> {
+        self.get_string_descriptor(NonZero::try_from(StringDescriptors::Manufacturer as u8)?)
+            .await
+    }
+
+    pub async fn fx3_firmware(&self) -> Result<String> {
+        self.get_string_descriptor(NonZero::try_from(StringDescriptors::Fx3Firmware as u8)?)
+            .await
+    }
+
+    pub async fn product(&self) -> Result<String> {
+        self.get_string_descriptor(NonZero::try_from(StringDescriptors::Product as u8)?)
+            .await
     }
 
     async fn config_gpio_read(&self) -> Result<u32> {

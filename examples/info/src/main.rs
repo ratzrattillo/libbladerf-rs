@@ -9,6 +9,11 @@ async fn main() -> Result<()> {
 
     let bladerf = BladeRf1::from_serial("0617f60964e8f3efcbf78adc8ed94c26").await?;
 
+    println!("Serial: {}", bladerf.serial().await?);
+    println!("Manufacturer: {}", bladerf.manufacturer().await?);
+    println!("FX3 Firmware: {}", bladerf.fx3_firmware().await?);
+    println!("Product: {}", bladerf.product().await?);
+
     let languages = bladerf.get_supported_languages().await?;
     println!("{languages:x?}");
     bladerf.initialize().await?;
@@ -44,33 +49,6 @@ async fn main() -> Result<()> {
     bladerf
         .bladerf_enable_module(BLADERF_MODULE_RX, false)
         .await?;
-
-    // println!(
-    //     "Supported Languages: {:x?}",
-    //     bladerf.get_supported_languages()?
-    // );
-    // println!("Configurations: {:?}", bladerf.get_configurations());
-    // println!(
-    //     "Serial: {}",
-    //     bladerf.get_string_descriptor(StringDescriptors::Serial.into())?
-    // );
-    // println!(
-    //     "Manufacturer: {}",
-    //     bladerf.get_string_descriptor(StringDescriptors::Manufacturer.into())?
-    // );
-    // println!(
-    //     "Product: {}",
-    //     bladerf.get_string_descriptor(StringDescriptors::Product.into())?
-    // );
-    // println!(
-    //     "FX3 Firmware: {}",
-    //     bladerf.get_string_descriptor(StringDescriptors::Fx3Firmware.into())?
-    // );
-    //
-    // println!(
-    //     "Configuration Descriptor: {:?}",
-    //     bladerf.get_configuration_descriptor(0x00)?
-    // );
 
     Ok(())
 }
