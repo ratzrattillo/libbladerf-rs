@@ -16,7 +16,7 @@ use bladerf_nios::packet_generic::NiosPkt8x32;
 use bladerf_nios::packet_retune::{Band, NiosPktRetuneRequest};
 use nusb::descriptors::ConfigurationDescriptor;
 use nusb::transfer::{Bulk, ControlIn, ControlOut, ControlType, In, Recipient};
-use nusb::{Device, DeviceInfo, Interface};
+use nusb::{Device, DeviceInfo, Interface, Speed};
 use std::cmp::PartialEq;
 use std::num::NonZero;
 use std::time::Duration;
@@ -524,6 +524,10 @@ impl BladeRf1 {
         let device = Device::from_fd(fd).await?;
         // TODO: Do check on device, if it really is a bladerf
         Self::build(device).await
+    }
+
+    pub fn speed(&self) -> Option<Speed> {
+        self.device.speed()
     }
 
     pub async fn serial(&self) -> Result<String> {
@@ -1262,13 +1266,24 @@ impl BladeRf1 {
         let mut ep_bulk_in = self.interface.endpoint::<Bulk, In>(0x81)?;
 
         let n_transfers = 8;
+        let factor = 32;
+        // let factor = match self.device.speed().unwrap_or(Speed::Low) {
+        //     // TODO: These numbers are completely made up.
+        //     // TODO: They should be based on real USB Frame sizes depending on the given Speed
+        //     Speed::Low => 8,
+        //     Speed::Full => 16,
+        //     Speed::High => 32,
+        //     Speed::Super => 32, // This factor is used by the original libusb libbladerf implementation.
+        //     Speed::SuperPlus => 96,
+        //     _ => 8,
+        // };
 
-        // let max_packet_size = ep_bulk_in.max_packet_size();
-        let max_packet_size = 32768;
+        let max_packet_size = ep_bulk_in.max_packet_size();
+        let max_frame_size = max_packet_size * factor;
         println!("Max Packet Size: {max_packet_size}");
 
         for _i in 0..n_transfers {
-            let buffer = ep_bulk_in.allocate(max_packet_size);
+            let buffer = ep_bulk_in.allocate(max_frame_size);
             ep_bulk_in.submit(buffer);
             // println!("submitted_transfers: {i}");
         }

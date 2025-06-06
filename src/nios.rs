@@ -1,4 +1,5 @@
 #![allow(clippy::too_many_arguments)]
+
 use anyhow::anyhow;
 use bladerf_globals::{ENDPOINT_IN, ENDPOINT_OUT};
 use bladerf_nios::packet_retune::{Band, NiosPktRetuneRequest, NiosPktRetuneResponse, Tune};
@@ -31,17 +32,31 @@ impl Nios for Interface {
         &self,
         ep_bulk_out_id: u8,
         ep_bulk_in_id: u8,
-        pkt: Vec<u8>,
+        mut pkt: Vec<u8>,
     ) -> anyhow::Result<Vec<u8>> {
         println!("BulkOut: {pkt:x?}");
 
         let mut ep_bulk_out = self.endpoint::<Bulk, Out>(ep_bulk_out_id)?;
         let mut ep_bulk_in = self.endpoint::<Bulk, In>(ep_bulk_in_id)?;
 
+        // Nusb specifically requires the buffer to be a nonzero multiple of endpoint.max_packet_size()
+        // TODO: This could be performance optimized, by leaving out these checks, if we can be sure,
+        // TODO: that all the packets given to this method have a reserved size of max_packet_len().
+        let additional = if pkt.len() < ep_bulk_in.max_packet_size() {
+            ep_bulk_in.max_packet_size() - pkt.len()
+        } else {
+            pkt.len() % ep_bulk_in.max_packet_size()
+        };
+        pkt.reserve(additional);
+
         ep_bulk_out.submit(Buffer::from(pkt));
         let mut response = ep_bulk_out.next_complete().await;
         response.status?;
 
+        // Nusb requires the buffer for an IN transfer to be at least ep_bulk_in.max_packet_size() big
+        response
+            .buffer
+            .set_requested_len(ep_bulk_in.max_packet_size());
         ep_bulk_in.submit(response.buffer);
         response = ep_bulk_in.next_complete().await;
         response.status?;

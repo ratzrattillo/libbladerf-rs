@@ -5,10 +5,14 @@ use std::time::Duration;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    env_logger::init();
+    env_logger::builder()
+        .filter_level(log::LevelFilter::Info)
+        .init();
 
-    let bladerf = BladeRf1::from_serial("0617f60964e8f3efcbf78adc8ed94c26").await?;
+    let bladerf = BladeRf1::from_first().await?;
 
+    
+    println!("Speed: {:?}", bladerf.speed());
     println!("Serial: {}", bladerf.serial().await?);
     println!("Manufacturer: {}", bladerf.manufacturer().await?);
     println!("FX3 Firmware: {}", bladerf.fx3_firmware().await?);
