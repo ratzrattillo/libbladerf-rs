@@ -564,25 +564,14 @@ impl BladeRf1 {
     async fn config_gpio_write(&self, mut data: u32) -> Result<u32> {
         type NiosPkt = NiosPkt8x32;
 
-        enum DeviceSpeed {
-            Unknown,
-            High,
-            Super,
-        }
-
-        // TODO: Get usb speed dynamically
-        let device_speed: DeviceSpeed = DeviceSpeed::Super;
+        // TODO: Speed info should not be determined on every call of gpio_write, but rather at global board_data level.
+        let device_speed = self.device.speed().unwrap_or(Speed::Low);
         match device_speed {
-            DeviceSpeed::Unknown => {
-                println!("DeviceSpeed::Unknown");
-            }
-            DeviceSpeed::High => {
-                println!("DeviceSpeed::High");
-                data |= BLADERF_GPIO_FEATURE_SMALL_DMA_XFER as u32;
-            }
-            DeviceSpeed::Super => {
-                println!("DeviceSpeed::Super");
+            Speed::Super | Speed::SuperPlus => {
                 data &= !BLADERF_GPIO_FEATURE_SMALL_DMA_XFER as u32;
+            }
+            _ => {
+                data |= BLADERF_GPIO_FEATURE_SMALL_DMA_XFER as u32;
             }
         }
 
@@ -961,126 +950,27 @@ impl BladeRf1 {
         self.config_gpio_write(config_gpio).await
     }
 
-    // Get BladeRf frequency
-    // https://github.com/Nuand/bladeRF/blob/master/host/libraries/libbladeRF/include/libbladeRF.h#L694
-    // const BLADERF_CHANNEL_RX(ch) (bladerf_channel)(((ch) << 1) | 0x0)
-    // https://github.com/Nuand/bladeRF/blob/master/host/libraries/libbladeRF/include/libbladeRF.h#L694
-    // const BLADERF_MODULE_RX BLADERF_CHANNEL_RX(0)
-    // https://github.com/Nuand/bladeRF/blob/fe3304d75967c88ab4f17ff37cb5daf8ff53d3e1/host/libraries/libbladeRF/src/board/bladerf1/bladerf1.c#L2121
-    // static int bladerf1_get_frequency(struct bladerf *dev, bladerf_channel ch, bladerf_frequency *frequency);
-    // https://github.com/Nuand/bladeRF/blob/master/fpga_common/src/lms.c#L1698
-    // int lms_get_frequency(struct bladerf *dev, bladerf_module mod, struct lms_freq *f)
-    // lms_freq struct: https://github.com/Nuand/bladeRF/blob/master/fpga_common/include/lms.h#L101
-    // https://github.com/Nuand/bladeRF/blob/master/fpga_common/src/lms.c#L1698
-    // const uint8_t base = (mod == BLADERF_MODULE_RX) ? 0x20 : 0x10;
-    // sudo usermod -a -G wireshark jl
-    // sudo modprobe usbmon
-    // sudo setfacl -m u:jl:r /dev/usbmon*
-    // Wireshark Display filter depending on lsusb output: usb.bus_id == 2 and usb.device_address == 6
-    // pub fn get_freq(&self, module: u8) -> Result<LmsFreq> {
-    //     //self.device.set_configuration(1)?;
-    //     // TODO: FPGA must be loaded!
-    //     self.interface.set_alt_setting(1)?;
-    //
-    //     let addr = if module == crate::bladerf::BLADERF_MODULE_RX {
-    //         0x20u8
-    //     } else {
-    //         0x10u8
-    //     };
-    //
-    //     let mut lms_freq = LmsFreq {
-    //         freqsel: 0,
-    //         vcocap: 0,
-    //         nint: 0,
-    //         nfrac: 0,
-    //         //flags: 0,
-    //         //xb_gpio: 0,
-    //         x: 0,
-    //         //vcocap_result: 0,
-    //     };
-    //
-    //     let mut request = NiosPkt::<u8, u8>::new(
-    //         NIOS_PKT_8X8_TARGET_LMS6,
-    //         NIOS_PKT_FLAG_READ,
-    //         addr | 0x0u8,
-    //         0x0,
-    //     );
-    //
-    //     let mut response = self.lms_read(request.into_vec())?;
-    //     let mut response_pkt: NiosPkt<u8, u8> = NiosPkt::<u8, u8>::reuse(response);
-    //     lms_freq.nint = u16::from(response_pkt.data()) << 1;
-    //
-    //     response_pkt
-    //         .set_flags(NIOS_PKT_FLAG_READ)
-    //         .set_addr(addr | 0x1u8)
-    //         .set_data(0x0);
-    //     request = response_pkt;
-    //
-    //     response = self.lms_read(request.into_vec())?;
-    //     let mut response_pkt: NiosPkt<u8, u8> = NiosPkt::<u8, u8>::reuse(response);
-    //
-    //     lms_freq.nint = lms_freq.nint | ((u16::from(response_pkt.data()) & 0x80) >> 7);
-    //     lms_freq.nfrac = (u32::from(response_pkt.data()) & 0x7f) << 16;
-    //
-    //     response_pkt
-    //         .set_flags(NIOS_PKT_FLAG_READ)
-    //         .set_addr(addr | 0x2u8)
-    //         .set_data(0x0);
-    //     request = response_pkt;
-    //
-    //     response = self.lms_read(request.into_vec())?;
-    //     let mut response_pkt: NiosPkt<u8, u8> = NiosPkt::<u8, u8>::reuse(response);
-    //
-    //     lms_freq.nfrac = lms_freq.nfrac | (u32::from(response_pkt.data()) << 8);
-    //
-    //     response_pkt
-    //         .set_flags(NIOS_PKT_FLAG_READ)
-    //         .set_addr(addr | 0x3u8)
-    //         .set_data(0x0);
-    //     request = response_pkt;
-    //
-    //     response = self.lms_read(request.into_vec())?;
-    //     let mut response_pkt: NiosPkt<u8, u8> = NiosPkt::<u8, u8>::reuse(response);
-    //     lms_freq.nfrac = lms_freq.nfrac | u32::from(response_pkt.data());
-    //
-    //     response_pkt
-    //         .set_flags(NIOS_PKT_FLAG_READ)
-    //         .set_addr(addr | 0x5u8)
-    //         .set_data(0x0);
-    //     request = response_pkt;
-    //
-    //     response = self.lms_read(request.into_vec())?;
-    //     let mut response_pkt: NiosPkt<u8, u8> = NiosPkt::<u8, u8>::reuse(response);
-    //
-    //     lms_freq.freqsel = response_pkt.data() >> 2;
-    //     if lms_freq.freqsel >= 3 {
-    //         lms_freq.x = 1 << ((lms_freq.freqsel & 7) - 3);
-    //     }
-    //
-    //     response_pkt
-    //         .set_flags(NIOS_PKT_FLAG_READ)
-    //         .set_addr(addr | 0x9u8)
-    //         .set_data(0x0);
-    //     request = response_pkt;
-    //
-    //     response = self.lms_read(request.into_vec())?;
-    //     let mut response_pkt: NiosPkt<u8, u8> = NiosPkt::<u8, u8>::reuse(response);
-    //
-    //     lms_freq.vcocap = response_pkt.data() & 0x3f;
-    //
-    //     Ok(lms_freq)
-    // }
+    pub async fn get_frequency(&self, channel: u8) -> Result<u64> {
+        let f = self.lms.get_frequency(channel).await?;
+        if f.x == 0 {
+            /* If we see this, it's most often an indication that communication
+             * with the LMS6002D is not occuring correctly */
+            return Err(anyhow!("LMSFreq.x was zero!"));
+        }
+        let frequency_hz = LMS6002D::frequency_to_hz(&f);
 
-    // pub fn lms_frequency_to_hz(lms_freq: &LmsFreq) -> u64 {
-    //     let pll_coeff = ((lms_freq.nint as u64) << 23) + lms_freq.nfrac as u64;
-    //     let div = (lms_freq.x as u64) << 23;
-    //
-    //     if div > 0 {
-    //         ((LMS_REFERENCE_HZ as u64 * pll_coeff) + (div >> 1)) / div
-    //     } else {
-    //         0
-    //     }
-    // }
+        // if (dev->xb == BLADERF_XB_200) {
+        //     status = xb200_get_path(dev, ch, &path);
+        //     if (status != 0) {
+        //         return status;
+        //     }
+        //     if (path == BLADERF_XB200_MIX) {
+        //         *frequency = 1248000000 - *frequency;
+        //     }
+        // }
+
+        Ok(frequency_hz)
+    }
 
     /// Get BladeRf1 String descriptor
     pub async fn get_string_descriptor(&self, descriptor_index: NonZero<u8>) -> Result<String> {

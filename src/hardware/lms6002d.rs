@@ -1265,6 +1265,48 @@ impl LMS6002D {
         Ok(f)
     }
 
+    pub async fn get_frequency(&self, module: u8) -> Result<LmsFreq> {
+        let mut f = LmsFreq::default();
+        let base: u8 = if module == BLADERF_MODULE_RX {
+            0x20
+        } else {
+            0x10
+        };
+
+        let mut data = self.read(base).await?;
+        f.nint = (data as u16) << 1;
+
+        data = self.read(base + 1).await?;
+        f.nint |= (data as u16 & 0x80) >> 7;
+        f.nfrac = (data as u32 & 0x7f) << 16;
+
+        data = self.read(base + 2).await?;
+        f.nfrac |= (data as u32) << 8;
+
+        data = self.read(base + 3).await?;
+        f.nfrac |= data as u32;
+
+        data = self.read(base + 5).await?;
+        f.freqsel = data >> 2;
+        f.x = 1 << ((f.freqsel & 7) - 3);
+
+        data = self.read(base + 9).await?;
+        f.vcocap = data & 0x3f;
+
+        Ok(f)
+    }
+
+    pub fn frequency_to_hz(lms_freq: &LmsFreq) -> u64 {
+        let pll_coeff = ((lms_freq.nint as u64) << 23) + lms_freq.nfrac as u64;
+        let div = (lms_freq.x as u64) << 23;
+
+        if div > 0 {
+            ((LMS_REFERENCE_HZ as u64 * pll_coeff) + (div >> 1)) / div
+        } else {
+            0
+        }
+    }
+
     pub async fn schedule_retune(
         &self,
         channel: u8,

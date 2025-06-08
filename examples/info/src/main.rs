@@ -11,7 +11,6 @@ async fn main() -> Result<()> {
 
     let bladerf = BladeRf1::from_first().await?;
 
-    
     println!("Speed: {:?}", bladerf.speed());
     println!("Serial: {}", bladerf.serial().await?);
     println!("Manufacturer: {}", bladerf.manufacturer().await?);
