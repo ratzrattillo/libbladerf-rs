@@ -141,7 +141,7 @@ impl NiosPktRetune2Request {
         let mut pkt_port = port & !Self::MASK_PORT_IS_RX;
 
         /* Set the IS_RX bit (if needed) */
-        pkt_port |= if bladerf_channel_is_tx!(module) != 0 {
+        pkt_port |= if bladerf_channel_is_tx!(module) {
             0x0
         } else {
             Self::MASK_PORT_IS_RX

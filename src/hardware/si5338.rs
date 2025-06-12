@@ -1,10 +1,10 @@
 #![allow(dead_code)]
 
-use crate::board::bladerf1::{
-    BLADERF_SAMPLERATE_MIN, BLADERF_SMB_FREQUENCY_MAX, BLADERF_SMB_FREQUENCY_MIN,
-};
 use crate::nios::Nios;
 use anyhow::anyhow;
+use bladerf_globals::bladerf1::{
+    BLADERF_SAMPLERATE_MIN, BLADERF_SMB_FREQUENCY_MAX, BLADERF_SMB_FREQUENCY_MIN,
+};
 use bladerf_globals::{
     BladerfRationalRate, ENDPOINT_IN, ENDPOINT_OUT, bladerf_channel_rx, bladerf_channel_tx,
 };
@@ -418,7 +418,7 @@ impl SI5338 {
 
         /* Enforce minimum sample rate */
         Self::rational_reduce(&mut rate_reduced);
-        assert!(rate_reduced.integer >= BLADERF_SAMPLERATE_MIN);
+        assert!(rate_reduced.integer >= BLADERF_SAMPLERATE_MIN as u64);
 
         if ch == bladerf_channel_tx!(0) {
             channel |= SI5338_EN_B;

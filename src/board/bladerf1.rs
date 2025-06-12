@@ -5,11 +5,16 @@ use crate::hardware::lms6002d::{BLADERF1_BAND_HIGH, LMS6002D};
 use crate::hardware::si5338::SI5338;
 use crate::nios::Nios;
 use anyhow::{Result, anyhow};
-use bladerf_globals::BladerfGainMode::{BladerfGainDefault, BladerfGainMgc};
-use bladerf_globals::{
-    BLADERF_MODULE_RX, BLADERF_MODULE_TX, BLADERF1_USB_PID, BLADERF1_USB_VID, BladerfGainMode,
-    DescriptorTypes, ENDPOINT_IN, ENDPOINT_OUT, StringDescriptors, TIMEOUT, bladerf_channel_rx,
-    bladerf_channel_tx,
+pub(crate) use bladerf_globals::bladerf1::{
+    BLADERF_FREQUENCY_MAX, BLADERF_FREQUENCY_MIN, BLADERF_GPIO_AGC_ENABLE,
+    BLADERF_GPIO_FEATURE_SMALL_DMA_XFER, BLADERF_GPIO_PACKET, BLADERF_GPIO_TIMESTAMP,
+    BLADERF_GPIO_TIMESTAMP_DIV2, BLADERF1_USB_PID, BLADERF1_USB_VID,
+};
+use bladerf_globals::bladerf1::{BLADERF_LNA_GAIN_MAX_DB, BLADERF_LNA_GAIN_MID_DB};
+pub use bladerf_globals::{
+    BLADERF_MODULE_RX, BLADERF_MODULE_TX, BladerfDirection, BladerfFormat, BladerfGainMode,
+    DescriptorTypes, ENDPOINT_IN, ENDPOINT_OUT, StringDescriptors, TIMEOUT, bladerf_channel_is_tx,
+    bladerf_channel_rx, bladerf_channel_tx,
 };
 use bladerf_nios::NIOS_PKT_8X32_TARGET_CONTROL;
 use bladerf_nios::packet_generic::NiosPkt8x32;
@@ -19,6 +24,7 @@ use nusb::transfer::{Bulk, ControlIn, ControlOut, ControlType, In, Recipient};
 use nusb::{Device, DeviceInfo, Interface, Speed};
 use std::cmp::PartialEq;
 use std::num::NonZero;
+use std::ops::Range;
 use std::time::Duration;
 
 #[derive(thiserror::Error, Debug)]
@@ -28,394 +34,11 @@ pub enum BladeRfError {
     NotFound,
 }
 
-/**
- * Enable LMS receive
- *
- * @note This bit is set/cleared by bladerf_enable_module()
- */
-const BLADERF_GPIO_LMS_RX_ENABLE: u8 = 1 << 1;
-
-/**
- * Enable LMS transmit
- *
- * @note This bit is set/cleared by bladerf_enable_module()
- */
-const BLADERF_GPIO_LMS_TX_ENABLE: u8 = 1 << 2;
-
-/**
- * Switch to use TX low band (300MHz - 1.5GHz)
- *
- * @note This is set using bladerf_set_frequency().
- */
-const BLADERF_GPIO_TX_LB_ENABLE: u8 = 2 << 3;
-
-/**
- * Switch to use TX high band (1.5GHz - 3.8GHz)
- *
- * @note This is set using bladerf_set_frequency().
- */
-const BLADERF_GPIO_TX_HB_ENABLE: u8 = 1 << 3;
-
-/**
- * Counter mode enable
- *
- * Setting this bit to 1 instructs the FPGA to replace the (I, Q) pair in sample
- * data with an incrementing, little-endian, 32-bit counter value. A 0 in bit
- * specifies that sample data should be sent (as normally done).
- *
- * This feature is useful when debugging issues involving dropped samples.
- */
-const BLADERF_GPIO_COUNTER_ENABLE: u16 = 1 << 9;
-
-/**
- * Bit mask representing the rx mux selection
- *
- * @note These bits are set using bladerf_set_rx_mux()
- */
-const BLADERF_GPIO_RX_MUX_MASK: u16 = 7 << BLADERF_GPIO_RX_MUX_SHIFT;
-
-/**
- * Starting bit index of the RX mux values in FX3 <-> FPGA GPIO bank
- */
-const BLADERF_GPIO_RX_MUX_SHIFT: u16 = 8;
-
-/**
- * Switch to use RX low band (300M - 1.5GHz)
- *
- * @note This is set using bladerf_set_frequency().
- */
-const BLADERF_GPIO_RX_LB_ENABLE: u16 = 2 << 5;
-
-/**
- * Switch to use RX high band (1.5GHz - 3.8GHz)
- *
- * @note This is set using bladerf_set_frequency().
- */
-const BLADERF_GPIO_RX_HB_ENABLE: u16 = 1 << 5;
-
-/**
- * This GPIO bit configures the FPGA to use smaller DMA transfers (256 cycles
- * instead of 512). This is required when the device is not connected at Super
- * Speed (i.e., when it is connected at High Speed).
- *
- * However, the caller need not set this in bladerf_config_gpio_write() calls.
- * The library will set this as needed; callers generally do not need to be
- * concerned with setting/clearing this bit.
- */
-const BLADERF_GPIO_FEATURE_SMALL_DMA_XFER: u16 = 1 << 7;
-
-/**
- * Enable Packet mode
- */
-const BLADERF_GPIO_PACKET: u32 = 1 << 19;
-
-/**
- * Enable 8bit sample mode
- */
-const BLADERF_GPIO_8BIT_MODE: u32 = 1 << 20;
-
-/**
- * AGC enable control bit
- *
- * @note This is set using bladerf_set_gain_mode().
- */
-const BLADERF_GPIO_AGC_ENABLE: u32 = 1 << 18;
-
-/**
- * Enable-bit for timestamp counter in the FPGA
- */
-const BLADERF_GPIO_TIMESTAMP: u32 = 1 << 16;
-
-/**
- * Timestamp 2x divider control.
- *
- * @note <b>Important</b>: This bit has no effect and is always enabled (1) in
- * FPGA versions >= v0.3.0.
- *
- * @note The remainder of the description of this bit is presented here for
- * historical purposes only. It is only relevant to FPGA versions <= v0.1.2.
- *
- * By default, (value = 0), the sample counter is incremented with I and Q,
- * yielding two counts per sample.
- *
- * Set this bit to 1 to enable a 2x timestamp divider, effectively achieving 1
- * timestamp count per sample.
- * */
-const BLADERF_GPIO_TIMESTAMP_DIV2: u32 = 1 << 17;
-
-/**
- * Packet capable core present bit.
- *
- * @note This is a read-only bit. The FPGA sets its value, and uses it to inform
- *  host that there is a core capable of using packets in the FPGA.
- */
-const BLADERF_GPIO_PACKET_CORE_PRESENT: u32 = 1 << 28;
-
-pub const BLADERF_SAMPLERATE_MIN: u64 = 80000;
-
-/** Minimum tunable frequency (without an XB-200 attached), in Hz
-*
-* \deprecated Use bladerf_get_frequency_range()
- */
-pub const BLADERF_FREQUENCY_MIN: u32 = 237500000;
-
-/** Maximum tunable frequency, in Hz
-*
-* \deprecated Use bladerf_get_frequency_range()
- */
-pub const BLADERF_FREQUENCY_MAX: u32 = 3800000000;
-
-/**
- * Maximum output frequency on SMB connector, if no expansion board attached.
- */
-pub const BLADERF_SMB_FREQUENCY_MAX: u32 = 200000000;
-
-/**
- * Minimum output frequency on SMB connector, if no expansion board attached.
- */
-pub const BLADERF_SMB_FREQUENCY_MIN: u32 = (38400000 * 66) / (32 * 567);
-
-pub const BLADERF_DIRECTION_MASK: u8 = 0x1;
-/**
- * Sample format
- */
-#[derive(PartialEq)]
-pub enum BladerfFormat {
-    /**
-     * Signed, Complex 16-bit Q11. This is the native format of the DAC data.
-     *
-     * Values in the range [-2048, 2048) are used to represent [-1.0, 1.0).
-     * Note that the lower bound here is inclusive, and the upper bound is
-     * exclusive. Ensure that provided samples stay within [-2048, 2047].
-     *
-     * Samples consist of interleaved IQ value pairs, with I being the first
-     * value in the pair. Each value in the pair is a right-aligned,
-     * little-endian int16_t. The FPGA ensures that these values are
-     * sign-extended.
-     *
-     * <pre>
-     *  .--------------.--------------.
-     *  | Bits 31...16 | Bits 15...0  |
-     *  +--------------+--------------+
-     *  |   Q[15..0]   |   I[15..0]   |
-     *  `--------------`--------------`
-     * </pre>
-     *
-     * When using this format the minimum required buffer size, in bytes, is:
-     *
-     * \f$
-     *  buffer\_size\_min = (2 \times num\_samples \times num\_channels \times
-     *                      sizeof(int16\_t))
-     * \f$
-     *
-     * For example, to hold 2048 samples for one channel, a buffer must be at
-     * least 8192 bytes large.
-     *
-     * When a multi-channel ::bladerf_channel_layout is selected, samples
-     * will be interleaved per channel. For example, with ::BLADERF_RX_X2
-     * or ::BLADERF_TX_X2 (x2 MIMO), the buffer is structured like:
-     *
-     * <pre>
-     *  .-------------.--------------.--------------.------------------.
-     *  | Byte offset | Bits 31...16 | Bits 15...0  |    Description   |
-     *  +-------------+--------------+--------------+------------------+
-     *  |    0x00     |     Q0[0]    |     I0[0]    |  Ch 0, sample 0  |
-     *  |    0x04     |     Q1[0]    |     I1[0]    |  Ch 1, sample 0  |
-     *  |    0x08     |     Q0[1]    |     I0[1]    |  Ch 0, sample 1  |
-     *  |    0x0c     |     Q1[1]    |     I1[1]    |  Ch 1, sample 1  |
-     *  |    ...      |      ...     |      ...     |        ...       |
-     *  |    0xxx     |     Q0[n]    |     I0[n]    |  Ch 0, sample n  |
-     *  |    0xxx     |     Q1[n]    |     I1[n]    |  Ch 1, sample n  |
-     *  `-------------`--------------`--------------`------------------`
-     * </pre>
-     *
-     * Per the `buffer_size_min` formula above, 2048 samples for two channels
-     * will generate 4096 total samples, and require at least 16384 bytes.
-     *
-     * Implementors may use the interleaved buffers directly, or may use
-     * bladerf_deinterleave_stream_buffer() / bladerf_interleave_stream_buffer()
-     * if contiguous blocks of samples are desired.
-     */
-    BladerfFormatSc16Q11 = 0,
-
-    /**
-     * This format is the same as the ::BLADERF_FORMAT_SC16_Q11 format, except
-     * the first 4 samples in every <i>block*</i> of samples are replaced with
-     * metadata organized as follows. All fields are little-endian byte order.
-     *
-     * <pre>
-     *  .-------------.------------.----------------------------------.
-     *  | Byte offset |   Type     | Description                      |
-     *  +-------------+------------+----------------------------------+
-     *  |    0x00     | uint16_t   | Reserved                         |
-     *  |    0x02     |  uint8_t   | Stream flags                     |
-     *  |    0x03     |  uint8_t   | Meta version ID                  |
-     *  |    0x04     | uint64_t   | 64-bit Timestamp                 |
-     *  |    0x0c     | uint32_t   | BLADERF_META_FLAG_* flags        |
-     *  |  0x10..end  |            | Payload                          |
-     *  `-------------`------------`----------------------------------`
-     * </pre>
-     *
-     * For IQ sample meta mode, the Meta version ID and Stream flags should
-     * currently be set to values 0x00 and 0x00, respectively.
-     *
-     * <i>*</i>The number of samples in a <i>block</i> is dependent upon
-     * the USB speed being used:
-     *  - USB 2.0 Hi-Speed: 256 samples
-     *  - USB 3.0 SuperSpeed: 512 samples
-     *
-     * When using the bladerf_sync_rx() and bladerf_sync_tx() functions, the
-     * above details are entirely transparent; the caller need not be concerned
-     * with these details. These functions take care of packing/unpacking the
-     * metadata into/from the underlying stream and convey this information
-     * through the ::bladerf_metadata structure.
-     *
-     * However, when using the \ref FN_STREAMING_ASYNC interface, the user is
-     * responsible for manually packing/unpacking the above metadata into/from
-     * their samples.
-     *
-     * @see STREAMING_FORMAT_METADATA
-     * @see The `src/streaming/metadata.h` header in the libbladeRF codebase.
-     */
-    BladerfFormatSc16Q11Meta = 1,
-
-    /**
-     * This format is for exchanging packets containing digital payloads with
-     * the FPGA. A packet is generall a digital payload, that the FPGA then
-     * processes to either modulate, demodulate, filter, etc.
-     *
-     * All fields are little-endian byte order.
-     *
-     * <pre>
-     *  .-------------.------------.----------------------------------.
-     *  | Byte offset |   Type     | Description                      |
-     *  +-------------+------------+----------------------------------+
-     *  |    0x00     | uint16_t   | Packet length (in 32bit DWORDs)  |
-     *  |    0x02     |  uint8_t   | Packet flags                     |
-     *  |    0x03     |  uint8_t   | Packet core ID                   |
-     *  |    0x04     | uint64_t   | 64-bit Timestamp                 |
-     *  |    0x0c     | uint32_t   | BLADERF_META_FLAG_* flags        |
-     *  |  0x10..end  |            | Payload                          |
-     *  `-------------`------------`----------------------------------`
-     * </pre>
-     *
-     * A target core (for example a modem) must be specified when calling the
-     * bladerf_sync_rx() and bladerf_sync_tx() functions.
-     *
-     * When in packet mode, lengths for all functions and data formats are
-     * expressed in number of 32-bit DWORDs. As an example, a 12 byte packet
-     * is considered to be 3 32-bit DWORDs long.
-     *
-     * This packet format does not send or receive raw IQ samples. The digital
-     * payloads contain configurations, and digital payloads that are specific
-     * to the digital core to which they are addressed. It is the FPGA core
-     * that should generate, interpret, and process the digital payloads.
-     *
-     * With the exception of packet lenghts, no difference should exist between
-     * USB 2.0 Hi-Speed or USB 3.0 SuperSpeed for packets for this streaming
-     * format.
-     *
-     * @see STREAMING_FORMAT_METADATA
-     * @see The `src/streaming/metadata.h` header in the libbladeRF codebase.
-     */
-    BladerfFormatPacketMeta = 2,
-
-    /**
-     * Signed, Complex 8-bit Q8. This is the native format of the DAC data.
-     *
-     * Values in the range [-128, 128) are used to represent [-1.0, 1.0).
-     * Note that the lower bound here is inclusive, and the upper bound is
-     * exclusive. Ensure that provided samples stay within [-128, 127].
-     *
-     * Samples consist of interleaved IQ value pairs, with I being the first
-     * value in the pair. Each value in the pair is a right-aligned int8_t.
-     * The FPGA ensures that these values are sign-extended.
-     *
-     * <pre>
-     *  .--------------.--------------.
-     *  | Bits 15...8  | Bits  7...0  |
-     *  +--------------+--------------+
-     *  |    Q[7..0]   |    I[7..0]   |
-     *  `--------------`--------------`
-     * </pre>
-     *
-     * When using this format the minimum required buffer size, in bytes, is:
-     *
-     * \f$
-     *  buffer\_size\_min = (2 \times num\_samples \times num\_channels \times
-     *                      sizeof(int8\_t))
-     * \f$
-     *
-     * For example, to hold 2048 samples for one channel, a buffer must be at
-     * least 4096 bytes large.
-     *
-     * When a multi-channel ::bladerf_channel_layout is selected, samples
-     * will be interleaved per channel. For example, with ::BLADERF_RX_X2
-     * or ::BLADERF_TX_X2 (x2 MIMO), the buffer is structured like:
-     *
-     * <pre>
-     *  .-------------.--------------.--------------.------------------.
-     *  | Byte offset | Bits 15...8  | Bits  7...0  |    Description   |
-     *  +-------------+--------------+--------------+------------------+
-     *  |    0x00     |     Q0[0]    |     I0[0]    |  Ch 0, sample 0  |
-     *  |    0x02     |     Q1[0]    |     I1[0]    |  Ch 1, sample 0  |
-     *  |    0x04     |     Q0[1]    |     I0[1]    |  Ch 0, sample 1  |
-     *  |    0x06     |     Q1[1]    |     I1[1]    |  Ch 1, sample 1  |
-     *  |    ...      |      ...     |      ...     |        ...       |
-     *  |    0xxx     |     Q0[n]    |     I0[n]    |  Ch 0, sample n  |
-     *  |    0xxx     |     Q1[n]    |     I1[n]    |  Ch 1, sample n  |
-     *  `-------------`--------------`--------------`------------------`
-     * </pre>
-     *
-     * Per the `buffer_size_min` formula above, 2048 samples for two channels
-     * will generate 4096 total samples, and require at least 8192 bytes.
-     *
-     * Implementors may use the interleaved buffers directly, or may use
-     * bladerf_deinterleave_stream_buffer() / bladerf_interleave_stream_buffer()
-     * if contiguous blocks of samples are desired.
-     */
-    BladerfFormatSc8Q7 = 3,
-
-    /**
-     * This format is the same as the ::BLADERF_FORMAT_SC8_Q7 format, except
-     * the first 4 samples in every <i>block*</i> of samples are replaced with
-     * metadata organized as follows. All fields are little-endian byte order.
-     *
-     * <pre>
-     *  .-------------.------------.----------------------------------.
-     *  | Byte offset |   Type     | Description                      |
-     *  +-------------+------------+----------------------------------+
-     *  |    0x00     | uint16_t   | Reserved                         |
-     *  |    0x02     |  uint8_t   | Stream flags                     |
-     *  |    0x03     |  uint8_t   | Meta version ID                  |
-     *  |    0x04     | uint64_t   | 64-bit Timestamp                 |
-     *  |    0x0c     | uint32_t   | BLADERF_META_FLAG_* flags        |
-     *  |  0x10..end  |            | Payload                          |
-     *  `-------------`------------`----------------------------------`
-     * </pre>
-     *
-     * For IQ sample meta mode, the Meta version ID and Stream flags should
-     * currently be set to values 0x00 and 0x00, respectively.
-     *
-     * <i>*</i>The number of samples in a <i>block</i> is dependent upon
-     * the USB speed being used:
-     *  - USB 2.0 Hi-Speed: 256 samples
-     *  - USB 3.0 SuperSpeed: 512 samples
-     *
-     * When using the bladerf_sync_rx() and bladerf_sync_tx() functions, the
-     * above details are entirely transparent; the caller need not be concerned
-     * with these details. These functions take care of packing/unpacking the
-     * metadata into/from the underlying stream and convey this information
-     * through the ::bladerf_metadata structure.
-     *
-     * However, when using the \ref FN_STREAMING_ASYNC interface, the user is
-     * responsible for manually packing/unpacking the above metadata into/from
-     * their samples.
-     *
-     * @see STREAMING_FORMAT_METADATA
-     * @see The `src/streaming/metadata.h` header in the libbladeRF codebase.
-     */
-    BladerfFormatSc8Q7Meta = 4,
+pub struct SdrRange {
+    min: i8,
+    max: i8,
+    step: u8,
+    scale: u8,
 }
 
 /**
@@ -423,8 +46,8 @@ pub enum BladerfFormat {
  */
 #[derive(PartialEq)]
 pub enum BladeRfDirection {
-    BladerfRx = 0, // Receive direction
-    BladerfTx = 1, // Transmit direction
+    Rx = 0, // Receive direction
+    Tx = 1, // Transmit direction
 }
 
 /**
@@ -432,10 +55,10 @@ pub enum BladeRfDirection {
  */
 #[derive(PartialEq)]
 pub enum BladeRfChannelLayout {
-    BladerfRxX1 = 0, // x1 RX (SISO)
-    BladerfTxX1 = 1, // x1 TX (SISO)
-    BladerfRxX2 = 2, // x2 RX (MIMO)
-    BladerfTxX2 = 3, // x2 TX (MIMO)
+    RxX1 = 0, // x1 RX (SISO)
+    TxX1 = 1, // x1 TX (SISO)
+    RxX2 = 2, // x2 RX (MIMO)
+    TxX2 = 3, // x2 TX (MIMO)
 }
 
 /**
@@ -444,16 +67,39 @@ pub enum BladeRfChannelLayout {
  * \deprecated Use bladerf_get_gain_stage_range()
  */
 #[derive(PartialEq)]
+#[repr(u8)]
 pub enum BladerfLnaGain {
     /**< Invalid LNA gain */
-    BladerfLnaGainUnknown,
+    Unknown,
     /**< LNA bypassed - 0dB gain */
-    BladerfLnaGainBypass,
+    Bypass,
     /**< LNA Mid Gain (MAX-6dB) */
-    BladerfLnaGainMid,
+    Mid,
     /**< LNA Max Gain */
-    BladerfLnaGainMax,
+    Max,
 }
+
+impl From<u8> for BladerfLnaGain {
+    fn from(value: u8) -> Self {
+        match value {
+            1 => BladerfLnaGain::Bypass,
+            2 => BladerfLnaGain::Mid,
+            3 => BladerfLnaGain::Max,
+            _ => BladerfLnaGain::Unknown,
+        }
+    }
+}
+
+// impl Into<BladerfLnaGain> for u8 {
+//     fn into(self) -> BladerfLnaGain {
+//         match self {
+//             1 => BladerfLnaGain::Bypass,
+//             2 => BladerfLnaGain::Mid,
+//             3 => BladerfLnaGain::Max,
+//             _ => BladerfLnaGain::Unknown,
+//         }
+//     }
+// }
 
 pub struct BladeRf1 {
     device: Device,
@@ -779,7 +425,7 @@ impl BladeRf1 {
             // In: expected: 4200030008d1ab000000000000000000
             // In actual:    42000300080000000000000000000000
             // Todo: Implement AGC table and set mode to BladerfGainDefault
-            self.set_gain_mode(bladerf_channel_rx!(0), BladerfGainMgc)
+            self.set_gain_mode(bladerf_channel_rx!(0), BladerfGainMode::Mgc)
                 .await?;
         } else {
             println!("[*] Init - Device already initialized: {cfg:#04x}");
@@ -907,6 +553,108 @@ impl BladeRf1 {
         Ok(())
     }
 
+    fn _convert_gain_to_lna_gain(gain: i8) -> BladerfLnaGain {
+        if gain >= BLADERF_LNA_GAIN_MAX_DB {
+            BladerfLnaGain::Max
+        } else if gain >= BLADERF_LNA_GAIN_MID_DB {
+            BladerfLnaGain::Mid
+        } else {
+            BladerfLnaGain::Bypass
+        }
+    }
+
+    fn _convert_lna_gain_to_gain(lna_gain: BladerfLnaGain) -> i8 {
+        match lna_gain {
+            BladerfLnaGain::Max => BLADERF_LNA_GAIN_MAX_DB,
+            BladerfLnaGain::Mid => BLADERF_LNA_GAIN_MID_DB,
+            BladerfLnaGain::Bypass => 0,
+            _ => -1,
+        }
+    }
+
+    pub async fn bladerf1_get_gain_stage(&self, channel: u8, stage: &str) -> Result<i8> {
+        // CHECK_BOARD_STATE(STATE_INITIALIZED);
+        if channel == BLADERF_MODULE_TX {
+            match stage {
+                "txvga1" => self.lms.txvga1_get_gain().await,
+                "txvga2" => self.lms.txvga2_get_gain().await,
+                _ => Err(anyhow!("invalid stage {stage}")),
+            }
+        } else if channel == BLADERF_MODULE_RX {
+            match stage {
+                "lna" => {
+                    let lna_gain = self.lms.lna_get_gain().await?;
+                    Ok(Self::_convert_lna_gain_to_gain(lna_gain))
+                }
+                "rxvga1" => self.lms.rxvga1_get_gain().await,
+                "rxvga2" => self.lms.rxvga2_get_gain().await,
+                _ => Err(anyhow!("invalid stage {stage}")),
+            }
+        } else {
+            Err(anyhow!("invalid channel {channel}"))
+        }
+    }
+
+    pub fn bladerf1_get_gain_stages(channel: u8) -> Vec<String> {
+        if bladerf_channel_is_tx!(channel) {
+            vec!["txvga1".to_string(), "txvga2".to_string()]
+        } else {
+            vec![
+                "lna".to_string(),
+                "rxvga1".to_string(),
+                "rxvga2".to_string(),
+            ]
+        }
+    }
+
+    /** Use bladerf_get_gain_range(), bladerf_set_gain(), and
+     *             bladerf_get_gain() to control total system gain. For direct
+     *             control of individual gain stages, use bladerf_get_gain_stages(),
+     *             bladerf_get_gain_stage_range(), bladerf_set_gain_stage(), and
+     *             bladerf_get_gain_stage().
+     **/
+    pub async fn get_gain_stage_range(channel: u8, stage: &str) -> Result<SdrRange> {
+        if channel == BLADERF_MODULE_RX {
+            match stage {
+                "lna" => Ok(SdrRange {
+                    min: 0,
+                    max: 6,
+                    step: 3,
+                    scale: 1,
+                }),
+                "rxvga1" => Ok(SdrRange {
+                    min: 5,
+                    max: 30,
+                    step: 1,
+                    scale: 1,
+                }),
+                "rxvga2" => Ok(SdrRange {
+                    min: 0,
+                    max: 30,
+                    step: 3,
+                    scale: 1,
+                }),
+                _ => Err(anyhow!("Invalid stage: {stage}")),
+            }
+        } else {
+            match stage {
+                "txvga1" => Ok(SdrRange {
+                    min: -35,
+                    max: -4,
+                    step: 1,
+                    scale: 1,
+                }),
+                "txvga2" => Ok(SdrRange {
+                    min: 0,
+                    max: 25,
+                    step: 3,
+                    scale: 1,
+                }),
+                _ => Err(anyhow!("Invalid stage: {stage}")),
+            }
+        }
+    }
+
     #[allow(unreachable_code)] // TODO: Only while AGC table is not implemented
     pub async fn set_gain_mode(&self, channel: u8, mode: BladerfGainMode) -> Result<u32> {
         if channel != BLADERF_MODULE_RX {
@@ -914,7 +662,7 @@ impl BladeRf1 {
         }
 
         let mut config_gpio = self.config_gpio_read().await?;
-        if mode == BladerfGainDefault {
+        if mode == BladerfGainMode::Default {
             // Default mode is the same as Automatic mode
             return Err(anyhow!("Todo: Implement AGC Table"));
             // if (!have_cap(board_data->capabilities, BLADERF_CAP_AGC_DC_LUT)) {
@@ -943,14 +691,14 @@ impl BladeRf1 {
             //     return BLADERF_ERR_UNSUPPORTED;
             // }
             config_gpio |= BLADERF_GPIO_AGC_ENABLE;
-        } else if mode == BladerfGainMgc {
+        } else if mode == BladerfGainMode::Mgc {
             config_gpio &= !BLADERF_GPIO_AGC_ENABLE;
         }
 
         self.config_gpio_write(config_gpio).await
     }
 
-    pub async fn get_frequency(&self, channel: u8) -> Result<u64> {
+    pub async fn get_frequency(&self, channel: u8) -> Result<u32> {
         let f = self.lms.get_frequency(channel).await?;
         if f.x == 0 {
             /* If we see this, it's most often an indication that communication
@@ -970,6 +718,17 @@ impl BladeRf1 {
         // }
 
         Ok(frequency_hz)
+    }
+
+    pub fn get_frequency_range() -> Range<u32> {
+        BLADERF_FREQUENCY_MIN..BLADERF_FREQUENCY_MAX
+        // if (dev->xb == BLADERF_XB_200) {
+        //     *range = &bladerf1_xb200_frequency_range;
+        //     0.. BLADERF_FREQUENCY_MAX
+        // } else {
+        //     *range = &bladerf1_frequency_range;
+        //     BLADERF_FREQUENCY_MIN.. BLADERF_FREQUENCY_MAX
+        // }
     }
 
     /// Get BladeRf1 String descriptor
@@ -1057,8 +816,8 @@ impl BladeRf1 {
         // }
 
         let _other = match dir {
-            BladeRfDirection::BladerfRx => BladeRfDirection::BladerfTx,
-            BladeRfDirection::BladerfTx => BladeRfDirection::BladerfRx,
+            BladeRfDirection::Rx => BladeRfDirection::Tx,
+            BladeRfDirection::Tx => BladeRfDirection::Rx,
         };
 
         // status = requires_timestamps(board_data->module_format[other],
@@ -1072,10 +831,10 @@ impl BladeRf1 {
         let mut gpio_val = self.config_gpio_read().await?;
 
         println!("gpio_val {gpio_val:#08x}");
-        if format == BladerfFormat::BladerfFormatPacketMeta {
+        if format == BladerfFormat::PacketMeta {
             gpio_val |= BLADERF_GPIO_PACKET;
             use_timestamps = true;
-            println!("BladerfFormat::BladerfFormatPacketMeta");
+            println!("BladerfFormat::PacketMeta");
         } else {
             gpio_val &= !BLADERF_GPIO_PACKET;
             println!("else");
@@ -1123,7 +882,7 @@ impl BladeRf1 {
         // };
 
         match dir {
-            BladeRfDirection::BladerfRx | BladeRfDirection::BladerfTx => {
+            BladeRfDirection::Rx | BladeRfDirection::Tx => {
                 /* We'll reconfigure the HW when we call perform_format_config, so
                  * we just need to update our stored information */
                 //board_data -> module_format[dir] = - 1;

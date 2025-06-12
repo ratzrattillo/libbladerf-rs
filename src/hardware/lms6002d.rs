@@ -3,6 +3,11 @@
 use crate::board::bladerf1::{BLADERF_FREQUENCY_MAX, BLADERF_FREQUENCY_MIN, BladerfLnaGain};
 use crate::nios::Nios;
 use anyhow::{Result, anyhow};
+use bladerf_globals::bladerf1::{
+    BLADERF_RXVGA1_GAIN_MAX, BLADERF_RXVGA1_GAIN_MIN, BLADERF_RXVGA2_GAIN_MAX,
+    BLADERF_RXVGA2_GAIN_MIN, BLADERF_TXVGA1_GAIN_MAX, BLADERF_TXVGA1_GAIN_MIN,
+    BLADERF_TXVGA2_GAIN_MAX, BLADERF_TXVGA2_GAIN_MIN,
+};
 use bladerf_globals::{
     BLADERF_MODULE_RX, BLADERF_MODULE_TX, BladerfLoopback, ENDPOINT_IN, ENDPOINT_OUT,
 };
@@ -420,6 +425,27 @@ pub enum LmsLna {
     Lna3,
 }
 
+impl From<u8> for LmsLna {
+    fn from(value: u8) -> Self {
+        match value {
+            1 => LmsLna::Lna1,
+            2 => LmsLna::Lna2,
+            3 => LmsLna::Lna3,
+            _ => LmsLna::LnaNone,
+        }
+    }
+}
+// impl Into<LmsLna> for u8 {
+//     fn into(self) -> LmsLna {
+//         match self {
+//             1 => LmsLna::Lna1,
+//             2 => LmsLna::Lna2,
+//             3 => LmsLna::Lna3,
+//             _ => LmsLna::LnaNone,
+//         }
+//     }
+// }
+
 /**
  * Loopback paths
  */
@@ -657,20 +683,20 @@ impl LMS6002D {
     }
 
     pub async fn get_loopback_mode(&self) -> Result<BladerfLoopback> {
-        let mut loopback = BladerfLoopback::BladerfLbNone;
+        let mut loopback = BladerfLoopback::LbNone;
 
         let lben_lbrfen = self.read(0x08).await?;
         let loopbben = self.read(0x46).await?;
 
         match lben_lbrfen & 0x7 {
             LBRFEN_LNA1 => {
-                loopback = BladerfLoopback::BladerfLbRfLna1;
+                loopback = BladerfLoopback::LbLna1;
             }
             LBRFEN_LNA2 => {
-                loopback = BladerfLoopback::BladerfLbRfLna2;
+                loopback = BladerfLoopback::LbLna2;
             }
             LBRFEN_LNA3 => {
-                loopback = BladerfLoopback::BladerfLbRfLna3;
+                loopback = BladerfLoopback::LbLna3;
             }
             _ => {}
         }
@@ -678,16 +704,16 @@ impl LMS6002D {
         match lben_lbrfen & LBEN_MASK {
             LBEN_VGA2IN => {
                 if (loopbben & LOOPBBEN_TXLPF) != 0 {
-                    loopback = BladerfLoopback::BladerfLbBbTxlpfRxvga2;
+                    loopback = BladerfLoopback::LbBbTxlpfRxvga2;
                 } else if (loopbben & LOOPBBEN_TXVGA) != 0 {
-                    loopback = BladerfLoopback::BladerfLbBbTxvga1Rxvga2;
+                    loopback = BladerfLoopback::LbBbTxvga1Rxvga2;
                 }
             }
             LBEN_LPFIN => {
                 if (loopbben & LOOPBBEN_TXLPF) != 0 {
-                    loopback = BladerfLoopback::BladerfLbBbTxlpfRxlpf;
+                    loopback = BladerfLoopback::LbBbTxlpfRxlpf;
                 } else if (loopbben & LOOPBBEN_TXVGA) != 0 {
-                    loopback = BladerfLoopback::BladerfLbBbTxvga1Rxlpf;
+                    loopback = BladerfLoopback::LbBbTxvga1Rxlpf;
                 }
             }
             _ => {}
@@ -699,7 +725,7 @@ impl LMS6002D {
     pub async fn is_loopback_enabled(&self) -> Result<bool> {
         let loopback = self.get_loopback_mode().await?;
 
-        Ok(loopback != BladerfLoopback::BladerfLbNone)
+        Ok(loopback != BladerfLoopback::LbNone)
     }
 
     pub async fn write_pll_config(&self, module: u8, freqsel: u8, low_band: bool) -> Result<u8> {
@@ -1154,6 +1180,31 @@ impl LMS6002D {
         self.write(0x09, data).await
     }
 
+    pub async fn enable_lna_power(&self, enable: bool) -> Result<()> {
+        /* Magic test register to power down LNAs */
+        let mut regval = self.read(0x7d).await?;
+
+        if enable {
+            regval &= !(1 << 0);
+        } else {
+            regval |= 1 << 0;
+        }
+
+        self.write(0x7d, regval).await?;
+
+        /* Decode test registers */
+        regval = self.read(0x70).await?;
+
+        if enable {
+            regval &= !(1 << 1);
+        } else {
+            regval |= 1 << 1;
+        }
+
+        self.write(0x70, regval).await?;
+        Ok(())
+    }
+
     pub async fn select_pa(&self, pa: LmsPa) -> Result<u8> {
         // status = LMS_READ(dev, 0x44, &data);
         let mut data = self.read(0x44).await?;
@@ -1296,15 +1347,151 @@ impl LMS6002D {
         Ok(f)
     }
 
-    pub fn frequency_to_hz(lms_freq: &LmsFreq) -> u64 {
+    pub fn frequency_to_hz(lms_freq: &LmsFreq) -> u32 {
         let pll_coeff = ((lms_freq.nint as u64) << 23) + lms_freq.nfrac as u64;
         let div = (lms_freq.x as u64) << 23;
 
-        if div > 0 {
-            ((LMS_REFERENCE_HZ as u64 * pll_coeff) + (div >> 1)) / div
+        (((LMS_REFERENCE_HZ as u64 * pll_coeff) + (div >> 1)) / div) as u32
+    }
+
+    pub async fn lms_soft_reset(&self) -> Result<()> {
+        /* Soft reset of the LMS */
+        self.write(0x05, 0x12).await?;
+        self.write(0x05, 0x32).await?;
+        Ok(())
+    }
+
+    pub async fn lna_set_gain(&self, gain: BladerfLnaGain) -> Result<()> {
+        /* Set the gain on the LNA */
+        if gain != BladerfLnaGain::Unknown {
+            let mut data = self.read(0x75).await?;
+            data &= !(3 << 6); /* Clear out previous gain setting */
+            data |= (gain as u8 & 3) << 6; /* Update gain value */
+            self.write(0x75, data).await?;
+            Ok(())
         } else {
-            0
+            Err(anyhow!("Invalid Gain value"))
         }
+    }
+
+    pub async fn lna_get_gain(&self) -> Result<BladerfLnaGain> {
+        let mut data = self.read(0x75).await?;
+        data >>= 6;
+        data &= 3;
+
+        if data == BladerfLnaGain::Unknown as u8 {
+            Err(anyhow!("Invalid Gain"))
+        } else {
+            Ok(data.into())
+        }
+    }
+
+    pub async fn get_lna(&self) -> Result<LmsLna> {
+        let data = self.read(0x75).await?;
+        Ok(((data >> 4) & 0x3).into())
+    }
+
+    pub async fn rxvga1_enable(&self, enable: bool) -> Result<()> {
+        /* Enable bit is in reserved register documented in this thread:
+         *  https://groups.google.com/forum/#!topic/limemicro-opensource/8iTannzlfzg
+         */
+        let mut data = self.read(0x7d).await?;
+        if enable {
+            data &= !(1 << 3);
+        } else {
+            data |= 1 << 3;
+        }
+        self.write(0x7d, data).await?;
+        Ok(())
+    }
+
+    pub async fn rxvga1_set_gain(&self, gain: i8) -> Result<()> {
+        /* Set the RFB_TIA_RXFE mixer gain */
+        let idx = gain.clamp(BLADERF_RXVGA1_GAIN_MIN, BLADERF_RXVGA1_GAIN_MAX);
+        self.write(0x76, RXVGA1_LUT_VAL2CODE[idx as usize]).await?;
+        Ok(())
+    }
+    pub async fn rxvga1_get_gain(&self) -> Result<i8> {
+        let mut data = self.read(0x76).await?;
+
+        data &= 0x7f;
+        let idx = data.clamp(0, 120) as usize;
+
+        Ok(RXVGA1_LUT_CODE2VAL[idx] as i8)
+    }
+
+    pub async fn rxvga2_enable(&self, enable: bool) -> Result<()> {
+        /* Enable RXVGA2 */
+        let mut data = self.read(0x64).await?;
+        if enable {
+            data |= 1 << 1;
+        } else {
+            data &= !(1 << 1);
+        }
+        self.write(0x64, data).await?;
+        Ok(())
+    }
+
+    pub async fn rxvga2_set_gain(&self, gain: i8) -> Result<()> {
+        /* Set the gain on RXVGA2 */
+        let gain = gain.clamp(BLADERF_RXVGA2_GAIN_MIN, BLADERF_RXVGA2_GAIN_MAX);
+        self.write(0x65, (gain / 3) as u8).await?;
+        Ok(())
+    }
+    pub async fn rxvga2_get_gain(&self) -> Result<i8> {
+        let data = self.read(0x65).await?;
+
+        Ok((data * 3) as i8)
+    }
+
+    pub async fn txvga1_get_gain(&self) -> Result<i8> {
+        let mut data = self.read(0x41).await?;
+        /* Clamp to max value */
+        data &= 0x1f;
+
+        /* Convert table index to value */
+        Ok((data - 35) as i8)
+    }
+
+    pub async fn txvga2_get_gain(&self) -> Result<i8> {
+        let mut data = self.read(0x45).await?;
+        /* Clamp to max value */
+        data = (data >> 3) & 0x1f;
+
+        /* Register values of 25-31 all correspond to 25 dB */
+        Ok(data.min(25) as i8)
+    }
+
+    pub async fn txvga1_set_gain(&self, gain: i8) -> Result<()> {
+        let mut gain = gain.clamp(BLADERF_TXVGA1_GAIN_MIN, BLADERF_TXVGA1_GAIN_MAX);
+
+        /* Apply offset to convert gain to register table index */
+        gain += 35;
+
+        /* Since 0x41 is only VGA1GAIN, we don't need to RMW */
+        self.write(0x41, gain as u8).await?;
+        Ok(())
+    }
+
+    pub async fn txvga2_set_gain(&self, gain: i8) -> Result<()> {
+        let gain = gain.clamp(BLADERF_TXVGA2_GAIN_MIN, BLADERF_TXVGA2_GAIN_MAX);
+
+        let mut data = self.read(0x45).await? as i8;
+        data &= !(0x1f << 3);
+        data |= (gain & 0x1f) << 3;
+        self.write(0x45, data as u8).await?;
+        Ok(())
+    }
+
+    pub async fn peakdetect_enable(&self, enable: bool) -> Result<()> {
+        let mut data = self.read(0x44).await?;
+        if enable {
+            data &= !(1 << 0);
+        } else {
+            data |= 1;
+        }
+        self.write(0x44, data).await?;
+        Ok(())
     }
 
     pub async fn schedule_retune(

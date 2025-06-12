@@ -1,5 +1,5 @@
 use anyhow::Result;
-use bladerf_globals::BLADERF_MODULE_RX;
+use bladerf_globals::{BLADERF_MODULE_RX, BLADERF_MODULE_TX};
 use libbladerf_rs::board::bladerf1::{BladeRf1, BladeRfDirection, BladerfFormat};
 use std::time::Duration;
 
@@ -18,8 +18,14 @@ async fn main() -> Result<()> {
     println!("Product: {}", bladerf.product().await?);
 
     let languages = bladerf.get_supported_languages().await?;
-    println!("{languages:x?}");
+    println!("Languages: {:x?}", languages);
+
     bladerf.initialize().await?;
+
+    let frequency_rx = bladerf.get_frequency(BLADERF_MODULE_RX).await?;
+    let frequency_tx = bladerf.get_frequency(BLADERF_MODULE_TX).await?;
+    println!("Frequency RX: {}", frequency_rx);
+    println!("Frequency TX: {}", frequency_tx);
 
     // bladerf.reset()?;
 
@@ -32,10 +38,7 @@ async fn main() -> Result<()> {
     //                  dev->backend->init_stream(lstream, num_transfers); -> static int lusb_init_stream( in /home/user/sdr/bladeRF/host/libraries/libbladeRF/src/backend/usb/libusb.c
     tokio::time::sleep(Duration::from_secs(1)).await;
     bladerf
-        .perform_format_config(
-            BladeRfDirection::BladerfRx,
-            BladerfFormat::BladerfFormatSc16Q11,
-        )
+        .perform_format_config(BladeRfDirection::Rx, BladerfFormat::Sc16Q11)
         .await?;
     tokio::time::sleep(Duration::from_secs(1)).await;
     bladerf
@@ -47,7 +50,7 @@ async fn main() -> Result<()> {
 
     bladerf.async_run_stream().await?;
 
-    bladerf.perform_format_deconfig(BladeRfDirection::BladerfRx)?;
+    bladerf.perform_format_deconfig(BladeRfDirection::Rx)?;
     tokio::time::sleep(Duration::from_secs(1)).await;
     bladerf
         .bladerf_enable_module(BLADERF_MODULE_RX, false)
