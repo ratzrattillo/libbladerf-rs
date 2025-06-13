@@ -167,27 +167,8 @@ pub fn _apportion_gain(range: &SdrRange, stage_gain: i8, overall_gain: i8) -> (i
 /* RX gain offset */
 pub const BLADERF1_RX_GAIN_OFFSET: f32 = -6.0;
 
-/* Overall RX gain range */
-// pub const RX_GAIN_RANGE: SdrRange = SdrRange {
-//     min: BLADERF_RXVGA1_GAIN_MIN + BLADERF_RXVGA2_GAIN_MIN + BLADERF1_RX_GAIN_OFFSET.round() as i8,
-//     max: BLADERF_LNA_GAIN_MAX_DB
-//         + BLADERF_RXVGA1_GAIN_MAX
-//         + BLADERF_RXVGA2_GAIN_MAX
-//         + BLADERF1_RX_GAIN_OFFSET.round() as i8,
-//     step: 1,
-//     scale: 1,
-// };
-
 /* TX gain offset: 60 dB system gain ~= 0 dBm output */
 pub const BLADERF1_TX_GAIN_OFFSET: f32 = 52.0;
-
-/* Overall TX gain range */
-// pub const TX_GAIN_RANGE: SdrRange = SdrRange {
-//     min: BLADERF_TXVGA1_GAIN_MIN + BLADERF_TXVGA2_GAIN_MIN + BLADERF1_TX_GAIN_OFFSET.round() as i8,
-//     max: BLADERF_TXVGA1_GAIN_MAX + BLADERF_TXVGA2_GAIN_MAX + BLADERF1_TX_GAIN_OFFSET.round() as i8,
-//     step: 1,
-//     scale: 1,
-// };
 
 /* RX gain modes */
 

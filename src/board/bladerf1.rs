@@ -492,6 +492,37 @@ impl BladeRf1 {
         }
     }
 
+    pub fn get_gain_range(&self, channel: u8) -> SdrRange {
+        if bladerf_channel_is_tx!(channel) {
+            /* Overall TX gain range */
+            SdrRange {
+                min: BLADERF_TXVGA1_GAIN_MIN
+                    + BLADERF_TXVGA2_GAIN_MIN
+                    + BLADERF1_TX_GAIN_OFFSET.round() as i8,
+                max: BLADERF_TXVGA1_GAIN_MAX
+                    + BLADERF_TXVGA2_GAIN_MAX
+                    + BLADERF1_TX_GAIN_OFFSET.round() as i8,
+                step: 1,
+                scale: 1,
+            }
+            // *range = &bladerf1_tx_gain_range;
+        } else {
+            /* Overall RX gain range */
+            SdrRange {
+                min: BLADERF_RXVGA1_GAIN_MIN
+                    + BLADERF_RXVGA2_GAIN_MIN
+                    + BLADERF1_RX_GAIN_OFFSET.round() as i8,
+                max: BLADERF_LNA_GAIN_MAX_DB
+                    + BLADERF_RXVGA1_GAIN_MAX
+                    + BLADERF_RXVGA2_GAIN_MAX
+                    + BLADERF1_RX_GAIN_OFFSET.round() as i8,
+                step: 1,
+                scale: 1,
+            }
+            // *range = &bladerf1_rx_gain_range;
+        }
+    }
+
     pub async fn get_gain_stage(&self, channel: u8, stage: &str) -> Result<i8> {
         // CHECK_BOARD_STATE(STATE_INITIALIZED);
         if channel == BLADERF_MODULE_TX {
@@ -512,6 +543,29 @@ impl BladeRf1 {
             }
         } else {
             Err(anyhow!("invalid channel {channel}"))
+        }
+    }
+
+    pub async fn set_gain_stage(&self, channel: u8, stage: &str, gain: i8) -> Result<()> {
+        // CHECK_BOARD_STATE(STATE_INITIALIZED);
+
+        /* TODO implement gain clamping */
+        match channel {
+            BLADERF_MODULE_TX => match stage {
+                "txvga1" => Ok(self.lms.txvga1_set_gain(gain).await?),
+                "txvga2" => Ok(self.lms.txvga2_set_gain(gain).await?),
+                _ => Err(anyhow!("invalid stage {stage}")),
+            },
+            BLADERF_MODULE_RX => match stage {
+                "rxvga1" => Ok(self.lms.rxvga1_set_gain(gain).await?),
+                "rxvga2" => Ok(self.lms.rxvga2_set_gain(gain).await?),
+                "lna" => Ok(self
+                    .lms
+                    .lna_set_gain(Self::_convert_gain_to_lna_gain(gain))
+                    .await?),
+                _ => Err(anyhow!("invalid stage {stage}")),
+            },
+            _ => Err(anyhow!("Invalid channel {channel}")),
         }
     }
 
