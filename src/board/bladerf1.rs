@@ -5,24 +5,30 @@ use crate::hardware::lms6002d::{BLADERF1_BAND_HIGH, LMS6002D};
 use crate::hardware::si5338::SI5338;
 use crate::nios::Nios;
 use anyhow::{Result, anyhow};
+use bladerf_globals::bladerf1::{__scale_int, __unscale_int};
+pub(crate) use bladerf_globals::bladerf1::{
+    _apportion_gain, BLADERF_LNA_GAIN_MAX_DB, BLADERF_LNA_GAIN_MID_DB, BLADERF_RXVGA1_GAIN_MAX,
+    BLADERF_RXVGA1_GAIN_MIN, BLADERF_RXVGA2_GAIN_MAX, BLADERF_RXVGA2_GAIN_MIN,
+    BLADERF_TXVGA1_GAIN_MAX, BLADERF_TXVGA1_GAIN_MIN, BLADERF_TXVGA2_GAIN_MAX,
+    BLADERF_TXVGA2_GAIN_MIN, BLADERF1_RX_GAIN_OFFSET, BLADERF1_TX_GAIN_OFFSET, BladerfLnaGain,
+};
 pub(crate) use bladerf_globals::bladerf1::{
     BLADERF_FREQUENCY_MAX, BLADERF_FREQUENCY_MIN, BLADERF_GPIO_AGC_ENABLE,
     BLADERF_GPIO_FEATURE_SMALL_DMA_XFER, BLADERF_GPIO_PACKET, BLADERF_GPIO_TIMESTAMP,
     BLADERF_GPIO_TIMESTAMP_DIV2, BLADERF1_USB_PID, BLADERF1_USB_VID,
 };
-use bladerf_globals::bladerf1::{BLADERF_LNA_GAIN_MAX_DB, BLADERF_LNA_GAIN_MID_DB};
 pub use bladerf_globals::{
-    BLADERF_MODULE_RX, BLADERF_MODULE_TX, BladerfDirection, BladerfFormat, BladerfGainMode,
-    DescriptorTypes, ENDPOINT_IN, ENDPOINT_OUT, StringDescriptors, TIMEOUT, bladerf_channel_is_tx,
+    BLADERF_MODULE_RX, BLADERF_MODULE_TX, BladerfFormat, BladerfGainMode, DescriptorTypes,
+    ENDPOINT_IN, ENDPOINT_OUT, StringDescriptors, TIMEOUT, bladerf_channel_is_tx,
     bladerf_channel_rx, bladerf_channel_tx,
 };
+pub use bladerf_globals::{BladeRfDirection, SdrRange, bladerf1};
 use bladerf_nios::NIOS_PKT_8X32_TARGET_CONTROL;
 use bladerf_nios::packet_generic::NiosPkt8x32;
 use bladerf_nios::packet_retune::{Band, NiosPktRetuneRequest};
 use nusb::descriptors::ConfigurationDescriptor;
 use nusb::transfer::{Bulk, ControlIn, ControlOut, ControlType, In, Recipient};
 use nusb::{Device, DeviceInfo, Interface, Speed};
-use std::cmp::PartialEq;
 use std::num::NonZero;
 use std::ops::Range;
 use std::time::Duration;
@@ -33,73 +39,6 @@ pub enum BladeRfError {
     #[error("NotFound")]
     NotFound,
 }
-
-pub struct SdrRange {
-    min: i8,
-    max: i8,
-    step: u8,
-    scale: u8,
-}
-
-/**
- * Stream direction
- */
-#[derive(PartialEq)]
-pub enum BladeRfDirection {
-    Rx = 0, // Receive direction
-    Tx = 1, // Transmit direction
-}
-
-/**
- * Stream channel layout
- */
-#[derive(PartialEq)]
-pub enum BladeRfChannelLayout {
-    RxX1 = 0, // x1 RX (SISO)
-    TxX1 = 1, // x1 TX (SISO)
-    RxX2 = 2, // x2 RX (MIMO)
-    TxX2 = 3, // x2 TX (MIMO)
-}
-
-/**
- * LNA gain options
- *
- * \deprecated Use bladerf_get_gain_stage_range()
- */
-#[derive(PartialEq)]
-#[repr(u8)]
-pub enum BladerfLnaGain {
-    /**< Invalid LNA gain */
-    Unknown,
-    /**< LNA bypassed - 0dB gain */
-    Bypass,
-    /**< LNA Mid Gain (MAX-6dB) */
-    Mid,
-    /**< LNA Max Gain */
-    Max,
-}
-
-impl From<u8> for BladerfLnaGain {
-    fn from(value: u8) -> Self {
-        match value {
-            1 => BladerfLnaGain::Bypass,
-            2 => BladerfLnaGain::Mid,
-            3 => BladerfLnaGain::Max,
-            _ => BladerfLnaGain::Unknown,
-        }
-    }
-}
-
-// impl Into<BladerfLnaGain> for u8 {
-//     fn into(self) -> BladerfLnaGain {
-//         match self {
-//             1 => BladerfLnaGain::Bypass,
-//             2 => BladerfLnaGain::Mid,
-//             3 => BladerfLnaGain::Max,
-//             _ => BladerfLnaGain::Unknown,
-//         }
-//     }
-// }
 
 pub struct BladeRf1 {
     device: Device,
@@ -471,22 +410,9 @@ impl BladeRf1 {
         println!("Selecting %s band. {band:?}");
 
         self.lms.select_band(module, band).await?;
-        // status = lms_select_band(dev, module, low_band);
-        // if (status != 0) {
-        //     return status;
-        // }
 
         let mut gpio = self.config_gpio_read().await?;
-        // #ifndef BLADERF_NIOS_BUILD
-        //     status = dev->backend->config_gpio_read(dev, &gpio);
-        // #else
-        //     status = CONFIG_GPIO_READ(dev, &gpio);
-        // #endif
-        //     if (status != 0) {
-        //         return status;
-        //     }
 
-        // gpio &= !(module == BLADERF_MODULE_TX ? (3 << 3) : (3 << 5));
         let shift = if module == BLADERF_MODULE_TX {
             3 << 3
         } else {
@@ -494,7 +420,6 @@ impl BladeRf1 {
         };
         gpio &= !shift;
 
-        // gpio |= (module == BLADERF_MODULE_TX ? (band << 3) : (band << 5));
         let shift = if module == BLADERF_MODULE_TX {
             band_value << 3
         } else {
@@ -502,11 +427,6 @@ impl BladeRf1 {
         };
         gpio |= !shift;
 
-        // #ifndef BLADERF_NIOS_BUILD
-        //     return dev->backend->config_gpio_write(dev, gpio);
-        // #else
-        //     return CONFIG_GPIO_WRITE(dev, gpio);
-        // #endif
         self.config_gpio_write(gpio).await
     }
 
@@ -572,7 +492,7 @@ impl BladeRf1 {
         }
     }
 
-    pub async fn bladerf1_get_gain_stage(&self, channel: u8, stage: &str) -> Result<i8> {
+    pub async fn get_gain_stage(&self, channel: u8, stage: &str) -> Result<i8> {
         // CHECK_BOARD_STATE(STATE_INITIALIZED);
         if channel == BLADERF_MODULE_TX {
             match stage {
@@ -595,7 +515,7 @@ impl BladeRf1 {
         }
     }
 
-    pub fn bladerf1_get_gain_stages(channel: u8) -> Vec<String> {
+    pub fn get_gain_stages(channel: u8) -> Vec<String> {
         if bladerf_channel_is_tx!(channel) {
             vec!["txvga1".to_string(), "txvga2".to_string()]
         } else {
@@ -613,24 +533,24 @@ impl BladeRf1 {
      *             bladerf_get_gain_stage_range(), bladerf_set_gain_stage(), and
      *             bladerf_get_gain_stage().
      **/
-    pub async fn get_gain_stage_range(channel: u8, stage: &str) -> Result<SdrRange> {
+    pub fn get_gain_stage_range(channel: u8, stage: &str) -> Result<SdrRange> {
         if channel == BLADERF_MODULE_RX {
             match stage {
                 "lna" => Ok(SdrRange {
                     min: 0,
-                    max: 6,
+                    max: BLADERF_LNA_GAIN_MAX_DB,
                     step: 3,
                     scale: 1,
                 }),
                 "rxvga1" => Ok(SdrRange {
-                    min: 5,
-                    max: 30,
+                    min: BLADERF_RXVGA1_GAIN_MIN,
+                    max: BLADERF_RXVGA1_GAIN_MAX,
                     step: 1,
                     scale: 1,
                 }),
                 "rxvga2" => Ok(SdrRange {
-                    min: 0,
-                    max: 30,
+                    min: BLADERF_RXVGA2_GAIN_MIN,
+                    max: BLADERF_RXVGA2_GAIN_MAX,
                     step: 3,
                     scale: 1,
                 }),
@@ -639,20 +559,163 @@ impl BladeRf1 {
         } else {
             match stage {
                 "txvga1" => Ok(SdrRange {
-                    min: -35,
-                    max: -4,
+                    min: BLADERF_TXVGA1_GAIN_MIN,
+                    max: BLADERF_TXVGA1_GAIN_MAX,
                     step: 1,
                     scale: 1,
                 }),
                 "txvga2" => Ok(SdrRange {
-                    min: 0,
-                    max: 25,
+                    min: BLADERF_TXVGA2_GAIN_MIN,
+                    max: BLADERF_TXVGA2_GAIN_MAX,
                     step: 3,
                     scale: 1,
                 }),
                 _ => Err(anyhow!("Invalid stage: {stage}")),
             }
         }
+    }
+
+    pub async fn get_tx_gain(&self) -> Result<i8> {
+        let txvga1 = self.lms.txvga1_get_gain().await?;
+        let txvga2 = self.lms.txvga2_get_gain().await?;
+
+        Ok(txvga1 + txvga2 + BLADERF1_TX_GAIN_OFFSET.round() as i8)
+    }
+
+    pub async fn get_rx_gain(&self) -> Result<i8> {
+        let lna_gain = self.lms.lna_get_gain().await?;
+        let rxvga1_gain = self.lms.rxvga1_get_gain().await?;
+        let rxvga2_gain = self.lms.rxvga2_get_gain().await?;
+
+        let lna_gain_db = match lna_gain {
+            // BladerfLnaGain::Bypass => 0,
+            BladerfLnaGain::Mid => BLADERF_LNA_GAIN_MID_DB,
+            BladerfLnaGain::Max => BLADERF_LNA_GAIN_MAX_DB,
+            _ => 0,
+        };
+
+        Ok(lna_gain_db + rxvga1_gain + rxvga2_gain + BLADERF1_RX_GAIN_OFFSET.round() as i8)
+    }
+
+    pub async fn get_gain(&self, channel: u8) -> Result<i8> {
+        // CHECK_BOARD_STATE(STATE_INITIALIZED);
+
+        if bladerf_channel_is_tx!(channel) {
+            self.get_tx_gain().await
+        } else {
+            self.get_rx_gain().await
+        }
+    }
+
+    pub async fn set_gain(&self, channel: u8, gain: i8) -> Result<()> {
+        // CHECK_BOARD_STATE(STATE_INITIALIZED);
+
+        if bladerf_channel_is_tx!(channel) {
+            self.set_tx_gain(gain).await
+        } else {
+            self.set_rx_gain(gain).await
+        }
+    }
+
+    pub async fn set_tx_gain(&self, mut gain: i8) -> Result<()> {
+        let orig_gain = gain;
+
+        let txvga1_range = Self::get_gain_stage_range(bladerf_channel_tx!(0), "txvga1")?;
+        let txvga2_range = Self::get_gain_stage_range(bladerf_channel_tx!(0), "txvga2")?;
+
+        let mut txvga1 = bladerf1::__unscale_int(&txvga1_range, txvga1_range.min as f32);
+        let mut txvga2 = bladerf1::__unscale_int(&txvga2_range, txvga2_range.min as f32);
+
+        // offset gain so that we can use it as a counter when apportioning gain
+        gain -= BLADERF1_TX_GAIN_OFFSET.round() as i8 + txvga1 + txvga2;
+
+        // apportion gain to TXVGA2
+        (txvga2, gain) = _apportion_gain(&txvga2_range, txvga2, gain);
+
+        // apportion gain to TXVGA1
+        (txvga1, gain) = _apportion_gain(&txvga1_range, txvga1, gain);
+
+        // verification
+        if gain != 0 {
+            println!(
+                "unable to achieve requested gain {} (missed by {})\n",
+                orig_gain, gain
+            );
+            println!(
+                "gain={} -> txvga2={} txvga1={} remainder={}\n",
+                orig_gain, txvga2, txvga1, gain
+            );
+        }
+
+        self.lms.txvga1_set_gain(txvga1).await?;
+        self.lms.txvga2_set_gain(txvga2).await?;
+        Ok(())
+    }
+
+    pub async fn set_rx_gain(&self, mut gain: i8) -> Result<()> {
+        let orig_gain = gain;
+
+        let lna_range = Self::get_gain_stage_range(bladerf_channel_rx!(0), "lna")?;
+        let rxvga1_range = Self::get_gain_stage_range(bladerf_channel_rx!(0), "rxvga1")?;
+        let rxvga2_range = Self::get_gain_stage_range(bladerf_channel_rx!(0), "rxvga2")?;
+
+        let mut lna = __unscale_int(&lna_range, lna_range.min as f32);
+        let mut rxvga1 = __unscale_int(&rxvga1_range, rxvga1_range.min as f32);
+        let mut rxvga2 = __unscale_int(&rxvga2_range, rxvga2_range.min as f32);
+
+        // offset gain so that we can use it as a counter when apportioning gain
+        gain -= BLADERF1_RX_GAIN_OFFSET.round() as i8 + lna + rxvga1 + rxvga2;
+
+        // apportion some gain to RXLNA (but only half of it for now)
+        (lna, gain) = _apportion_gain(&lna_range, lna, gain);
+        if lna > BLADERF_LNA_GAIN_MID_DB {
+            gain += lna - BLADERF_LNA_GAIN_MID_DB;
+            lna -= lna - BLADERF_LNA_GAIN_MID_DB;
+        }
+
+        // apportion gain to RXVGA1
+        (rxvga1, gain) = _apportion_gain(&rxvga1_range, rxvga1, gain);
+
+        // apportion more gain to RXLNA
+        (lna, gain) = _apportion_gain(&lna_range, lna, gain);
+
+        // apportion gain to RXVGA2
+        (rxvga2, gain) = _apportion_gain(&rxvga2_range, rxvga2, gain);
+
+        // if we still have remaining gain, it's because rxvga2 has a step size of
+        // 3 dB. Steal a few dB from rxvga1...
+        if gain > 0 && rxvga1 >= __unscale_int(&rxvga1_range, rxvga1_range.max as f32) {
+            rxvga1 -= __unscale_int(&rxvga2_range, rxvga2_range.step as f32);
+            gain += __unscale_int(&rxvga2_range, rxvga2_range.step as f32);
+
+            (rxvga2, gain) = _apportion_gain(&rxvga2_range, rxvga2, gain);
+            (rxvga1, gain) = _apportion_gain(&rxvga1_range, rxvga1, gain);
+        }
+
+        // verification
+        if gain != 0 {
+            println!(
+                "unable to achieve requested gain {} (missed by {})\n",
+                orig_gain, gain
+            );
+            println!(
+                "gain={} -> 1xvga1={} lna={} rxvga2={} remainder={}\n",
+                orig_gain, rxvga1, lna, rxvga2, gain
+            );
+        }
+
+        // that should do it. actually apply the changes:
+        self.lms
+            .lna_set_gain(Self::_convert_gain_to_lna_gain(lna))
+            .await?;
+        self.lms
+            .rxvga1_set_gain(__scale_int(&rxvga1_range, rxvga1 as f32))
+            .await?;
+        self.lms
+            .rxvga2_set_gain(__scale_int(&rxvga2_range, rxvga2 as f32))
+            .await?;
+
+        Ok(())
     }
 
     #[allow(unreachable_code)] // TODO: Only while AGC table is not implemented
@@ -871,15 +934,6 @@ impl BladeRf1 {
      */
     pub fn perform_format_deconfig(&self, dir: BladeRfDirection) -> Result<()> {
         //struct bladerf1_board_data *board_data = dev->board_data;
-
-        // match dir {
-        //     BladeRfDirection::BladerfRx => {
-        //         BladeRfDirection::BladerfTx
-        //     }
-        //     BladeRfDirection::BladerfTx => {
-        //         BladeRfDirection::BladerfRx
-        //     }
-        // };
 
         match dir {
             BladeRfDirection::Rx | BladeRfDirection::Tx => {

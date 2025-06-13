@@ -52,8 +52,6 @@ pub struct Si5338Multisynth {
 
 pub struct SI5338 {
     interface: Interface,
-    // ep_bulk_out: &'a mut Endpoint<Bulk, Out>,
-    // ep_bulk_in: &'a mut Endpoint<Bulk, In>,
 }
 
 impl SI5338 {
@@ -160,9 +158,6 @@ impl SI5338 {
         temp -= 512;
         assert!(temp <= u32::MAX as u64);
         ms.p1 = temp as u32;
-        //ms.p1 = ms->a * ms->c + ms->b;
-        //ms.p1 = ms.p1 * 128;
-        //ms.p1 = ms.p1 / ms->c - 512;
 
         /* p2 = (b * 128) % c */
         temp = ms.b as u64 * 128;
@@ -188,8 +183,6 @@ impl SI5338 {
         ms.regs[7] = (ms.p3 >> 8) as u8;
         ms.regs[8] = (ms.p3 >> 16) as u8;
         ms.regs[9] = (ms.p3 >> 24) as u8;
-
-        // ms.regs[6..].copy_from_slice(ms.p3.to_le_bytes().as_slice());
     }
 
     /**

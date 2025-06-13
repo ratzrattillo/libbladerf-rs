@@ -49,7 +49,7 @@
  */
 use crate::NiosPktMagic;
 use crate::packet_base::GenericNiosPkt;
-use bladerf_globals::BladerfDirection;
+use bladerf_globals::BladeRfDirection;
 use bladerf_globals::bladerf_channel_is_tx;
 
 pub struct NiosPktRetune2Request {

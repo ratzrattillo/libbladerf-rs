@@ -18,18 +18,30 @@ macro_rules! bladerf_channel_tx {
     };
 }
 
-#[repr(u8)]
-pub enum BladerfDirection {
-    RX = 0,
-    TX = 1,
+pub struct SdrRange {
+    pub min: i8,
+    pub max: i8,
+    pub step: u8,
+    pub scale: u8,
 }
+
+/**
+ * Stream direction
+ */
+#[derive(PartialEq)]
+#[repr(u8)]
+pub enum BladeRfDirection {
+    Rx = 0, // Receive direction
+    Tx = 1, // Transmit direction
+}
+
 /**
  * Convenience macro: true if argument is a TX channel
  */
 #[macro_export]
 macro_rules! bladerf_channel_is_tx {
     ($ch:expr) => {
-        (($ch) & BladerfDirection::TX as u8) != 0
+        (($ch) & BladeRfDirection::Tx as u8) != 0
     };
 }
 

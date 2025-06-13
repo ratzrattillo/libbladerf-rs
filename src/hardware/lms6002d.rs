@@ -435,16 +435,6 @@ impl From<u8> for LmsLna {
         }
     }
 }
-// impl Into<LmsLna> for u8 {
-//     fn into(self) -> LmsLna {
-//         match self {
-//             1 => LmsLna::Lna1,
-//             2 => LmsLna::Lna2,
-//             3 => LmsLna::Lna3,
-//             _ => LmsLna::LnaNone,
-//         }
-//     }
-// }
 
 /**
  * Loopback paths
@@ -526,9 +516,8 @@ impl LMS6002D {
     }
 
     pub async fn set(&self, addr: u8, mask: u8) -> Result<u8> {
-        let mut data = self.read(addr).await?;
-        data |= mask;
-        self.write(addr, data).await
+        let data = self.read(addr).await?;
+        self.write(addr, data | mask).await
     }
 
     pub async fn get_vtune(&self, base: u8, _delay: u8) -> Result<u8> {
@@ -594,10 +583,10 @@ impl LMS6002D {
         let vcocap = (num / denom * f_diff) + 0.5 + VCOCAP_EST_MIN as f32;
 
         if vcocap > VCOCAP_MAX_VALUE as f32 {
-            println!("Clamping VCOCAP estimate from {vcocap} to {VCOCAP_MAX_VALUE}");
+            // println!("Clamping VCOCAP estimate from {vcocap} to {VCOCAP_MAX_VALUE}");
             VCOCAP_MAX_VALUE
         } else {
-            println!("VCOCAP estimate: {vcocap}");
+            // println!("VCOCAP estimate: {vcocap}");
             // vcocap.round() as u8 // .round() added by ratzrattillo
             vcocap as u8
         }
@@ -615,7 +604,7 @@ impl LMS6002D {
 
         /* Clamp out of range values */
         freq = freq.clamp(BLADERF_FREQUENCY_MIN, BLADERF_FREQUENCY_MAX);
-        println!("freq: {freq}");
+        // println!("freq: {freq}");
 
         /* Figure out freqsel */
         let freq_range = BANDS
@@ -625,31 +614,31 @@ impl LMS6002D {
 
         // freqsel = freq_range.value;
         f.freqsel = freq_range.value;
-        println!("f.freqsel: {}", f.freqsel);
+        // println!("f.freqsel: {}", f.freqsel);
 
         /* Estimate our target VCOCAP value. */
         f.vcocap = Self::estimate_vcocap(freq, freq_range.low as u32, freq_range.high as u32);
-        println!("f.vcocap: {}", f.vcocap);
+        // println!("f.vcocap: {}", f.vcocap);
 
         /* Calculate the integer portion of the frequency value */
         let vco_x = 1 << ((f.freqsel & 7) - 3);
-        println!("vco_x: {vco_x}");
+        // println!("vco_x: {vco_x}");
         assert!(vco_x <= u8::MAX as u64);
         f.x = vco_x as u8;
-        println!("f.x: {}", f.x);
+        // println!("f.x: {}", f.x);
         let mut temp = (vco_x * freq as u64) / LMS_REFERENCE_HZ as u64;
-        println!("temp: {temp}");
+        // println!("temp: {temp}");
         assert!(temp <= u16::MAX as u64);
         f.nint = temp as u16;
-        println!("f.nint: {}", f.nint);
+        // println!("f.nint: {}", f.nint);
 
         temp = (1 << 23) * (vco_x * freq as u64 - f.nint as u64 * LMS_REFERENCE_HZ as u64);
-        println!("temp: {temp}");
+        // println!("temp: {temp}");
         temp = (temp + LMS_REFERENCE_HZ as u64 / 2) / LMS_REFERENCE_HZ as u64;
-        println!("temp: {temp}");
+        // println!("temp: {temp}");
         assert!(temp <= u32::MAX as u64);
         f.nfrac = temp as u32;
-        println!("f.nfrac: {}", f.nfrac);
+        // println!("f.nfrac: {}", f.nfrac);
 
         // f.x = vco_x as u8;
         // f.nint = nint;
@@ -663,9 +652,9 @@ impl LMS6002D {
         if freq < BLADERF1_BAND_HIGH {
             f.flags |= LMS_FREQ_FLAGS_LOW_BAND;
         }
-        println!("f.flags: {}", f.flags);
+        // println!("f.flags: {}", f.flags);
 
-        println!("{f:?}");
+        // println!("{f:?}");
         Ok(f)
     }
 
@@ -729,10 +718,6 @@ impl LMS6002D {
     }
 
     pub async fn write_pll_config(&self, module: u8, freqsel: u8, low_band: bool) -> Result<u8> {
-        // let mut regval: u8 = 0;
-        // let mut selout: u8 = 0;
-        // let mut addr: u8 = 0;
-
         let addr = if module == BLADERF_MODULE_TX {
             0x15
         } else {
@@ -761,8 +746,6 @@ impl LMS6002D {
         mut vcocap: u8,
         vcocap_reg_state: u8,
     ) -> Result<u8> {
-        // let mut vtune: u8 = 0xff;
-
         for _ in 0..VTUNE_MAX_ITERATIONS {
             if vcocap >= VCOCAP_MAX_VALUE {
                 println!("vtune_high_to_norm: VCOCAP hit max value.");
@@ -795,8 +778,6 @@ impl LMS6002D {
         mut vcocap: u8,
         vcocap_reg_state: u8,
     ) -> Result<u8> {
-        // let mut vtune: u8 = 0xff;
-
         for _ in 0..VTUNE_MAX_ITERATIONS {
             println!("base: {base}, vcocap: {vcocap}, vcocap_reg_state: {vcocap_reg_state}");
 
@@ -832,8 +813,6 @@ impl LMS6002D {
         mut vcocap: u8,
         vcocap_reg_state: u8,
     ) -> Result<u8> {
-        // let mut vtune: u8 = 0xff;
-
         for _ in 0..VTUNE_MAX_ITERATIONS {
             if vcocap == 0 {
                 println!("vtune_low_to_norm: VCOCAP hit min value.");

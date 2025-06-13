@@ -1,3 +1,5 @@
+use crate::SdrRange;
+
 /// BladeRF1 USB vendor ID.
 pub const BLADERF1_USB_VID: u16 = 0x2CF0;
 /// BladeRF1 USB product ID.
@@ -83,6 +85,122 @@ pub const BLADERF_FLASH_BYTE_LEN_CAL: u16 = 0x100;
  * in the following pages.
  */
 pub const BLADERF_FLASH_ADDR_FPGA: u32 = 0x00040000;
+
+/**
+ * Stream channel layout
+ */
+#[derive(PartialEq)]
+pub enum BladeRfChannelLayout {
+    RxX1 = 0, // x1 RX (SISO)
+    TxX1 = 1, // x1 TX (SISO)
+    RxX2 = 2, // x2 RX (MIMO)
+    TxX2 = 3, // x2 TX (MIMO)
+}
+
+/**
+ * LNA gain options
+ *
+ * \deprecated Use bladerf_get_gain_stage_range()
+ */
+#[derive(PartialEq)]
+#[repr(u8)]
+pub enum BladerfLnaGain {
+    /**< Invalid LNA gain */
+    Unknown,
+    /**< LNA bypassed - 0dB gain */
+    Bypass,
+    /**< LNA Mid Gain (MAX-6dB) */
+    Mid,
+    /**< LNA Max Gain */
+    Max,
+}
+
+impl From<u8> for BladerfLnaGain {
+    fn from(value: u8) -> Self {
+        match value {
+            1 => BladerfLnaGain::Bypass,
+            2 => BladerfLnaGain::Mid,
+            3 => BladerfLnaGain::Max,
+            _ => BladerfLnaGain::Unknown,
+        }
+    }
+}
+
+pub fn __scale(r: &SdrRange, v: f32) -> f32 {
+    v / r.scale as f32
+}
+
+pub fn __scale_int(r: &SdrRange, v: f32) -> i8 {
+    __scale(r, v).round() as i8
+}
+
+pub fn __unscale(r: &SdrRange, v: f32) -> f32 {
+    v * r.scale as f32
+}
+
+pub fn __unscale_int(r: &SdrRange, v: f32) -> i8 {
+    __unscale(r, v).round() as i8
+}
+
+/**
+ * @brief      applies overall_gain to stage_gain, within the range max
+ *
+ * "Moves" gain from overall_gain to stage_gain, ensuring that overall_gain
+ * doesn't go negative and stage_gain doesn't exceed range->max.
+ *
+ * @param[in]  range         The range for stage_gain
+ * @param      stage_gain    The stage gain
+ * @param      overall_gain  The overall gain
+ */
+pub fn _apportion_gain(range: &SdrRange, stage_gain: i8, overall_gain: i8) -> (i8, i8) {
+    let headroom = __unscale_int(range, range.max as f32);
+    let mut allotment = overall_gain.min(headroom as i8);
+
+    /* Enforce step size */
+    while 0 != (allotment % range.step as i8) {
+        allotment -= 1;
+    }
+
+    (stage_gain + allotment, overall_gain - allotment)
+}
+
+/* RX gain offset */
+pub const BLADERF1_RX_GAIN_OFFSET: f32 = -6.0;
+
+/* Overall RX gain range */
+// pub const RX_GAIN_RANGE: SdrRange = SdrRange {
+//     min: BLADERF_RXVGA1_GAIN_MIN + BLADERF_RXVGA2_GAIN_MIN + BLADERF1_RX_GAIN_OFFSET.round() as i8,
+//     max: BLADERF_LNA_GAIN_MAX_DB
+//         + BLADERF_RXVGA1_GAIN_MAX
+//         + BLADERF_RXVGA2_GAIN_MAX
+//         + BLADERF1_RX_GAIN_OFFSET.round() as i8,
+//     step: 1,
+//     scale: 1,
+// };
+
+/* TX gain offset: 60 dB system gain ~= 0 dBm output */
+pub const BLADERF1_TX_GAIN_OFFSET: f32 = 52.0;
+
+/* Overall TX gain range */
+// pub const TX_GAIN_RANGE: SdrRange = SdrRange {
+//     min: BLADERF_TXVGA1_GAIN_MIN + BLADERF_TXVGA2_GAIN_MIN + BLADERF1_TX_GAIN_OFFSET.round() as i8,
+//     max: BLADERF_TXVGA1_GAIN_MAX + BLADERF_TXVGA2_GAIN_MAX + BLADERF1_TX_GAIN_OFFSET.round() as i8,
+//     step: 1,
+//     scale: 1,
+// };
+
+/* RX gain modes */
+
+// static const struct bladerf_gain_modes bladerf1_rx_gain_modes[] = {
+// {
+// FIELD_INIT(.name, "automatic"),
+// FIELD_INIT(.mode, BLADERF_GAIN_DEFAULT)
+// },
+// {
+// FIELD_INIT(.name, "manual"),
+// FIELD_INIT(.mode, BLADERF_GAIN_MGC)
+// },
+// };
 
 /**
  * @defgroup FN_BLADERF1_GAIN Gain stages (deprecated)
