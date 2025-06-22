@@ -1,5 +1,3 @@
-use crate::SdrRange;
-
 /// BladeRF1 USB vendor ID.
 pub const BLADERF1_USB_VID: u16 = 0x2CF0;
 /// BladeRF1 USB product ID.
@@ -124,44 +122,6 @@ impl From<u8> for BladerfLnaGain {
             _ => BladerfLnaGain::Unknown,
         }
     }
-}
-
-pub fn __scale(r: &SdrRange, v: f32) -> f32 {
-    v / r.scale as f32
-}
-
-pub fn __scale_int(r: &SdrRange, v: f32) -> i8 {
-    __scale(r, v).round() as i8
-}
-
-pub fn __unscale(r: &SdrRange, v: f32) -> f32 {
-    v * r.scale as f32
-}
-
-pub fn __unscale_int(r: &SdrRange, v: f32) -> i8 {
-    __unscale(r, v).round() as i8
-}
-
-/**
- * @brief      applies overall_gain to stage_gain, within the range max
- *
- * "Moves" gain from overall_gain to stage_gain, ensuring that overall_gain
- * doesn't go negative and stage_gain doesn't exceed range->max.
- *
- * @param[in]  range         The range for stage_gain
- * @param      stage_gain    The stage gain
- * @param      overall_gain  The overall gain
- */
-pub fn _apportion_gain(range: &SdrRange, stage_gain: i8, overall_gain: i8) -> (i8, i8) {
-    let headroom = __unscale_int(range, range.max as f32);
-    let mut allotment = overall_gain.min(headroom as i8);
-
-    /* Enforce step size */
-    while 0 != (allotment % range.step as i8) {
-        allotment -= 1;
-    }
-
-    (stage_gain + allotment, overall_gain - allotment)
 }
 
 /* RX gain offset */

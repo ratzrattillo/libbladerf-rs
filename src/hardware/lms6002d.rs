@@ -1,12 +1,11 @@
 #![allow(dead_code)]
 
-use crate::board::bladerf1::{BLADERF_FREQUENCY_MAX, BLADERF_FREQUENCY_MIN, BladerfLnaGain};
 use crate::nios::Nios;
 use anyhow::{Result, anyhow};
 use bladerf_globals::bladerf1::{
-    BLADERF_RXVGA1_GAIN_MAX, BLADERF_RXVGA1_GAIN_MIN, BLADERF_RXVGA2_GAIN_MAX,
-    BLADERF_RXVGA2_GAIN_MIN, BLADERF_TXVGA1_GAIN_MAX, BLADERF_TXVGA1_GAIN_MIN,
-    BLADERF_TXVGA2_GAIN_MAX, BLADERF_TXVGA2_GAIN_MIN,
+    BLADERF_FREQUENCY_MAX, BLADERF_FREQUENCY_MIN, BLADERF_RXVGA1_GAIN_MAX, BLADERF_RXVGA1_GAIN_MIN,
+    BLADERF_RXVGA2_GAIN_MAX, BLADERF_RXVGA2_GAIN_MIN, BLADERF_TXVGA1_GAIN_MAX,
+    BLADERF_TXVGA1_GAIN_MIN, BLADERF_TXVGA2_GAIN_MAX, BLADERF_TXVGA2_GAIN_MIN, BladerfLnaGain,
 };
 use bladerf_globals::{
     BLADERF_MODULE_RX, BLADERF_MODULE_TX, BladerfLoopback, ENDPOINT_IN, ENDPOINT_OUT,
@@ -21,7 +20,7 @@ const LMS_REFERENCE_HZ: u32 = 38400000;
 #[macro_export]
 macro_rules! khz {
     ($value:expr) => {
-        ($value * 1000)
+        ($value * 1000u32)
     };
 }
 
@@ -52,26 +51,6 @@ struct DcCalState {
     rxvga1_curr_gain: i32, /* Current gains used in retry loops */
     rxvga2_curr_gain: i32,
 }
-
-/* LPF conversion table */
-pub const UINT_BANDWIDTHS: [u32; 16] = [
-    mhz!(28),
-    mhz!(20),
-    mhz!(14),
-    mhz!(12),
-    mhz!(10),
-    khz!(8750),
-    mhz!(7),
-    mhz!(6),
-    khz!(5500),
-    mhz!(5),
-    khz!(3840),
-    mhz!(3),
-    khz!(2750),
-    khz!(2500),
-    khz!(1750),
-    khz!(1500),
-];
 
 /* Here we define more conservative band ranges than those in the
  * LMS FAQ (5.24), with the intent of avoiding the use of "edges" that might
@@ -372,6 +351,27 @@ pub struct LmsFreq {
  * band should be selected */
 pub const BLADERF1_BAND_HIGH: u32 = 1500000000;
 
+/* LPF conversion table
+ * This table can be indexed into. */
+// pub const UINT_BANDWIDTHS: [u32; 16] = [
+//     mhz!(28),
+//     mhz!(20),
+//     mhz!(14),
+//     mhz!(12),
+//     mhz!(10),
+//     khz!(8750),
+//     mhz!(7),
+//     mhz!(6),
+//     khz!(5500),
+//     mhz!(5),
+//     khz!(3840),
+//     mhz!(3),
+//     khz!(2750),
+//     khz!(2500),
+//     khz!(1750),
+//     khz!(1500),
+// ];
+
 /**
  * Internal low-pass filter bandwidth selection
  */
@@ -402,13 +402,118 @@ pub enum LmsBw {
     Bw3mhz,
     /**< 2.75MHz bandwidth, 1.375MHz LPF */
     Bw2p75mhz,
-    /**< 2.75MHz bandwidth, 1.375MHz LPF */
     /**< 2.5MHz bandwidth, 1.25MHz LPF */
     Bw2p5mhz,
     /**< 1.75MHz bandwidth, 0.875MHz LPF */
     Bw1p75mhz,
     /**< 1.5MHz bandwidth, 0.75MHz LPF */
     Bw1p5mhz,
+}
+
+impl LmsBw {
+    // The LMS requires the different bandwidths being translated to indices
+    // This index is then written to a specific register to set the LPF
+    fn from_index(index: u8) -> Self {
+        match index {
+            1 => LmsBw::Bw20mhz,
+            2 => LmsBw::Bw14mhz,
+            3 => LmsBw::Bw12mhz,
+            4 => LmsBw::Bw10mhz,
+            5 => LmsBw::Bw8p75mhz,
+            6 => LmsBw::Bw7mhz,
+            7 => LmsBw::Bw6mhz,
+            8 => LmsBw::Bw5p5mhz,
+            9 => LmsBw::Bw5mhz,
+            10 => LmsBw::Bw3p84mhz,
+            11 => LmsBw::Bw3mhz,
+            12 => LmsBw::Bw2p75mhz,
+            13 => LmsBw::Bw2p5mhz,
+            14 => LmsBw::Bw1p75mhz,
+            15 => LmsBw::Bw1p5mhz,
+            _ => LmsBw::Bw28mhz,
+        }
+    }
+
+    fn to_index(&self) -> u8 {
+        match self {
+            LmsBw::Bw28mhz => 0,
+            LmsBw::Bw20mhz => 1,
+            LmsBw::Bw14mhz => 2,
+            LmsBw::Bw12mhz => 3,
+            LmsBw::Bw10mhz => 4,
+            LmsBw::Bw8p75mhz => 5,
+            LmsBw::Bw7mhz => 6,
+            LmsBw::Bw6mhz => 7,
+            LmsBw::Bw5p5mhz => 8,
+            LmsBw::Bw5mhz => 9,
+            LmsBw::Bw3p84mhz => 10,
+            LmsBw::Bw3mhz => 11,
+            LmsBw::Bw2p75mhz => 12,
+            LmsBw::Bw2p5mhz => 13,
+            LmsBw::Bw1p75mhz => 14,
+            LmsBw::Bw1p5mhz => 15,
+        }
+    }
+}
+
+impl From<LmsBw> for u32 {
+    fn from(value: LmsBw) -> Self {
+        match value {
+            LmsBw::Bw28mhz => mhz!(28),
+            LmsBw::Bw20mhz => mhz!(20),
+            LmsBw::Bw14mhz => mhz!(14),
+            LmsBw::Bw12mhz => mhz!(12),
+            LmsBw::Bw10mhz => mhz!(10),
+            LmsBw::Bw8p75mhz => khz!(8750),
+            LmsBw::Bw7mhz => mhz!(7),
+            LmsBw::Bw6mhz => mhz!(6),
+            LmsBw::Bw5p5mhz => khz!(5500),
+            LmsBw::Bw5mhz => mhz!(5),
+            LmsBw::Bw3p84mhz => khz!(3840),
+            LmsBw::Bw3mhz => mhz!(4),
+            LmsBw::Bw2p75mhz => khz!(2750),
+            LmsBw::Bw2p5mhz => khz!(2500),
+            LmsBw::Bw1p75mhz => khz!(1750),
+            LmsBw::Bw1p5mhz => khz!(1500),
+        }
+    }
+}
+impl From<u32> for LmsBw {
+    fn from(value: u32) -> Self {
+        if value <= khz!(1500) {
+            LmsBw::Bw1p5mhz
+        } else if value <= khz!(1750) {
+            LmsBw::Bw1p75mhz
+        } else if value <= khz!(2500) {
+            LmsBw::Bw2p5mhz
+        } else if value <= khz!(2750) {
+            LmsBw::Bw2p75mhz
+        } else if value <= mhz!(3) {
+            LmsBw::Bw3mhz
+        } else if value <= khz!(3840) {
+            LmsBw::Bw3p84mhz
+        } else if value <= mhz!(5) {
+            LmsBw::Bw5mhz
+        } else if value <= khz!(5500) {
+            LmsBw::Bw5p5mhz
+        } else if value <= mhz!(6) {
+            LmsBw::Bw6mhz
+        } else if value <= mhz!(7) {
+            LmsBw::Bw7mhz
+        } else if value <= khz!(8750) {
+            LmsBw::Bw8p75mhz
+        } else if value <= mhz!(10) {
+            LmsBw::Bw1p75mhz
+        } else if value <= mhz!(12) {
+            LmsBw::Bw1p75mhz
+        } else if value <= mhz!(14) {
+            LmsBw::Bw1p75mhz
+        } else if value <= mhz!(20) {
+            LmsBw::Bw1p75mhz
+        } else {
+            LmsBw::Bw28mhz
+        }
+    }
 }
 
 /**
@@ -482,8 +587,6 @@ pub struct LmsXcvrConfig {
 
 pub struct LMS6002D {
     interface: Interface,
-    // ep_bulk_out: &'a Endpoint<Bulk, Out>,
-    // ep_bulk_in: &'a Endpoint<Bulk, In>,
 }
 
 impl LMS6002D {
@@ -1307,7 +1410,7 @@ impl LMS6002D {
         f.nint = (data as u16) << 1;
 
         data = self.read(base + 1).await?;
-        f.nint |= (data as u16 & 0x80) >> 7;
+        f.nint |= ((data & 0x80) >> 7) as u16;
         f.nfrac = (data as u32 & 0x7f) << 16;
 
         data = self.read(base + 2).await?;
@@ -1429,7 +1532,7 @@ impl LMS6002D {
         data &= 0x1f;
 
         /* Convert table index to value */
-        Ok((data - 35) as i8)
+        Ok(data as i8 - 35)
     }
 
     pub async fn txvga2_get_gain(&self) -> Result<i8> {
@@ -1526,5 +1629,67 @@ impl LMS6002D {
                 0,
             )
             .await
+    }
+
+    pub async fn lpf_enable(&self, channel: u8, enable: bool) -> Result<()> {
+        let addr = if channel == BLADERF_MODULE_RX {
+            0x54
+        } else {
+            0x34
+        };
+
+        let mut data = self.read(addr).await?;
+
+        if enable {
+            data |= 1 << 1;
+        } else {
+            data &= !(1 << 1);
+        }
+
+        self.write(addr, data).await?;
+
+        /* Check to see if we are bypassed */
+        data = self.read(addr + 1).await?;
+        if data & (1 << 6) != 0 {
+            /* Bypass is enabled; switch back to normal operation */
+            data &= !(1 << 6);
+            self.write(addr + 1, data).await?;
+        }
+
+        Ok(())
+    }
+
+    pub async fn set_bandwidth(&self, channel: u8, bw: LmsBw) -> Result<()> {
+        let addr = if channel == BLADERF_MODULE_RX {
+            0x54
+        } else {
+            0x34
+        };
+
+        let mut data = self.read(addr).await?;
+
+        data &= !0x3c; /* Clear out previous bandwidth setting */
+        data |= bw.to_index() << 2; /* Apply new bandwidth setting */
+
+        self.write(addr, data).await?;
+        Ok(())
+    }
+
+    pub async fn get_bandwidth(&self, channel: u8) -> Result<LmsBw> {
+        let addr = if channel == BLADERF_MODULE_RX {
+            0x54
+        } else {
+            0x34
+        };
+
+        let mut data = self.read(addr).await?;
+
+        /* Fetch bandwidth table index from reg[5:2] */
+        data >>= 2;
+        data &= 0xf;
+
+        // Lookup the bandwidth for returned u8 in lookup table
+        // and convert u32 bandwidth into Enum
+        Ok(LmsBw::from_index(data).into())
     }
 }

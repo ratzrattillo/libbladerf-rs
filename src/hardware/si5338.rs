@@ -185,15 +185,14 @@ impl SI5338 {
         ms.regs[9] = (ms.p3 >> 24) as u8;
     }
 
-    /**
-     * Unpack the recently read registers into (p1, p2, p3) and (a, b, c)
-     *
-     * Precondition:
-     *  regs[10] and r have been read
-     *
-     * Post-condition:
-     *  (p1, p2, p3), (a, b, c) and actual are populated
-     */
+
+    /// Unpack the recently read registers into (p1, p2, p3) and (a, b, c)
+    ///
+    /// Precondition:
+    ///  regs\[10\] and r have been read
+    ///
+    /// Post-condition:
+    ///  (p1, p2, p3), (a, b, c) and actual are populated
     pub fn unpack_regs(ms: &mut Si5338Multisynth) {
         // let mut temp: u64 = 0;
 
@@ -443,10 +442,17 @@ impl SI5338 {
         //log_verbose("Set actual integer sample rate: %d\n", act.integer);
     }
 
-    pub async fn get_rational_sample_rate(&self, ch: u8) -> anyhow::Result<BladerfRationalRate> {
+    pub async fn get_rational_sample_rate(
+        &self,
+        channel: u8,
+    ) -> anyhow::Result<BladerfRationalRate> {
         /* Select the multisynth we want to read */
         let mut ms = Si5338Multisynth {
-            index: if ch == bladerf_channel_rx!(0) { 1 } else { 2 },
+            index: if channel == bladerf_channel_rx!(0) {
+                1
+            } else {
+                2
+            },
             ..Default::default()
         };
 
@@ -461,8 +467,8 @@ impl SI5338 {
         Ok(rate)
     }
 
-    pub async fn get_sample_rate(&self, ch: u8) -> anyhow::Result<u32> {
-        let actual = self.get_rational_sample_rate(ch).await?;
+    pub async fn get_sample_rate(&self, channel: u8) -> anyhow::Result<u32> {
+        let actual = self.get_rational_sample_rate(channel).await?;
 
         if actual.num != 0 {
             println!("Fractional sample rate truncated during integer sample rate retrieval");

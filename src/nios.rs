@@ -34,7 +34,7 @@ impl Nios for Interface {
         ep_bulk_in_id: u8,
         mut pkt: Vec<u8>,
     ) -> anyhow::Result<Vec<u8>> {
-        println!("BulkOut: {pkt:x?}");
+        // println!("BulkOut: {pkt:x?}");
 
         let mut ep_bulk_out = self.endpoint::<Bulk, Out>(ep_bulk_out_id)?;
         let mut ep_bulk_in = self.endpoint::<Bulk, In>(ep_bulk_in_id)?;
@@ -71,7 +71,8 @@ impl Nios for Interface {
         // }
         // println!("BulkIn:  {nios_pkt:x?}");
         // let response_vec = nios_pkt.into();
-        println!("BulkIn:  {:?}", response);
+
+        // println!("BulkIn:  {:?}", response);
         Ok(response.buffer.into_vec())
     }
 

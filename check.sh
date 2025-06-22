@@ -24,6 +24,9 @@ cd ${SCRIPTPATH}/examples && cargo clippy --all-targets -- -D warnings
 ###########################################################
 # Test
 ###########################################################
+# doctests
+cd ${SCRIPTPATH} && cargo test --doc
+# standard tests
 cd ${SCRIPTPATH} && cargo test --all-targets
 # examples
 cd ${SCRIPTPATH}/examples && cargo test --all-targets
