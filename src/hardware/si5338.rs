@@ -9,7 +9,7 @@ use bladerf_globals::{
     BladerfRationalRate, ENDPOINT_IN, ENDPOINT_OUT, bladerf_channel_rx, bladerf_channel_tx,
 };
 use bladerf_nios::NIOS_PKT_8X8_TARGET_SI5338;
-use bladerf_nios::packet_generic::NiosPkt8x8;
+use bladerf_nios::packet_generic::{NiosReq8x8, NiosResp8x8};
 use nusb::Interface;
 
 const SI5338_F_VCO: u64 = 38400000 * 66;
@@ -60,25 +60,27 @@ impl SI5338 {
     }
 
     pub async fn read(&self, addr: u8) -> anyhow::Result<u8> {
-        type NiosPkt = NiosPkt8x8;
-        let request = NiosPkt::new(NIOS_PKT_8X8_TARGET_SI5338, NiosPkt::FLAG_READ, addr, 0x0);
+        type ReqType = NiosReq8x8;
+        
+        let request = ReqType::new(NIOS_PKT_8X8_TARGET_SI5338, ReqType::FLAG_READ, addr, 0x0);
 
         let response = self
             .interface
             .nios_send(ENDPOINT_OUT, ENDPOINT_IN, request.into())
             .await?;
-        Ok(NiosPkt::from(response).data())
+        Ok(NiosResp8x8::from(response).data())
     }
 
     pub async fn write(&self, addr: u8, data: u8) -> anyhow::Result<u8> {
-        type NiosPkt = NiosPkt8x8;
-        let request = NiosPkt::new(NIOS_PKT_8X8_TARGET_SI5338, NiosPkt::FLAG_WRITE, addr, data);
+        type ReqType = NiosReq8x8;
+        
+        let request = ReqType::new(NIOS_PKT_8X8_TARGET_SI5338, ReqType::FLAG_WRITE, addr, data);
 
         let response = self
             .interface
             .nios_send(ENDPOINT_OUT, ENDPOINT_IN, request.into())
             .await?;
-        Ok(NiosPkt::from(response).data())
+        Ok(NiosResp8x8::from(response).data())
     }
 
     /**
@@ -184,7 +186,6 @@ impl SI5338 {
         ms.regs[8] = (ms.p3 >> 16) as u8;
         ms.regs[9] = (ms.p3 >> 24) as u8;
     }
-
 
     /// Unpack the recently read registers into (p1, p2, p3) and (a, b, c)
     ///

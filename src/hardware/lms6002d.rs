@@ -8,10 +8,11 @@ use bladerf_globals::bladerf1::{
     BLADERF_TXVGA1_GAIN_MIN, BLADERF_TXVGA2_GAIN_MAX, BLADERF_TXVGA2_GAIN_MIN, BladerfLnaGain,
 };
 use bladerf_globals::{
-    BLADERF_MODULE_RX, BLADERF_MODULE_TX, BladerfLoopback, ENDPOINT_IN, ENDPOINT_OUT,
+    BLADERF_MODULE_RX, BLADERF_MODULE_TX, BladerfLoopback, BladerfLpfMode, ENDPOINT_IN,
+    ENDPOINT_OUT,
 };
 use bladerf_nios::NIOS_PKT_8X8_TARGET_LMS6;
-use bladerf_nios::packet_generic::NiosPkt8x8;
+use bladerf_nios::packet_generic::{NiosReq8x8, NiosResp8x8};
 use bladerf_nios::packet_retune::{Band, NiosPktRetuneRequest, Tune};
 use nusb::Interface;
 
@@ -519,6 +520,7 @@ impl From<u32> for LmsBw {
 /**
  * LNA options
  */
+#[derive(Clone)]
 pub enum LmsLna {
     /**< Disable all LNAs */
     LnaNone,
@@ -530,13 +532,27 @@ pub enum LmsLna {
     Lna3,
 }
 
-impl From<u8> for LmsLna {
-    fn from(value: u8) -> Self {
+impl From<LmsLna> for u8 {
+    fn from(value: LmsLna) -> Self {
         match value {
-            1 => LmsLna::Lna1,
-            2 => LmsLna::Lna2,
-            3 => LmsLna::Lna3,
-            _ => LmsLna::LnaNone,
+            LmsLna::LnaNone => 0,
+            LmsLna::Lna1 => 1,
+            LmsLna::Lna2 => 2,
+            LmsLna::Lna3 => 3,
+        }
+    }
+}
+
+impl TryFrom<u8> for LmsLna {
+    type Error = anyhow::Error;
+
+    fn try_from(value: u8) -> Result<Self> {
+        match value {
+            0 => Ok(LmsLna::LnaNone),
+            1 => Ok(LmsLna::Lna1),
+            2 => Ok(LmsLna::Lna2),
+            3 => Ok(LmsLna::Lna3),
+            _ => Err(anyhow!("unknown LMS LNA")),
         }
     }
 }
@@ -595,27 +611,27 @@ impl LMS6002D {
     }
 
     pub async fn read(&self, addr: u8) -> Result<u8> {
-        type NiosPkt = NiosPkt8x8;
+        type ReqType = NiosReq8x8;
 
-        let request = NiosPkt::new(NIOS_PKT_8X8_TARGET_LMS6, NiosPkt::FLAG_READ, addr, 0x0);
+        let request = ReqType::new(NIOS_PKT_8X8_TARGET_LMS6, ReqType::FLAG_READ, addr, 0x0);
 
         let response = self
             .interface
             .nios_send(ENDPOINT_OUT, ENDPOINT_IN, request.into())
             .await?;
-        Ok(NiosPkt::from(response).data())
+        Ok(NiosResp8x8::from(response).data())
     }
 
     pub async fn write(&self, addr: u8, data: u8) -> Result<u8> {
-        type NiosPkt = NiosPkt8x8;
+        type ReqType = NiosReq8x8;
 
-        let request = NiosPkt::new(NIOS_PKT_8X8_TARGET_LMS6, NiosPkt::FLAG_WRITE, addr, data);
+        let request = ReqType::new(NIOS_PKT_8X8_TARGET_LMS6, ReqType::FLAG_WRITE, addr, data);
 
         let response = self
             .interface
             .nios_send(ENDPOINT_OUT, ENDPOINT_IN, request.into())
             .await?;
-        Ok(NiosPkt::from(response).data())
+        Ok(NiosResp8x8::from(response).data())
     }
 
     pub async fn set(&self, addr: u8, mask: u8) -> Result<u8> {
@@ -774,21 +790,294 @@ impl LMS6002D {
         // return status;
     }
 
+    pub async fn loopback_path(&self, mode: &BladerfLoopback) -> Result<u8> {
+        let mut loopbben = self.read(0x46).await?;
+        let mut lben_lbrf = self.read(0x08).await?;
+
+        /* Default to baseband loopback being disabled  */
+        loopbben &= !LOOBBBEN_MASK;
+
+        /* Default to RF and BB loopback options being disabled */
+        lben_lbrf &= !(LBRFEN_MASK | LBEN_MASK);
+
+        match mode {
+            BladerfLoopback::None => {}
+            BladerfLoopback::BbTxlpfRxvga2 => {
+                loopbben |= LOOPBBEN_TXLPF;
+                lben_lbrf |= LBEN_VGA2IN;
+            }
+            BladerfLoopback::BbTxvga1Rxvga2 => {
+                loopbben |= LOOPBBEN_TXVGA;
+                lben_lbrf |= LBEN_VGA2IN;
+            }
+            BladerfLoopback::BbTxlpfRxlpf => {
+                loopbben |= LOOPBBEN_TXLPF;
+                lben_lbrf |= LBEN_LPFIN;
+            }
+            BladerfLoopback::BbTxvga1Rxlpf => {
+                loopbben |= LOOPBBEN_TXVGA;
+                lben_lbrf |= LBEN_LPFIN;
+            }
+            BladerfLoopback::Lna1 => {
+                lben_lbrf |= LBRFEN_LNA1;
+            }
+            BladerfLoopback::Lna2 => {
+                lben_lbrf |= LBRFEN_LNA2;
+            }
+            BladerfLoopback::Lna3 => {
+                lben_lbrf |= LBRFEN_LNA3;
+            }
+            _ => Err(anyhow!("Loopback mode not supported"))?,
+        }
+
+        self.write(0x46, loopbben).await?;
+        self.write(0x08, lben_lbrf).await
+    }
+
+    pub async fn lpf_get_mode(&self, channel: u8) -> Result<BladerfLpfMode> {
+        let reg: u8 = if channel == BLADERF_MODULE_RX {
+            0x54
+        } else {
+            0x34
+        };
+
+        let data_l = self.read(reg).await?;
+        let data_h = self.read(reg + 1).await?;
+
+        let lpf_enabled = (data_l & (1 << 1)) != 0;
+        let lpf_bypassed = (data_h & (1 << 6)) != 0;
+
+        if lpf_enabled && !lpf_bypassed {
+            Ok(BladerfLpfMode::Normal)
+        } else if !lpf_enabled && lpf_bypassed {
+            Ok(BladerfLpfMode::Bypassed)
+        } else if !lpf_enabled && !lpf_bypassed {
+            Ok(BladerfLpfMode::Disabled)
+        } else {
+            //log_debug("Invalid LPF configuration: 0x%02x, 0x%02x\n", data_l, data_h);
+            //status = BLADERF_ERR_INVAL;
+            Err(anyhow!(
+                "Invalid LPF configuration: {:x}, {:x}\n",
+                data_l,
+                data_h
+            ))
+        }
+    }
+
+    pub async fn lpf_set_mode(&self, channel: u8, mode: BladerfLpfMode) -> Result<u8> {
+        let reg: u8 = if channel == BLADERF_MODULE_RX {
+            0x54
+        } else {
+            0x34
+        };
+
+        let mut data_l = self.read(reg).await?;
+        let mut data_h = self.read(reg + 1).await?;
+
+        match mode {
+            BladerfLpfMode::Normal => {
+                data_l |= 1 << 1; /* Enable LPF */
+                data_h &= !(1 << 6); /* Disable LPF bypass */
+            }
+            BladerfLpfMode::Bypassed => {
+                data_l &= !(1 << 1); /* Power down LPF */
+                data_h |= 1 << 6; /* Enable LPF bypass */
+            }
+            BladerfLpfMode::Disabled => {
+                data_l &= !(1 << 1); /* Power down LPF */
+                data_h &= !(1 << 6); /* Disable LPF bypass */
+            } //_ => Err(anyhow!("Invalid LPF mode: {}\n", mode)),
+        }
+
+        self.write(reg, data_l).await?;
+        self.write(reg + 1, data_h).await
+    }
+
+    /* Power up/down RF loopback switch */
+    pub async fn enable_rf_loopback_switch(&self, enable: bool) -> Result<u8> {
+        let mut regval = self.read(0x0b).await?;
+
+        if enable {
+            regval |= 1;
+        } else {
+            regval &= !1;
+        }
+
+        self.write(0x0b, regval).await
+    }
+
+    /* Configure RX-side of loopback */
+    pub async fn loopback_rx(&self, mode: &BladerfLoopback) -> Result<()> {
+        let lpf_mode = self.lpf_get_mode(BLADERF_MODULE_RX).await?;
+        match mode {
+            BladerfLoopback::None => {
+                /* Ensure all RX blocks are enabled */
+                self.rxvga1_enable(true).await?;
+
+                if lpf_mode == BladerfLpfMode::Disabled {
+                    self.lpf_set_mode(BLADERF_MODULE_RX, BladerfLpfMode::Disabled)
+                        .await?;
+                }
+
+                self.rxvga2_enable(true).await?;
+
+                /* Disable RF loopback switch */
+                self.enable_rf_loopback_switch(false).await?;
+
+                /* Power up LNAs */
+                self.enable_lna_power(true).await?;
+
+                /* Restore proper settings (LNA, RX PLL) for this frequency */
+                let f = self.get_frequency(BLADERF_MODULE_RX).await?;
+                self.set_frequency(BLADERF_MODULE_RX, LMS6002D::frequency_to_hz(&f))
+                    .await?;
+                let band = if LMS6002D::frequency_to_hz(&f) < BLADERF1_BAND_HIGH {
+                    Band::Low
+                } else {
+                    Band::High
+                };
+                self.select_band(BLADERF_MODULE_RX, band).await?;
+            }
+            BladerfLoopback::BbTxvga1Rxvga2 | BladerfLoopback::BbTxlpfRxvga2 => {
+                /* Ensure RXVGA2 is enabled */
+                self.rxvga2_enable(true).await?;
+                /* RXLPF must be disabled */
+                self.lpf_set_mode(BLADERF_MODULE_RX, BladerfLpfMode::Disabled)
+                    .await?;
+            }
+            BladerfLoopback::BbTxlpfRxlpf | BladerfLoopback::BbTxvga1Rxlpf => {
+                /* RXVGA1 must be disabled */
+                self.rxvga1_enable(false).await?;
+
+                /* Enable the RXLPF if needed */
+                if lpf_mode == BladerfLpfMode::Disabled {
+                    self.lpf_set_mode(BLADERF_MODULE_RX, BladerfLpfMode::Disabled)
+                        .await?;
+                }
+
+                /* Ensure RXVGA2 is enabled */
+                self.rxvga2_enable(true).await?;
+            }
+
+            BladerfLoopback::Lna1 | BladerfLoopback::Lna2 | BladerfLoopback::Lna3 => {
+                // let lna: u8 = u8::from(mode) - BladerfLoopback::Lna1 as u8 + 1;
+                // assert!(lna >= 1 && lna <= 3);
+                // let lms_lna = LmsLna::try_from(lna)?;
+                let lms_lna = match mode {
+                    BladerfLoopback::Lna1 => LmsLna::Lna1,
+                    BladerfLoopback::Lna2 => LmsLna::Lna2,
+                    BladerfLoopback::Lna3 => LmsLna::Lna3,
+                    _ => return Err(anyhow!("unreachable")),
+                };
+
+                /* Power down LNAs */
+                self.enable_lna_power(false).await?;
+
+                /* Ensure RXVGA1 is enabled */
+                self.rxvga1_enable(true).await?;
+
+                /* Enable the RXLPF if needed */
+                if lpf_mode == BladerfLpfMode::Disabled {
+                    self.lpf_set_mode(BLADERF_MODULE_RX, BladerfLpfMode::Disabled)
+                        .await?;
+                }
+
+                /* Ensure RXVGA2 is enabled */
+                self.rxvga2_enable(true).await?;
+
+                /* Select output buffer in RX PLL and select the desired LNA */
+                let mut regval = self.read(0x25).await?;
+                regval &= !0x03;
+                // regval |= lna;
+                regval |= u8::from(lms_lna.clone());
+
+                self.write(0x25, regval).await?;
+
+                self.select_lna(lms_lna).await?;
+
+                /* Enable RF loopback switch */
+                self.enable_rf_loopback_switch(true).await?;
+            }
+            _ => Err(anyhow!("Invalid loopback mode encountered"))?,
+        }
+        Ok(())
+    }
+
+    pub async fn loopback_tx(&self, mode: &BladerfLoopback) -> Result<()> {
+        match mode {
+            BladerfLoopback::None => {
+                /* Restore proper settings (PA) for this frequency */
+                let f = self.get_frequency(BLADERF_MODULE_TX).await?;
+                self.set_frequency(BLADERF_MODULE_TX, LMS6002D::frequency_to_hz(&f))
+                    .await?;
+
+                let band = if LMS6002D::frequency_to_hz(&f) < BLADERF1_BAND_HIGH {
+                    Band::Low
+                } else {
+                    Band::High
+                };
+                self.select_band(BLADERF_MODULE_TX, band).await?;
+                Ok(())
+            }
+            BladerfLoopback::BbTxlpfRxvga2
+            | BladerfLoopback::BbTxvga1Rxvga2
+            | BladerfLoopback::BbTxlpfRxlpf
+            | BladerfLoopback::BbTxvga1Rxlpf => Ok(()),
+            BladerfLoopback::Lna1 | BladerfLoopback::Lna2 | BladerfLoopback::Lna3 => {
+                self.select_pa(LmsPa::PaAux).await?;
+                Ok(())
+            }
+            _ => Err(anyhow!("Invalid loopback mode encountered"))?,
+        }
+    }
+
+    pub async fn set_loopback_mode(&self, mode: BladerfLoopback) -> Result<u8> {
+        /* Verify a valid mode is provided before shutting anything down */
+        match mode {
+            BladerfLoopback::None => {}
+            BladerfLoopback::BbTxlpfRxvga2 => {}
+            BladerfLoopback::BbTxvga1Rxvga2 => {}
+            BladerfLoopback::BbTxlpfRxlpf => {}
+            BladerfLoopback::BbTxvga1Rxlpf => {}
+            BladerfLoopback::Lna1 => {}
+            BladerfLoopback::Lna2 => {}
+            BladerfLoopback::Lna3 => {}
+            _ => return Err(anyhow!("Unsupported loopback mode")),
+        }
+
+        /* Disable all PA/LNAs while entering loopback mode or making changes */
+        self.select_pa(LmsPa::PaNone).await?;
+        self.select_lna(LmsLna::LnaNone).await?;
+
+        /* Disconnect loopback paths while we re-configure blocks */
+
+        self.loopback_path(&BladerfLoopback::None).await?;
+
+        /* Configure the RX side of the loopback path */
+        self.loopback_rx(&mode).await?;
+
+        /* Configure the TX side of the path */
+        self.loopback_tx(&mode).await?;
+
+        /* Configure "switches" along the loopback path */
+        self.loopback_path(&mode).await
+    }
+
     pub async fn get_loopback_mode(&self) -> Result<BladerfLoopback> {
-        let mut loopback = BladerfLoopback::LbNone;
+        let mut loopback = BladerfLoopback::None;
 
         let lben_lbrfen = self.read(0x08).await?;
         let loopbben = self.read(0x46).await?;
 
         match lben_lbrfen & 0x7 {
             LBRFEN_LNA1 => {
-                loopback = BladerfLoopback::LbLna1;
+                loopback = BladerfLoopback::Lna1;
             }
             LBRFEN_LNA2 => {
-                loopback = BladerfLoopback::LbLna2;
+                loopback = BladerfLoopback::Lna2;
             }
             LBRFEN_LNA3 => {
-                loopback = BladerfLoopback::LbLna3;
+                loopback = BladerfLoopback::Lna3;
             }
             _ => {}
         }
@@ -796,16 +1085,16 @@ impl LMS6002D {
         match lben_lbrfen & LBEN_MASK {
             LBEN_VGA2IN => {
                 if (loopbben & LOOPBBEN_TXLPF) != 0 {
-                    loopback = BladerfLoopback::LbBbTxlpfRxvga2;
+                    loopback = BladerfLoopback::BbTxlpfRxvga2;
                 } else if (loopbben & LOOPBBEN_TXVGA) != 0 {
-                    loopback = BladerfLoopback::LbBbTxvga1Rxvga2;
+                    loopback = BladerfLoopback::BbTxvga1Rxvga2;
                 }
             }
             LBEN_LPFIN => {
                 if (loopbben & LOOPBBEN_TXLPF) != 0 {
-                    loopback = BladerfLoopback::LbBbTxlpfRxlpf;
+                    loopback = BladerfLoopback::BbTxlpfRxlpf;
                 } else if (loopbben & LOOPBBEN_TXVGA) != 0 {
-                    loopback = BladerfLoopback::LbBbTxvga1Rxlpf;
+                    loopback = BladerfLoopback::BbTxvga1Rxlpf;
                 }
             }
             _ => {}
@@ -817,7 +1106,7 @@ impl LMS6002D {
     pub async fn is_loopback_enabled(&self) -> Result<bool> {
         let loopback = self.get_loopback_mode().await?;
 
-        Ok(loopback != BladerfLoopback::LbNone)
+        Ok(loopback != BladerfLoopback::None)
     }
 
     pub async fn write_pll_config(&self, module: u8, freqsel: u8, low_band: bool) -> Result<u8> {
@@ -1340,15 +1629,10 @@ impl LMS6002D {
     /* Select which LNA to enable */
     pub async fn select_lna(&self, lna: LmsLna) -> Result<u8> {
         let mut data = self.read(0x75).await?;
-        // status = LMS_READ(dev, 0x75, &data);
-        // if (status != 0) {
-        //     return status;
-        // }
 
         data &= !(3 << 4);
-        data |= (lna as u8 & 3) << 4;
+        data |= (u8::from(lna) & 3) << 4;
 
-        // return LMS_WRITE(dev, 0x75, data);
         self.write(0x75, data).await
     }
 
@@ -1464,13 +1748,14 @@ impl LMS6002D {
         if data == BladerfLnaGain::Unknown as u8 {
             Err(anyhow!("Invalid Gain"))
         } else {
-            Ok(data.into())
+            Ok(BladerfLnaGain::try_from(data)?)
         }
     }
 
     pub async fn get_lna(&self) -> Result<LmsLna> {
         let data = self.read(0x75).await?;
-        Ok(((data >> 4) & 0x3).into())
+        //((data >> 4) & 0x3).try_into()?
+        LmsLna::try_from((data >> 4) & 0x3)
     }
 
     pub async fn rxvga1_enable(&self, enable: bool) -> Result<()> {

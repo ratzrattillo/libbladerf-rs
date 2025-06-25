@@ -8,7 +8,6 @@ use nusb::transfer::{Bulk, ControlIn, ControlType, In, Recipient};
 use std::time::Duration;
 
 impl BladeRf1 {
-
     /// Perform the neccessary device configuration for the specified format
     /// (e.g., enabling/disabling timestamp support), first checking that the
     /// requested format would not conflict with the other stream direction.

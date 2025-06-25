@@ -101,6 +101,67 @@ impl BladeRf1 {
         }
     }
 
+    pub async fn get_gain_modes(&self, channel: u8) -> Result<Vec<BladerfGainMode>> {
+        if bladerf_channel_is_tx!(channel) {
+            Err(anyhow!("TX does not support gain modes"))
+        } else {
+            Ok(vec![BladerfGainMode::Mgc, BladerfGainMode::Default])
+        }
+    }
+
+    pub async fn set_gain_mode(&self, channel: u8, mode: BladerfGainMode) -> Result<u32> {
+        if bladerf_channel_is_tx!(channel) {
+            return Err(anyhow!("Setting gain mode for TX is not supported"));
+        }
+
+        let mut config_gpio = self.config_gpio_read().await?;
+        if mode == BladerfGainMode::Default {
+            // Default mode is the same as Automatic mode
+            // return Err(anyhow!("Todo: Implement AGC Table"));
+            // if (!have_cap(board_data->capabilities, BLADERF_CAP_AGC_DC_LUT)) {
+            //     log_warning("AGC not supported by FPGA. %s\n", MGC_WARN);
+            //     log_info("To enable AGC, %s, then %s\n", FPGA_STR, DCCAL_STR);
+            //     log_debug("%s: expected FPGA >= v0.7.0, got v%u.%u.%u\n",
+            //               __FUNCTION__, board_data->fpga_version.major,
+            //               board_data->fpga_version.minor,
+            //               board_data->fpga_version.patch);
+            //     return BLADERF_ERR_UNSUPPORTED;
+            // }
+            //
+            // if (!board_data->cal.dc_rx) {
+            //     log_warning("RX DC calibration table not found. %s\n", MGC_WARN);
+            //     log_info("To enable AGC, %s\n", DCCAL_STR);
+            //     return BLADERF_ERR_UNSUPPORTED;
+            // }
+            //
+            // if (board_data->cal.dc_rx->version != TABLE_VERSION) {
+            //     log_warning("RX DC calibration table is out-of-date. %s\n",
+            //                 MGC_WARN);
+            //     log_info("To enable AGC, %s\n", DCCAL_STR);
+            //     log_debug("%s: expected version %u, got %u\n", __FUNCTION__,
+            //               TABLE_VERSION, board_data->cal.dc_rx->version);
+            //
+            //     return BLADERF_ERR_UNSUPPORTED;
+            // }
+            config_gpio |= BLADERF_GPIO_AGC_ENABLE;
+        } else if mode == BladerfGainMode::Mgc {
+            config_gpio &= !BLADERF_GPIO_AGC_ENABLE;
+        }
+
+        self.config_gpio_write(config_gpio).await
+    }
+
+    pub async fn get_gain_mode(&self) -> Result<BladerfGainMode> {
+        let data = self.config_gpio_read().await?;
+
+        let gain_mode = if data & BLADERF_GPIO_AGC_ENABLE != 0 {
+            BladerfGainMode::Default
+        } else {
+            BladerfGainMode::Mgc
+        };
+        Ok(gain_mode)
+    }
+
     pub async fn get_gain_stage(&self, channel: u8, stage: &str) -> Result<i8> {
         // CHECK_BOARD_STATE(STATE_INITIALIZED);
         if channel == BLADERF_MODULE_TX {
@@ -354,48 +415,5 @@ impl BladeRf1 {
             .await?;
 
         Ok(())
-    }
-
-    #[allow(unreachable_code)] // TODO: Only while AGC table is not implemented
-    pub async fn set_gain_mode(&self, channel: u8, mode: BladerfGainMode) -> Result<u32> {
-        if channel != BLADERF_MODULE_RX {
-            return Err(anyhow!("Operation only supported on RX channel"));
-        }
-
-        let mut config_gpio = self.config_gpio_read().await?;
-        if mode == BladerfGainMode::Default {
-            // Default mode is the same as Automatic mode
-            return Err(anyhow!("Todo: Implement AGC Table"));
-            // if (!have_cap(board_data->capabilities, BLADERF_CAP_AGC_DC_LUT)) {
-            //     log_warning("AGC not supported by FPGA. %s\n", MGC_WARN);
-            //     log_info("To enable AGC, %s, then %s\n", FPGA_STR, DCCAL_STR);
-            //     log_debug("%s: expected FPGA >= v0.7.0, got v%u.%u.%u\n",
-            //               __FUNCTION__, board_data->fpga_version.major,
-            //               board_data->fpga_version.minor,
-            //               board_data->fpga_version.patch);
-            //     return BLADERF_ERR_UNSUPPORTED;
-            // }
-            //
-            // if (!board_data->cal.dc_rx) {
-            //     log_warning("RX DC calibration table not found. %s\n", MGC_WARN);
-            //     log_info("To enable AGC, %s\n", DCCAL_STR);
-            //     return BLADERF_ERR_UNSUPPORTED;
-            // }
-            //
-            // if (board_data->cal.dc_rx->version != TABLE_VERSION) {
-            //     log_warning("RX DC calibration table is out-of-date. %s\n",
-            //                 MGC_WARN);
-            //     log_info("To enable AGC, %s\n", DCCAL_STR);
-            //     log_debug("%s: expected version %u, got %u\n", __FUNCTION__,
-            //               TABLE_VERSION, board_data->cal.dc_rx->version);
-            //
-            //     return BLADERF_ERR_UNSUPPORTED;
-            // }
-            config_gpio |= BLADERF_GPIO_AGC_ENABLE;
-        } else if mode == BladerfGainMode::Mgc {
-            config_gpio &= !BLADERF_GPIO_AGC_ENABLE;
-        }
-
-        self.config_gpio_write(config_gpio).await
     }
 }

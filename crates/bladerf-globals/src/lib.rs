@@ -302,45 +302,79 @@ pub enum BladerfFormat {
 * Loopback options
 */
 #[derive(PartialEq)]
+#[repr(u8)]
 pub enum BladerfLoopback {
     /** Disables loopback and returns to normal operation. */
-    LbNone = 0,
+    None = 0,
 
     /** Firmware loopback inside of the FX3 */
-    LbFirmware,
+    Firmware,
 
     /** Baseband loopback. TXLPF output is connected to the RXVGA2 input. */
-    LbBbTxlpfRxvga2,
+    BbTxlpfRxvga2,
 
     /** Baseband loopback. TXVGA1 output is connected to the RXVGA2 input. */
-    LbBbTxvga1Rxvga2,
+    BbTxvga1Rxvga2,
 
     /** Baseband loopback. TXLPF output is connected to the RXLPF input. */
-    LbBbTxlpfRxlpf,
+    BbTxlpfRxlpf,
 
     /** Baseband loopback. TXVGA1 output is connected to RXLPF input. */
-    LbBbTxvga1Rxlpf,
+    BbTxvga1Rxlpf,
 
     /**
      * RF loopback. The TXMIX output, through the AUX PA, is connected to the
      * output of LNA1.
      */
-    LbLna1,
+    Lna1,
 
     /**
      * RF loopback. The TXMIX output, through the AUX PA, is connected to the
      * output of LNA2.
      */
-    LbLna2,
+    Lna2,
 
     /**
      * RF loopback. The TXMIX output, through the AUX PA, is connected to the
      * output of LNA3.
      */
-    LbLna3,
+    Lna3,
 
     /** RFIC digital loopback (built-in self-test) */
-    LbRficBist,
+    RficBist,
+}
+
+// impl TryFrom<u8> for BladerfLoopback {
+//     type Error = ();
+//
+//     fn try_from(value: u8) -> Result<Self, Self::Error> {
+//         match value {
+//             0 => Ok(BladerfLoopback::None),
+//             1 => Ok(BladerfLoopback::Firmware),
+//             2 => Ok(BladerfLoopback::BbTxlpfRxvga2),
+//             3 => Ok(BladerfLoopback::BbTxvga1Rxvga2),
+//             4 => Ok(BladerfLoopback::BbTxlpfRxlpf),
+//             5 => Ok(BladerfLoopback::BbTxvga1Rxlpf),
+//             6 => Ok(BladerfLoopback::Lna1),
+//             7 => Ok(BladerfLoopback::Lna2),
+//             8 => Ok(BladerfLoopback::Lna3),
+//             9 => Ok(BladerfLoopback::RficBist),
+//             _ => Err(()),
+//         }
+//     }
+// }
+
+/**
+ * Low-Pass Filter (LPF) mode
+ */
+#[derive(PartialEq)]
+pub enum BladerfLpfMode {
+    /**< LPF connected and enabled */
+    Normal,
+    /**< LPF bypassed */
+    Bypassed,
+    /**< LPF disabled */
+    Disabled,
 }
 
 /**
@@ -529,11 +563,10 @@ pub const AUTOLOAD_PAGE: u16 = 1024;
 // #define NUM_CONCURRENT  8
 // #define NUM_DATA_URB    (1024)
 // #define DATA_BUF_SZ     (1024*4)
-//
-//
-// /* Interface numbers */
-// #define USB_IF_LEGACY_CONFIG    0
-// #define USB_IF_NULL             0
-// #define USB_IF_RF_LINK          1
-// #define USB_IF_SPI_FLASH        2
-// #define USB_IF_CONFIG           3
+
+/* Interface numbers */
+pub const USB_IF_LEGACY_CONFIG: u8 = 0;
+pub const USB_IF_NULL: u8 = 0;
+pub const USB_IF_RF_LINK: u8 = 1;
+pub const USB_IF_SPI_FLASH: u8 = 2;
+pub const USB_IF_CONFIG: u8 = 3;

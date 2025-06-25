@@ -1,3 +1,5 @@
+use anyhow::anyhow;
+
 /// BladeRF1 USB vendor ID.
 pub const BLADERF1_USB_VID: u16 = 0x2CF0;
 /// BladeRF1 USB product ID.
@@ -101,7 +103,6 @@ pub enum BladeRfChannelLayout {
  * \deprecated Use bladerf_get_gain_stage_range()
  */
 #[derive(PartialEq)]
-#[repr(u8)]
 pub enum BladerfLnaGain {
     /**< Invalid LNA gain */
     Unknown,
@@ -113,13 +114,26 @@ pub enum BladerfLnaGain {
     Max,
 }
 
-impl From<u8> for BladerfLnaGain {
-    fn from(value: u8) -> Self {
+impl From<BladerfLnaGain> for u8 {
+    fn from(value: BladerfLnaGain) -> Self {
         match value {
-            1 => BladerfLnaGain::Bypass,
-            2 => BladerfLnaGain::Mid,
-            3 => BladerfLnaGain::Max,
-            _ => BladerfLnaGain::Unknown,
+            BladerfLnaGain::Unknown => 0,
+            BladerfLnaGain::Bypass => 1,
+            BladerfLnaGain::Mid => 2,
+            BladerfLnaGain::Max => 3,
+        }
+    }
+}
+impl TryFrom<u8> for BladerfLnaGain {
+    type Error = anyhow::Error;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(BladerfLnaGain::Unknown),
+            1 => Ok(BladerfLnaGain::Bypass),
+            2 => Ok(BladerfLnaGain::Mid),
+            3 => Ok(BladerfLnaGain::Max),
+            _ => Err(anyhow!("Could not convert from u8 to BladerfLnaGain")),
         }
     }
 }
@@ -131,18 +145,26 @@ pub const BLADERF1_RX_GAIN_OFFSET: f32 = -6.0;
 pub const BLADERF1_TX_GAIN_OFFSET: f32 = 52.0;
 
 /* RX gain modes */
+#[derive(PartialEq)]
+pub enum BladerfRxMux {
+    MuxInvalid = -1,
+    MuxBaseband = 0x0,
+    Mux12BitCounter = 0x1,
+    Mux32BitCounter = 0x2,
+    MuxDigitalLoopback = 0x4,
+}
 
-// static const struct bladerf_gain_modes bladerf1_rx_gain_modes[] = {
-// {
-// FIELD_INIT(.name, "automatic"),
-// FIELD_INIT(.mode, BLADERF_GAIN_DEFAULT)
-// },
-// {
-// FIELD_INIT(.name, "manual"),
-// FIELD_INIT(.mode, BLADERF_GAIN_MGC)
-// },
-// };
-
+impl From<u32> for BladerfRxMux {
+    fn from(value: u32) -> Self {
+        match value {
+            0 => BladerfRxMux::MuxBaseband,
+            1 => BladerfRxMux::Mux12BitCounter,
+            2 => BladerfRxMux::Mux32BitCounter,
+            4 => BladerfRxMux::MuxDigitalLoopback,
+            _ => BladerfRxMux::MuxInvalid,
+        }
+    }
+}
 /**
  * @defgroup FN_BLADERF1_GAIN Gain stages (deprecated)
  *
@@ -363,3 +385,21 @@ pub const BLADERF_SMB_FREQUENCY_MAX: u32 = 200000000;
 pub const BLADERF_SMB_FREQUENCY_MIN: u32 = (38400000 * 66) / (32 * 567);
 
 pub const BLADERF_DIRECTION_MASK: u8 = 0x1;
+
+/**
+ * Expansion boards
+ */
+#[derive(Clone, PartialEq, Debug)]
+pub enum BladerfXb {
+    /**< No expansion boards attached */
+    BladerfXbNone = 0,
+    /**< XB-100 GPIO expansion board.
+     *   This device is not yet supported in
+     *   libbladeRF, and is here as a placeholder
+     *   for future support. */
+    BladerfXb100,
+    /**< XB-200 Transverter board */
+    BladerfXb200,
+    /**< XB-300 Amplifier board */
+    BladerfXb300,
+}

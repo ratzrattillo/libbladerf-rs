@@ -1,25 +1,28 @@
+use crate::board::bladerf1::BoardData;
 use crate::hardware::dac161s055::DAC161S055;
 use crate::hardware::lms6002d::LMS6002D;
 use crate::hardware::si5338::SI5338;
 use crate::nios::Nios;
 use crate::{BladeRf1, BladeRfError};
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use bladerf_globals::bladerf1::{
     BLADERF_GPIO_FEATURE_SMALL_DMA_XFER, BLADERF1_USB_PID, BLADERF1_USB_VID,
 };
 use bladerf_globals::{
-    BLADE_USB_CMD_RF_RX, BLADE_USB_CMD_RF_TX, BLADERF_MODULE_RX, BLADERF_MODULE_TX,
-    BladeRfDirection, BladerfGainMode, DescriptorTypes, ENDPOINT_IN, ENDPOINT_OUT,
-    StringDescriptors, TIMEOUT, bladerf_channel_is_tx, bladerf_channel_rx, bladerf_channel_tx,
+    BLADE_USB_CMD_GET_LOOPBACK, BLADE_USB_CMD_RF_RX, BLADE_USB_CMD_RF_TX,
+    BLADE_USB_CMD_SET_LOOPBACK, BLADERF_MODULE_RX, BLADERF_MODULE_TX, BladeRfDirection,
+    BladerfGainMode, DescriptorTypes, ENDPOINT_IN, ENDPOINT_OUT, StringDescriptors, TIMEOUT,
+    USB_IF_NULL, USB_IF_RF_LINK, bladerf_channel_is_tx, bladerf_channel_rx, bladerf_channel_tx,
 };
 use bladerf_nios::NIOS_PKT_8X32_TARGET_CONTROL;
-use bladerf_nios::packet_generic::NiosPkt8x32;
+use bladerf_nios::packet_generic::{NiosReq8x32, NiosResp8x32};
 use bladerf_nios::packet_retune::Band;
 use nusb::descriptors::ConfigurationDescriptor;
 use nusb::transfer::{ControlIn, ControlOut, ControlType, Recipient};
 use nusb::{Device, DeviceInfo, Speed};
 use std::num::NonZero;
 use std::time::Duration;
+use bladerf_globals::bladerf1::BladerfXb::BladerfXbNone;
 
 impl BladeRf1 {
     async fn list_bladerf1() -> Result<impl Iterator<Item = DeviceInfo>> {
@@ -35,6 +38,17 @@ impl BladeRf1 {
         // TODO: Fix this with RefCell<BackendTest> with interior mutability or Mutex?.
         // Question:: Is it better to claim an endpoint from an interface in each method,
         // where we need to write data or is it better to have the whole Backend behind a mutex?
+
+        let board_data = BoardData {
+            speed: device.speed(),
+        };
+
+        if let Some(speed) = board_data.speed {
+            if speed < Speed::High {
+                return Err(anyhow!("BladeRF requires High/Super/SuperPlus speeds"));
+            }
+        }
+
         let lms = LMS6002D::new(interface.clone());
         let si5338 = SI5338::new(interface.clone());
         let dac = DAC161S055::new(interface.clone());
@@ -42,9 +56,11 @@ impl BladeRf1 {
         Ok(Box::new(Self {
             device,
             interface,
+            board_data,
             lms,
             si5338,
             dac,
+            xb: BladerfXbNone,
         }))
     }
 
@@ -107,7 +123,7 @@ impl BladeRf1 {
 
     /// Returns the USB speed which is used by the BladeRf1.
     pub fn speed(&self) -> Option<Speed> {
-        self.device.speed()
+        self.board_data.speed
     }
 
     /// Return the devices' serial number
@@ -135,26 +151,20 @@ impl BladeRf1 {
     }
 
     /// Read from the configuration GPIO register.
-    pub(crate) async fn config_gpio_read(&self) -> Result<u32> {
-        type NiosPkt = NiosPkt8x32;
-
-        let request = NiosPkt::new(NIOS_PKT_8X32_TARGET_CONTROL, NiosPkt::FLAG_READ, 0x0, 0x0);
-        let response = self
+    pub(crate) async fn config_gpio_read(&self) -> Result<u32> {        
+        let request = NiosReq8x32::new(NIOS_PKT_8X32_TARGET_CONTROL, NiosReq8x32::FLAG_READ, 0x0, 0x0);
+        let response_vec = self
             .interface
             .nios_send(ENDPOINT_OUT, ENDPOINT_IN, request.into())
             .await?;
-        Ok(NiosPkt::from(response).data())
+        Ok(NiosResp8x32::from(response_vec).data())
     }
 
     /// Write to the configuration GPIO register.
     /// Callers should be sure to perform a read-modify-write sequence to avoid accidentally
     /// clearing other GPIO bits that may be set by the library internally.
     pub(crate) async fn config_gpio_write(&self, mut data: u32) -> Result<u32> {
-        type NiosPkt = NiosPkt8x32;
-
-        // TODO: Speed info should not be determined on every call of gpio_write, but rather at global board_data level.
-        let device_speed = self.device.speed().unwrap_or(Speed::Low);
-        match device_speed {
+        match self.board_data.speed.unwrap_or(Speed::High) {
             Speed::Super | Speed::SuperPlus => {
                 data &= !BLADERF_GPIO_FEATURE_SMALL_DMA_XFER as u32;
             }
@@ -163,13 +173,12 @@ impl BladeRf1 {
             }
         }
 
-        let request = NiosPkt::new(NIOS_PKT_8X32_TARGET_CONTROL, NiosPkt::FLAG_WRITE, 0x0, data);
+        let request = NiosReq8x32::new(NIOS_PKT_8X32_TARGET_CONTROL, NiosReq8x32::FLAG_WRITE, 0x0, data);
         let response_vec = self
             .interface
             .nios_send(ENDPOINT_OUT, ENDPOINT_IN, request.into())
             .await?;
-        let response = NiosPkt::from(response_vec);
-        Ok(response.data())
+        Ok(NiosResp8x32::from(response_vec).data())
     }
 
     /// Initialize device registers - required after power-up, but safe
@@ -397,6 +406,41 @@ impl BladeRf1 {
         Ok(())
     }
 
+    /* Vendor command that sets a 32-bit integer value */
+    // async fn set_vendor_cmd_int(&self, cmd: u8, val: u32) -> Result<()> {
+    //     let pkt = ControlOut {
+    //         control_type: ControlType::Vendor,
+    //         recipient: Recipient::Device,
+    //         request: cmd,
+    //         value: 0,
+    //         index: 0,
+    //         data: &val.to_le_bytes(),
+    //     };
+    //     Ok(self
+    //         .interface
+    //         .control_out(pkt, Duration::from_secs(5))
+    //         .await?)
+    // }
+
+    /* Vendor command that gets a 32-bit integer value */
+    async fn get_vendor_cmd_int(&self, cmd: u8) -> Result<u32> {
+        let pkt = ControlIn {
+            control_type: ControlType::Vendor,
+            recipient: Recipient::Device,
+            request: cmd,
+            value: 0,
+            index: 0,
+            length: 0x4,
+        };
+        let vec = self
+            .interface
+            .control_in(pkt, Duration::from_secs(5))
+            .await?;
+
+        // TODO: Examine return value and return it
+        println!("get_vendor_cmd_int response data: {vec:?}");
+        Ok(u32::from_le_bytes(vec.as_slice()[0..4].try_into()?))
+    }
     /// Vendor command wrapper to get a 32-bit integer and supplies wValue */
     /// TODO: Return u32 value
     async fn vendor_cmd_int_wvalue(&self, cmd: u8, wvalue: u16) -> Result<u32> {
@@ -425,8 +469,7 @@ impl BladeRf1 {
             .await?;
         // TODO: Examine return value and return it
         println!("vendor_cmd_int_wvalue response data: {vec:?}");
-        // Ok(u32::from_le_bytes(vec.as_slice()[0..4].try_into()?))
-        Ok(0)
+        Ok(u32::from_le_bytes(vec.as_slice()[0..4].try_into()?))
     }
 
     /// Enable/Disable RF Module via the USB backend.
@@ -461,6 +504,23 @@ impl BladeRf1 {
         Ok(())
     }
 
+    pub async fn change_setting(&self, setting: u8) -> Result<()> {
+        Ok(self.interface.set_alt_setting(setting).await?)
+    }
+    pub async fn usb_set_firmware_loopback(&self, enable: bool) -> Result<()> {
+        self.vendor_cmd_int_wvalue(BLADE_USB_CMD_SET_LOOPBACK, enable as u16)
+            .await?;
+        self.change_setting(USB_IF_NULL).await?;
+        self.change_setting(USB_IF_RF_LINK).await?;
+        Ok(())
+    }
+
+    pub async fn usb_get_firmware_loopback(&self) -> Result<bool> {
+        let result = self.get_vendor_cmd_int(BLADE_USB_CMD_GET_LOOPBACK).await?;
+
+        Ok(result != 0)
+    }
+
     /// Enable/Disable RF Module
     pub async fn enable_module(&self, module: u8, enable: bool) -> Result<()> {
         // CHECK_BOARD_STATE(STATE_INITIALIZED);
@@ -489,7 +549,7 @@ impl BladeRf1 {
 
         self.usb_enable_module(&direction, enable).await
     }
-    
+
     /// FPGA Band Selection
     pub async fn band_select(&self, module: u8, band: Band) -> Result<u32> {
         let band_value = match band {

@@ -60,9 +60,9 @@
  *
  */
 
-// use crate::GenericNiosPkt;
 use crate::NiosPktMagic;
 use crate::packet_base::GenericNiosPkt;
+use anyhow::{Result, anyhow};
 use std::fmt::{Debug, Display, Formatter, LowerHex};
 // pub const NIOS_PKT_8X8_MAGIC: u8 = 0x41; // 'A'
 // pub const NIOS_PKT_8X16_MAGIC: u8 = 0x42; // 'B'
@@ -71,12 +71,19 @@ use std::fmt::{Debug, Display, Formatter, LowerHex};
 // pub const NIOS_PKT_16X64_MAGIC: u8 = 0x45; // 'E'
 // pub const NIOS_PKT_32X32_MAGIC: u8 = 0x4B; // 'K'
 
-pub type NiosPkt8x8 = NiosPkt<u8, u8>;
-pub type NiosPkt8x16 = NiosPkt<u8, u16>;
-pub type NiosPkt8x32 = NiosPkt<u8, u32>;
-pub type NiosPkt8x64 = NiosPkt<u8, u64>;
-pub type NiosPkt16x64 = NiosPkt<u16, u64>;
-pub type NiosPkt32x32 = NiosPkt<u32, u32>;
+pub type NiosReq8x8 = NiosRequest<u8, u8>;
+pub type NiosReq8x16 = NiosRequest<u8, u16>;
+pub type NiosReq8x32 = NiosRequest<u8, u32>;
+pub type NiosReq8x64 = NiosRequest<u8, u64>;
+pub type NiosReq16x64 = NiosRequest<u16, u64>;
+pub type NiosReq32x32 = NiosRequest<u32, u32>;
+
+pub type NiosResp8x8 = NiosResponse<u8, u8>;
+pub type NiosResp8x16 = NiosResponse<u8, u16>;
+pub type NiosResp8x32 = NiosResponse<u8, u32>;
+pub type NiosResp8x64 = NiosResponse<u8, u64>;
+pub type NiosResp16x64 = NiosResponse<u16, u64>;
+pub type NiosResp32x32 = NiosResponse<u32, u32>;
 
 // https://stackoverflow.com/questions/78395612/how-to-enforce-generic-parameter-to-be-of-type-u8-u16-u32-or-u64-in-rust
 // https://predr.ag/blog/definitive-guide-to-sealed-traits-in-rust/
@@ -130,6 +137,34 @@ impl NumToByte for u64 {
     }
 }
 
+// pub type NiossPkt = NiosRequest<u8, u8>;
+// impl NiossPkt {
+//     pub fn xyz() {
+//
+//     }
+//
+//     pub fn testing(&self) {
+//         self.
+//     }
+// }
+
+// pub trait NiossPkt {
+//
+// }
+//
+// pub trait Huso : NiossPkt {
+//
+// }
+
+// pub struct NiosPkt<A, D>
+// where
+//     A: NumToByte + Debug + Display + LowerHex,
+//     D: NumToByte + Debug + Display + LowerHex,
+// {
+//     buf: Vec<u8>,
+//     phantom: std::marker::PhantomData<(A, D)>,
+// }
+
 pub struct NiosPkt<A, D>
 where
     A: NumToByte + Debug + Display + LowerHex,
@@ -182,6 +217,7 @@ where
             .set_addr(addr)
             .set_data(data)
     }
+
     pub fn magic(&self) -> u8 {
         self.buf.magic()
     }
@@ -193,14 +229,6 @@ where
         self.buf[Self::IDX_FLAGS]
     }
 
-    // fn reserved(&self) -> u8 {
-    //     self.buf[Self::IDX_RESERVED]
-    // }
-    //
-    // fn padding(&self) -> &[u8] {
-    //     &self.buf[Self::IDX_PADDING..]
-    // }
-
     pub fn addr(&self) -> A {
         A::from_le_bytes(&self.buf[Self::IDX_ADDR..(Self::IDX_ADDR + size_of::<A>())])
     }
@@ -208,12 +236,14 @@ where
         D::from_le_bytes(&self.buf[Self::IDX_DATA..(Self::IDX_DATA + size_of::<D>())])
     }
 
-    pub fn is_write(&self) -> bool {
-        self.buf[Self::IDX_FLAGS] & Self::FLAG_WRITE != 0
+    pub fn success(&self) -> Result<()> {
+        if self.buf[Self::IDX_FLAGS] & Self::FLAG_SUCCESS != 0 {
+            return Err(anyhow!("response packet reported failure."));
+        }
+        Ok(())
     }
-
-    pub fn is_success(&self) -> bool {
-        self.buf[Self::IDX_FLAGS] & Self::FLAG_SUCCESS != 0
+    pub fn write(&self) -> bool {
+        self.buf[Self::IDX_FLAGS] & Self::FLAG_WRITE != 0
     }
 
     pub fn set_magic(&mut self, magic: u8) -> &mut Self {
@@ -335,5 +365,178 @@ where
         }
         f.write_str("]")?;
         Ok(())
+    }
+}
+
+
+pub struct NiosRequest<A, D>
+where
+    A: NumToByte + Debug + Display + LowerHex,
+    D: NumToByte + Debug + Display + LowerHex,
+{
+    pkt: NiosPkt<A, D>,
+}
+impl<A, D> NiosRequest<A, D>
+where
+    A: NumToByte + Debug + Display + LowerHex,
+    D: NumToByte + Debug + Display + LowerHex,
+{
+    pub const FLAG_READ: u8 = 0;
+    pub const FLAG_WRITE: u8 = 1;
+    pub const FLAG_SUCCESS: u8 = 2;
+    
+    pub fn new(target_id: u8, flags: u8, addr: A, data: D) -> Self {
+        Self {
+            pkt: NiosPkt::new(target_id, flags, addr, data),
+        }
+    }
+    pub fn set(&mut self, target_id: u8, flags: u8, addr: A, data: D) -> &mut Self {
+        self.pkt.set(target_id, flags, addr, data);
+        self
+    }
+    pub fn set_magic(&mut self, magic: u8) -> &mut Self {
+        self.pkt.set_magic(magic);
+        self
+    }
+    pub fn set_target_id(&mut self, target_id: u8) -> &mut Self {
+        self.pkt.set_target_id(target_id);
+        self
+    }
+    pub fn set_flag(&mut self, flag: u8) -> &mut Self {
+        self.pkt.set_flag(flag);
+        self
+    }
+    pub fn set_flags(&mut self, flags: u8) -> &mut Self {
+        self.pkt.set_flags(flags);
+        self
+    }
+
+    pub fn set_addr(&mut self, addr: A) -> &mut Self {
+        self.pkt.set_addr(addr);
+        self
+    }
+    pub fn set_data(&mut self, data: D) -> &mut Self {
+        self.pkt.set_data(data);
+        self
+    }
+}
+
+impl<A, D> From<Vec<u8>> for NiosRequest<A, D>
+where
+    A: NumToByte + Debug + Display + LowerHex,
+    D: NumToByte + Debug + Display + LowerHex,
+{
+    fn from(value: Vec<u8>) -> Self {
+        Self {
+            pkt: NiosPkt::from(value),
+        }
+    }
+}
+
+impl<A, D> From<NiosRequest<A, D>> for Vec<u8>
+where
+    A: NumToByte + Debug + Display + LowerHex,
+    D: NumToByte + Debug + Display + LowerHex,
+{
+    fn from(value: NiosRequest<A, D>) -> Self {
+        value.pkt.buf
+    }
+}
+
+impl<A, D> Debug for NiosRequest<A, D>
+where
+    A: NumToByte + Debug + Display + LowerHex,
+    D: NumToByte + Debug + Display + LowerHex,
+{
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        Debug::fmt(&self.pkt, f)
+    }
+}
+
+impl<A, D> Display for NiosRequest<A, D>
+where
+    A: NumToByte + Debug + Display + LowerHex,
+    D: NumToByte + Debug + Display + LowerHex,
+{
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        Display::fmt(&self.pkt, f)
+    }
+}
+
+
+pub struct NiosResponse<A, D>
+where
+    A: NumToByte + Debug + Display + LowerHex,
+    D: NumToByte + Debug + Display + LowerHex,
+{
+    pkt: NiosPkt<A, D>,
+}
+impl<A, D> NiosResponse<A, D>
+where
+    A: NumToByte + Debug + Display + LowerHex,
+    D: NumToByte + Debug + Display + LowerHex,
+{
+    pub fn magic(&self) -> u8 {
+        self.pkt.magic()
+    }
+    pub fn target_id(&self) -> u8 {
+        self.pkt.target_id()
+    }
+    pub fn flags(&self) -> u8 {
+        self.pkt.flags()
+    }
+    pub fn addr(&self) -> A {
+        self.pkt.addr()
+    }
+    pub fn data(&self) -> D {
+        self.pkt.data()
+    }
+    pub fn is_success(&self) -> Result<()> {
+        self.pkt.success()
+    }
+    pub fn is_write(&self) -> bool {
+        self.pkt.write()
+    }
+}
+
+impl<A, D> From<Vec<u8>> for NiosResponse<A, D>
+where
+    A: NumToByte + Debug + Display + LowerHex,
+    D: NumToByte + Debug + Display + LowerHex,
+{
+    fn from(value: Vec<u8>) -> Self {
+        Self {
+            pkt: NiosPkt::from(value),
+        }
+    }
+}
+
+impl<A, D> From<NiosResponse<A, D>> for Vec<u8>
+where
+    A: NumToByte + Debug + Display + LowerHex,
+    D: NumToByte + Debug + Display + LowerHex,
+{
+    fn from(value: NiosResponse<A, D>) -> Self {
+        value.pkt.buf
+    }
+}
+
+impl<A, D> Debug for NiosResponse<A, D>
+where
+    A: NumToByte + Debug + Display + LowerHex,
+    D: NumToByte + Debug + Display + LowerHex,
+{
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        Debug::fmt(&self.pkt, f)
+    }
+}
+
+impl<A, D> Display for NiosResponse<A, D>
+where
+    A: NumToByte + Debug + Display + LowerHex,
+    D: NumToByte + Debug + Display + LowerHex,
+{
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        Display::fmt(&self.pkt, f)
     }
 }

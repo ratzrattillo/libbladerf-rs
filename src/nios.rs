@@ -1,10 +1,12 @@
 #![allow(clippy::too_many_arguments)]
 
-use anyhow::anyhow;
+use anyhow::{Result, anyhow};
 use bladerf_globals::{ENDPOINT_IN, ENDPOINT_OUT};
 use bladerf_nios::packet_retune::{Band, NiosPktRetuneRequest, NiosPktRetuneResponse, Tune};
 use nusb::Interface;
 use nusb::transfer::{Buffer, Bulk, In, Out};
+use bladerf_nios::packet_generic::{NiosReq32x32, NiosResp32x32};
+use bladerf_nios::*;
 
 pub trait Nios {
     fn nios_send(
@@ -12,7 +14,7 @@ pub trait Nios {
         ep_bulk_out_id: u8,
         ep_bulk_in_id: u8,
         pkt: Vec<u8>,
-    ) -> impl Future<Output = anyhow::Result<Vec<u8>>>;
+    ) -> impl Future<Output = Result<Vec<u8>>>;
     fn nios_retune(
         &self,
         module: u8,
@@ -24,7 +26,9 @@ pub trait Nios {
         band: Band,
         tune: Tune,
         xb_gpio: u8,
-    ) -> impl Future<Output = anyhow::Result<()>> + Send;
+    ) -> impl Future<Output = Result<()>> + Send;
+    fn nios_32x32_masked_write(&self, id: u8, mask: u32, val: u32) -> impl Future<Output = Result<()>> + Send;
+    fn nios_expansion_gpio_write(&self, mask: u32, val: u32) -> impl Future<Output = Result<()>> + Send;
 }
 
 impl Nios for Interface {
@@ -33,7 +37,7 @@ impl Nios for Interface {
         ep_bulk_out_id: u8,
         ep_bulk_in_id: u8,
         mut pkt: Vec<u8>,
-    ) -> anyhow::Result<Vec<u8>> {
+    ) -> Result<Vec<u8>> {
         // println!("BulkOut: {pkt:x?}");
 
         let mut ep_bulk_out = self.endpoint::<Bulk, Out>(ep_bulk_out_id)?;
@@ -87,7 +91,7 @@ impl Nios for Interface {
         band: Band,
         tune: Tune,
         xb_gpio: u8,
-    ) -> anyhow::Result<()> {
+    ) -> Result<()> {
         if timestamp == NiosPktRetuneRequest::RETUNE_NOW {
             println!("Clearing Retune Queue");
         } else {
@@ -125,5 +129,18 @@ impl Nios for Interface {
         }
 
         Ok(())
+    }
+
+    async fn nios_32x32_masked_write(&self, id: u8, mask: u32, val: u32) -> Result<()> {
+        type PktType = NiosReq32x32;
+        /* The address is used as a mask of bits to read and return */
+        let pkt = PktType::new(id, PktType::FLAG_WRITE, mask, val);
+        let resp = self.nios_send(ENDPOINT_OUT, ENDPOINT_IN, pkt.into()).await?;
+        let resp_pkt: NiosResp32x32 = resp.into();
+        resp_pkt.is_success()
+    }
+
+    async fn nios_expansion_gpio_write(&self, mask: u32, val: u32) -> Result<()> {
+        self.nios_32x32_masked_write(NIOS_PKT_32X32_TARGET_EXP, mask, val).await
     }
 }

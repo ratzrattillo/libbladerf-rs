@@ -20,14 +20,21 @@ pub enum NiosPktMagic {
     Retune2 = 0x55, // 'U'
 }
 
-#[repr(u8)]
-#[derive(Debug)]
-pub enum NiosPktFlags {
-    ReadFailure = 0x0,
-    WriteFailure = 0x1,
-    ReadSuccess = 0x2,
-    WriteSuccess = 0x3,
-}
+// #[repr(u8)]
+// #[derive(Debug)]
+// pub enum NiosPktFlags {
+//     ReadFailure = 0x0,
+//     WriteFailure = 0x1,
+//     ReadSuccess = 0x2,
+//     WriteSuccess = 0x3,
+//}
+
+// #[repr(u8)]
+// #[derive(Debug)]
+// pub enum NiosPktFlags {
+//     Read = 0x0,
+//     Write = 0x1,
+// }
 
 // use thiserror::Error;
 // #[derive(Debug, Error, PartialEq)]

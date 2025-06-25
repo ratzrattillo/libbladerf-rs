@@ -5,13 +5,11 @@ mod tests {
        TODO: Test boundries of fields e.g. limit of  bits is not exceeded.
     */
     use bladerf_nios::packet_base::GenericNiosPkt;
-    use bladerf_nios::packet_generic::{
-        NiosPkt8x8, NiosPkt8x16, NiosPkt8x32, NiosPkt8x64, NiosPkt16x64, NiosPkt32x32,
-    };
+    use bladerf_nios::packet_generic::NiosPkt;
 
     #[test]
     fn packet_reuse() {
-        type PktType = NiosPkt8x8;
+        type PktType = NiosPkt<u8, u8>;
 
         let packet = PktType::new(1, 2, 3, 4);
 
@@ -25,7 +23,7 @@ mod tests {
     }
     #[test]
     fn packet_from_vec() {
-        type PktType = NiosPkt8x8;
+        type PktType = NiosPkt<u8, u8>;
 
         let packet_vec = vec![0u8; 16];
         let mut packet = PktType::from(packet_vec);
@@ -41,7 +39,7 @@ mod tests {
 
     #[test]
     fn packet8x8_into() {
-        type PktType = NiosPkt8x8;
+        type PktType = NiosPkt<u8, u8>;
 
         let target_id = 0x1;
         let flags = 0x2;
@@ -63,7 +61,7 @@ mod tests {
 
     #[test]
     fn packet8x8_new() {
-        type PktType = NiosPkt8x8;
+        type PktType = NiosPkt<u8, u8>;
 
         let target_id = 0x1;
         let flags = 0x2;
@@ -80,7 +78,7 @@ mod tests {
 
     #[test]
     fn packet8x16_new() {
-        type PktType = NiosPkt8x16;
+        type PktType = NiosPkt<u8, u16>;
 
         let addr = 0x12;
         let data = 0x1234;
@@ -92,7 +90,7 @@ mod tests {
 
     #[test]
     fn packet8x32_new() {
-        type PktType = NiosPkt8x32;
+        type PktType = NiosPkt<u8, u32>;
 
         let addr = 0x12;
         let data = 0x12345678;
@@ -104,7 +102,7 @@ mod tests {
 
     #[test]
     fn packet8x64_new() {
-        type PktType = NiosPkt8x64;
+        type PktType = NiosPkt<u8, u64>;
 
         let addr = 0x12;
         let data = 0x123456789abcdef;
@@ -116,7 +114,7 @@ mod tests {
 
     #[test]
     fn packet16x64_new() {
-        type PktType = NiosPkt16x64;
+        type PktType = NiosPkt<u16, u64>;
 
         let addr = 0x1234;
         let data = 0x123456789abcdef;
@@ -128,7 +126,7 @@ mod tests {
 
     #[test]
     fn packet32x32_new() {
-        type PktType = NiosPkt32x32;
+        type PktType = NiosPkt<u32, u32>;
 
         let addr = 0x12345678;
         let data = 0x12345678;
