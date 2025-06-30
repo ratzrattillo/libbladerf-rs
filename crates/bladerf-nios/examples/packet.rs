@@ -29,7 +29,7 @@ fn main() {
 
     // Get individual field of a packet
     let _target_id = resp_packet.target_id();
-    
+
     // Check if packet indicates success
     let _success = resp_packet.is_success();
 

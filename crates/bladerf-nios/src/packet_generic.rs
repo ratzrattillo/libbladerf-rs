@@ -1,65 +1,3 @@
-/*
- * This file defines the Host <-> FPGA (NIOS II) packet formats for accesses
- * to devices/blocks with X-bit addresses and Y-bit data, where X and Y are
- * a multiple of 8.
- *
- *
- *                              Request
- *                      ----------------------
- *
- * +================+=========================================================+
- * |  Byte offset   |                       Description                       |
- * +================+=========================================================+
- * |        0       | Magic Value                                             |
- * +----------------+---------------------------------------------------------+
- * |        1       | Target ID (Note 1)                                      |
- * +----------------+---------------------------------------------------------+
- * |        2       | Flags (Note 2)                                          |
- * +----------------+---------------------------------------------------------+
- * |        3       | Reserved. Set to 0x00.                                  |
- * +----------------+---------------------------------------------------------+
- * |        4       | X-bit address                                           |
- * +----------------+---------------------------------------------------------+
- * |        5       | Y-bit data                                              |
- * +----------------+---------------------------------------------------------+
- * |      15:6      | Reserved. Set to 0.                                     |
- * +----------------+---------------------------------------------------------+
- *
- *
- *                              Response
- *                      ----------------------
- *
- * The response packet contains the same information as the request.
- * A status flag will be set if the operation is completed successfully.
- *
- * In the case of a read request, the data field will contain the read data if
- * the read succeeded.
- *
- * (Note 1)
- *  The "Target ID" refers to the peripheral, device, or block to access.
- *  See the NIOS_PKT_XxY_TARGET_* values.
- *
- * (Note 2)
- *  The flags are defined as follows:
- *
- *    +================+========================+
- *    |      Bit(s)    |         Value          |
- *    +================+========================+
- *    |       7:2      | Reserved. Set to 0.    |
- *    +----------------+------------------------+
- *    |                | Status. Only used in   |
- *    |                | response packet.       |
- *    |                | Ignored in request.    |
- *    |        1       |                        |
- *    |                |   1 = Success          |
- *    |                |   0 = Failure          |
- *    +----------------+------------------------+
- *    |        0       |   0 = Read operation   |
- *    |                |   1 = Write operation  |
- *    +----------------+------------------------+
- *
- */
-
 use crate::NiosPktMagic;
 use crate::packet_base::GenericNiosPkt;
 use anyhow::{Result, anyhow};
@@ -71,19 +9,19 @@ use std::fmt::{Debug, Display, Formatter, LowerHex};
 // pub const NIOS_PKT_16X64_MAGIC: u8 = 0x45; // 'E'
 // pub const NIOS_PKT_32X32_MAGIC: u8 = 0x4B; // 'K'
 
-pub type NiosReq8x8 = NiosRequest<u8, u8>;
-pub type NiosReq8x16 = NiosRequest<u8, u16>;
-pub type NiosReq8x32 = NiosRequest<u8, u32>;
-pub type NiosReq8x64 = NiosRequest<u8, u64>;
-pub type NiosReq16x64 = NiosRequest<u16, u64>;
-pub type NiosReq32x32 = NiosRequest<u32, u32>;
+pub type NiosReq8x8 = NiosPktRequest<u8, u8>;
+pub type NiosReq8x16 = NiosPktRequest<u8, u16>;
+pub type NiosReq8x32 = NiosPktRequest<u8, u32>;
+pub type NiosReq8x64 = NiosPktRequest<u8, u64>;
+pub type NiosReq16x64 = NiosPktRequest<u16, u64>;
+pub type NiosReq32x32 = NiosPktRequest<u32, u32>;
 
-pub type NiosResp8x8 = NiosResponse<u8, u8>;
-pub type NiosResp8x16 = NiosResponse<u8, u16>;
-pub type NiosResp8x32 = NiosResponse<u8, u32>;
-pub type NiosResp8x64 = NiosResponse<u8, u64>;
-pub type NiosResp16x64 = NiosResponse<u16, u64>;
-pub type NiosResp32x32 = NiosResponse<u32, u32>;
+pub type NiosResp8x8 = NiosPktResponse<u8, u8>;
+pub type NiosResp8x16 = NiosPktResponse<u8, u16>;
+pub type NiosResp8x32 = NiosPktResponse<u8, u32>;
+pub type NiosResp8x64 = NiosPktResponse<u8, u64>;
+pub type NiosResp16x64 = NiosPktResponse<u16, u64>;
+pub type NiosResp32x32 = NiosPktResponse<u32, u32>;
 
 // https://stackoverflow.com/questions/78395612/how-to-enforce-generic-parameter-to-be-of-type-u8-u16-u32-or-u64-in-rust
 // https://predr.ag/blog/definitive-guide-to-sealed-traits-in-rust/
@@ -165,12 +103,12 @@ impl NumToByte for u64 {
 //     phantom: std::marker::PhantomData<(A, D)>,
 // }
 
-pub struct NiosPkt<A, D>
+struct NiosPkt<A, D>
 where
     A: NumToByte + Debug + Display + LowerHex,
     D: NumToByte + Debug + Display + LowerHex,
 {
-    buf: Vec<u8>,
+    pub buf: Vec<u8>,
     phantom: std::marker::PhantomData<(A, D)>,
 }
 
@@ -181,12 +119,11 @@ where
 {
     pub const IDX_TARGET_ID: usize = 1;
     pub const IDX_FLAGS: usize = 2;
-    pub const IDX_RESERVED: usize = 3;
     pub const IDX_ADDR: usize = 4;
     pub const IDX_DATA: usize = Self::IDX_ADDR + size_of::<A>();
-    pub const IDX_PADDING: usize = Self::IDX_DATA + size_of::<D>();
+    // pub const IDX_PADDING: usize = Self::IDX_DATA + size_of::<D>();
 
-    pub const FLAG_READ: u8 = 0;
+    // pub const FLAG_READ: u8 = 0;
     pub const FLAG_WRITE: u8 = 1;
     pub const FLAG_SUCCESS: u8 = 2;
 
@@ -368,15 +305,75 @@ where
     }
 }
 
-
-pub struct NiosRequest<A, D>
+/*
+ * This file defines the Host <-> FPGA (NIOS II) packet formats for accesses
+ * to devices/blocks with X-bit addresses and Y-bit data, where X and Y are
+ * a multiple of 8.
+ *
+ *
+ *                              Request
+ *                      ----------------------
+ *
+ * +================+=========================================================+
+ * |  Byte offset   |                       Description                       |
+ * +================+=========================================================+
+ * |        0       | Magic Value                                             |
+ * +----------------+---------------------------------------------------------+
+ * |        1       | Target ID (Note 1)                                      |
+ * +----------------+---------------------------------------------------------+
+ * |        2       | Flags (Note 2)                                          |
+ * +----------------+---------------------------------------------------------+
+ * |        3       | Reserved. Set to 0x00.                                  |
+ * +----------------+---------------------------------------------------------+
+ * |        4       | X-bit address                                           |
+ * +----------------+---------------------------------------------------------+
+ * |        5       | Y-bit data                                              |
+ * +----------------+---------------------------------------------------------+
+ * |      15:6      | Reserved. Set to 0.                                     |
+ * +----------------+---------------------------------------------------------+
+ *
+ *
+ *                              Response
+ *                      ----------------------
+ *
+ * The response packet contains the same information as the request.
+ * A status flag will be set if the operation is completed successfully.
+ *
+ * In the case of a read request, the data field will contain the read data if
+ * the read succeeded.
+ *
+ * (Note 1)
+ *  The "Target ID" refers to the peripheral, device, or block to access.
+ *  See the NIOS_PKT_XxY_TARGET_* values.
+ *
+ * (Note 2)
+ *  The flags are defined as follows:
+ *
+ *    +================+========================+
+ *    |      Bit(s)    |         Value          |
+ *    +================+========================+
+ *    |       7:2      | Reserved. Set to 0.    |
+ *    +----------------+------------------------+
+ *    |                | Status. Only used in   |
+ *    |                | response packet.       |
+ *    |                | Ignored in request.    |
+ *    |        1       |                        |
+ *    |                |   1 = Success          |
+ *    |                |   0 = Failure          |
+ *    +----------------+------------------------+
+ *    |        0       |   0 = Read operation   |
+ *    |                |   1 = Write operation  |
+ *    +----------------+------------------------+
+ *
+ */
+pub struct NiosPktRequest<A, D>
 where
     A: NumToByte + Debug + Display + LowerHex,
     D: NumToByte + Debug + Display + LowerHex,
 {
     pkt: NiosPkt<A, D>,
 }
-impl<A, D> NiosRequest<A, D>
+impl<A, D> NiosPktRequest<A, D>
 where
     A: NumToByte + Debug + Display + LowerHex,
     D: NumToByte + Debug + Display + LowerHex,
@@ -384,7 +381,7 @@ where
     pub const FLAG_READ: u8 = 0;
     pub const FLAG_WRITE: u8 = 1;
     pub const FLAG_SUCCESS: u8 = 2;
-    
+
     pub fn new(target_id: u8, flags: u8, addr: A, data: D) -> Self {
         Self {
             pkt: NiosPkt::new(target_id, flags, addr, data),
@@ -419,9 +416,35 @@ where
         self.pkt.set_data(data);
         self
     }
+
+    pub fn buf_ptr(&self) -> *const u8 {
+        self.pkt.buf_ptr()
+    }
+
+    pub fn magic(&self) -> u8 {
+        self.pkt.magic()
+    }
+    pub fn target_id(&self) -> u8 {
+        self.pkt.target_id()
+    }
+    pub fn flags(&self) -> u8 {
+        self.pkt.flags()
+    }
+    pub fn addr(&self) -> A {
+        self.pkt.addr()
+    }
+    pub fn data(&self) -> D {
+        self.pkt.data()
+    }
+    pub fn is_success(&self) -> Result<()> {
+        self.pkt.success()
+    }
+    pub fn is_write(&self) -> bool {
+        self.pkt.write()
+    }
 }
 
-impl<A, D> From<Vec<u8>> for NiosRequest<A, D>
+impl<A, D> From<Vec<u8>> for NiosPktRequest<A, D>
 where
     A: NumToByte + Debug + Display + LowerHex,
     D: NumToByte + Debug + Display + LowerHex,
@@ -433,17 +456,17 @@ where
     }
 }
 
-impl<A, D> From<NiosRequest<A, D>> for Vec<u8>
+impl<A, D> From<NiosPktRequest<A, D>> for Vec<u8>
 where
     A: NumToByte + Debug + Display + LowerHex,
     D: NumToByte + Debug + Display + LowerHex,
 {
-    fn from(value: NiosRequest<A, D>) -> Self {
+    fn from(value: NiosPktRequest<A, D>) -> Self {
         value.pkt.buf
     }
 }
 
-impl<A, D> Debug for NiosRequest<A, D>
+impl<A, D> Debug for NiosPktRequest<A, D>
 where
     A: NumToByte + Debug + Display + LowerHex,
     D: NumToByte + Debug + Display + LowerHex,
@@ -453,7 +476,7 @@ where
     }
 }
 
-impl<A, D> Display for NiosRequest<A, D>
+impl<A, D> Display for NiosPktRequest<A, D>
 where
     A: NumToByte + Debug + Display + LowerHex,
     D: NumToByte + Debug + Display + LowerHex,
@@ -463,15 +486,14 @@ where
     }
 }
 
-
-pub struct NiosResponse<A, D>
+pub struct NiosPktResponse<A, D>
 where
     A: NumToByte + Debug + Display + LowerHex,
     D: NumToByte + Debug + Display + LowerHex,
 {
     pkt: NiosPkt<A, D>,
 }
-impl<A, D> NiosResponse<A, D>
+impl<A, D> NiosPktResponse<A, D>
 where
     A: NumToByte + Debug + Display + LowerHex,
     D: NumToByte + Debug + Display + LowerHex,
@@ -499,7 +521,7 @@ where
     }
 }
 
-impl<A, D> From<Vec<u8>> for NiosResponse<A, D>
+impl<A, D> From<Vec<u8>> for NiosPktResponse<A, D>
 where
     A: NumToByte + Debug + Display + LowerHex,
     D: NumToByte + Debug + Display + LowerHex,
@@ -511,17 +533,17 @@ where
     }
 }
 
-impl<A, D> From<NiosResponse<A, D>> for Vec<u8>
+impl<A, D> From<NiosPktResponse<A, D>> for Vec<u8>
 where
     A: NumToByte + Debug + Display + LowerHex,
     D: NumToByte + Debug + Display + LowerHex,
 {
-    fn from(value: NiosResponse<A, D>) -> Self {
+    fn from(value: NiosPktResponse<A, D>) -> Self {
         value.pkt.buf
     }
 }
 
-impl<A, D> Debug for NiosResponse<A, D>
+impl<A, D> Debug for NiosPktResponse<A, D>
 where
     A: NumToByte + Debug + Display + LowerHex,
     D: NumToByte + Debug + Display + LowerHex,
@@ -531,7 +553,7 @@ where
     }
 }
 
-impl<A, D> Display for NiosResponse<A, D>
+impl<A, D> Display for NiosPktResponse<A, D>
 where
     A: NumToByte + Debug + Display + LowerHex,
     D: NumToByte + Debug + Display + LowerHex,

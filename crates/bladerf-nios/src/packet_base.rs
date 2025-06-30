@@ -17,7 +17,7 @@ impl GenericNiosPkt for Vec<u8> {
     fn magic(&self) -> u8 {
         self[Self::IDX_MAGIC]
     }
-    
+
     fn set_magic(&mut self, magic: u8) -> &mut Self {
         self[Self::IDX_MAGIC] = magic;
         self

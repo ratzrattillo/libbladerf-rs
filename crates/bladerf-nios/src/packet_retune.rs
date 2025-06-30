@@ -1,72 +1,10 @@
-/* This file defines the Host <-> FPGA (NIOS II) packet formats for
- * retune messages. This packet is formatted, as follows. All values are
- * little-endian.
- *
- *                              Request
- *                      ----------------------
- *
- * +================+=========================================================+
- * |  Byte offset   |                       Description                       |
- * +================+=========================================================+
- * |        0       | Magic Value                                             |
- * +----------------+---------------------------------------------------------+
- * |        1       | 64-bit timestamp denoting when to retune. (Note 1)      |
- * +----------------+---------------------------------------------------------+
- * |        9       | 32-bit LMS6002D n_int & n_frac register values (Note 2) |
- * +----------------+---------------------------------------------------------+
- * |       13       | RX/TX bit, FREQSEL LMS6002D reg value  (Note 3)         |
- * +----------------+---------------------------------------------------------+
- * |       14       | Bit 7:        Band-selection (Note 4)                   |
- * |                | Bit 6:        1=Quick tune, 0=Normal tune               |
- * |                | Bits [5:0]    VCOCAP[5:0] Hint                          |
- * +----------------+---------------------------------------------------------+
- * |       15       | 8-bit reserved word. Should be set to 0x00.             |
- * +----------------+---------------------------------------------------------+
- *
- * (Note 1) Special Timestamp Values:
- *
- * Tune "Now":          0x0000000000000000
- * Clear Retune Queue:  0xffffffffffffffff
- *
- * When the "Clear Retune Queue" value is used, all of the other tuning
- * parameters are ignored.
- *
- * (Note 2) Packed as follows:
- *
- * +================+=======================+
- * |   Byte offset  | (MSB)   Value    (LSB)|
- * +================+=======================+
- * |       0        |        NINT[8:1]      |
- * +----------------+-----------------------+
- * |       1        | NINT[0], NFRAC[22:16] |
- * +----------------+-----------------------+
- * |       2        |       NFRAC[15:8]     |
- * +----------------+-----------------------+
- * |       3        |       NFRAC[7:0]      |
- * +----------------+-----------------------+
- *
- * (Note 3) Packed as follows:
- *
- * +================+=======================+
- * |      Bit(s)    |         Value         |
- * +================+=======================+
- * |        7       |          TX           |
- * +----------------+-----------------------+
- * |        6       |          RX           |
- * +----------------+-----------------------+
- * |      [5:0]     |        FREQSEL        |
- * +----------------+-----------------------+
- *
- * (Notes 4) Band-selection bit = 1 implies "Low band". 0 = "High band"
- */
 use crate::NiosPktMagic;
 use crate::packet_base::GenericNiosPkt;
 use bladerf_globals::{BLADERF_MODULE_RX, BLADERF_MODULE_TX};
 use std::fmt::{Debug, Formatter};
-//pub const PACK_TXRX_FREQSEL(module_, freqsel_) \ (freqsel_ & 0x3f)
 
-pub struct NiosPktRetuneRequest {
-    buf: Vec<u8>,
+struct NiosPktRetune {
+    pub buf: Vec<u8>,
 }
 #[repr(u8)]
 #[derive(PartialEq, Debug)]
@@ -80,7 +18,7 @@ pub enum Tune {
     Normal = 0,
     Quick = 1,
 }
-impl NiosPktRetuneRequest {
+impl NiosPktRetune {
     pub(crate) const IDX_INTFRAC: usize = 9;
     pub(crate) const IDX_FREQSEL: usize = 13;
     pub(crate) const IDX_BANDSEL: usize = 14;
@@ -90,15 +28,6 @@ impl NiosPktRetuneRequest {
     pub(crate) const FLAG_TX: u8 = 1 << 7;
     pub(crate) const FLAG_QUICK_TUNE: u8 = 1 << 6;
     pub(crate) const FLAG_LOW_BAND: u8 = 1 << 7;
-
-    /* Specify this value instead of a timestamp to clear the retune queue */
-    pub const CLEAR_QUEUE: u64 = u64::MAX; // -1
-
-    /* Denotes no tune word is supplied. */
-    pub const NO_HINT: u8 = 0xff;
-
-    /* Denotes that the retune should not be scheduled - it should occur "now" */
-    pub const RETUNE_NOW: u64 = 0x00;
 
     /* Maximum field sizes / masks */
     // const MASK_NINT: u16 = 0x1ff; // Max 9bit in size
@@ -118,7 +47,7 @@ impl NiosPktRetuneRequest {
         tune: Tune,
         xb_gpio: u8,
     ) -> Self {
-        let mut pkt: NiosPktRetuneRequest = vec![0u8; 16].into();
+        let mut pkt: NiosPktRetune = vec![0u8; 16].into();
         pkt.set(
             module, timestamp, nint, nfrac, freqsel, vcocap, band, tune, xb_gpio,
         );
@@ -148,33 +77,6 @@ impl NiosPktRetuneRequest {
             .set_tune(tune)
             .set_xb_gpio(xb_gpio)
     }
-
-    // fn reserved(&self) -> u8 {
-    //     self.buf[Self::IDX_RESERVED]
-    // }
-
-    // use crate::ValidationError;
-    // pub fn validate(&self) -> Result<(), ValidationError> {
-    //     if self.magic() != NiosPktMagic::Retune as u8 {
-    //         return Err(ValidationError::InvalidMagic(self.magic()));
-    //     }
-    //     if self.nint() > Self::MASK_NINT {
-    //         return Err(ValidationError::NintOverflow(self.nint()));
-    //     }
-    //     if self.nfrac() > Self::MASK_NFRAC {
-    //         return Err(ValidationError::NfracOverflow(self.nfrac()));
-    //     }
-    //     if self.vcocap() > Self::MASK_VCOCAP {
-    //         return Err(ValidationError::VcocapOverflow(self.vcocap()));
-    //     }
-    //     if self.freqsel() > Self::MASK_FREQSEL {
-    //         return Err(ValidationError::FreqselOverflow(self.freqsel()));
-    //     }
-    //     if self.buf.len() != 16 {
-    //         return Err(ValidationError::InvalidLength(self.buf.len()));
-    //     }
-    //     Ok(())
-    // }
 
     pub fn set_magic(&mut self, magic: u8) -> &mut Self {
         self.buf.set_magic(magic);
@@ -302,9 +204,9 @@ impl NiosPktRetuneRequest {
         self
     }
 
-    pub fn buf_ptr(&self) -> *const u8 {
-        self.buf.as_ptr()
-    }
+    // pub fn buf_ptr(&self) -> *const u8 {
+    //     self.buf.as_ptr()
+    // }
 
     pub fn magic(&self) -> u8 {
         self.buf.magic()
@@ -363,26 +265,282 @@ impl NiosPktRetuneRequest {
         self.buf[Self::IDX_RESERVED]
     }
 
-    pub fn module(&self) -> u8 {
-        if self.rx_flag() != 0 {
-            BLADERF_MODULE_RX
-        } else if self.tx_flag() != 0 {
-            BLADERF_MODULE_TX
-        } else {
-            u8::MAX
-        }
-    }
+    // pub fn module(&self) -> u8 {
+    //     if self.rx_flag() != 0 {
+    //         BLADERF_MODULE_RX
+    //     } else if self.tx_flag() != 0 {
+    //         BLADERF_MODULE_TX
+    //     } else {
+    //         u8::MAX
+    //     }
+    // }
+
+    // pub fn reserved(&self) -> u8 {
+    //     self.buf[Self::IDX_RESERVED]
+    // }
+
+    // use crate::ValidationError;
+    // pub fn validate(&self) -> Result<(), ValidationError> {
+    //     if self.magic() != NiosPktMagic::Retune as u8 {
+    //         return Err(ValidationError::InvalidMagic(self.magic()));
+    //     }
+    //     if self.nint() > Self::MASK_NINT {
+    //         return Err(ValidationError::NintOverflow(self.nint()));
+    //     }
+    //     if self.nfrac() > Self::MASK_NFRAC {
+    //         return Err(ValidationError::NfracOverflow(self.nfrac()));
+    //     }
+    //     if self.vcocap() > Self::MASK_VCOCAP {
+    //         return Err(ValidationError::VcocapOverflow(self.vcocap()));
+    //     }
+    //     if self.freqsel() > Self::MASK_FREQSEL {
+    //         return Err(ValidationError::FreqselOverflow(self.freqsel()));
+    //     }
+    //     if self.buf.len() != 16 {
+    //         return Err(ValidationError::InvalidLength(self.buf.len()));
+    //     }
+    //     Ok(())
+    // }
 }
 
-impl From<Vec<u8>> for NiosPktRetuneRequest {
+impl From<Vec<u8>> for NiosPktRetune {
     fn from(value: Vec<u8>) -> Self {
         Self { buf: value }
     }
 }
 
+impl From<NiosPktRetune> for Vec<u8> {
+    fn from(value: NiosPktRetune) -> Self {
+        value.buf
+    }
+}
+
+/* This file defines the Host <-> FPGA (NIOS II) packet formats for
+ * retune messages. This packet is formatted, as follows. All values are
+ * little-endian.
+ *
+ *                              Request
+ *                      ----------------------
+ *
+ * +================+=========================================================+
+ * |  Byte offset   |                       Description                       |
+ * +================+=========================================================+
+ * |        0       | Magic Value                                             |
+ * +----------------+---------------------------------------------------------+
+ * |        1       | 64-bit timestamp denoting when to retune. (Note 1)      |
+ * +----------------+---------------------------------------------------------+
+ * |        9       | 32-bit LMS6002D n_int & n_frac register values (Note 2) |
+ * +----------------+---------------------------------------------------------+
+ * |       13       | RX/TX bit, FREQSEL LMS6002D reg value  (Note 3)         |
+ * +----------------+---------------------------------------------------------+
+ * |       14       | Bit 7:        Band-selection (Note 4)                   |
+ * |                | Bit 6:        1=Quick tune, 0=Normal tune               |
+ * |                | Bits [5:0]    VCOCAP[5:0] Hint                          |
+ * +----------------+---------------------------------------------------------+
+ * |       15       | 8-bit reserved word. Should be set to 0x00.             |
+ * +----------------+---------------------------------------------------------+
+ *
+ * (Note 1) Special Timestamp Values:
+ *
+ * Tune "Now":          0x0000000000000000
+ * Clear Retune Queue:  0xffffffffffffffff
+ *
+ * When the "Clear Retune Queue" value is used, all of the other tuning
+ * parameters are ignored.
+ *
+ * (Note 2) Packed as follows:
+ *
+ * +================+=======================+
+ * |   Byte offset  | (MSB)   Value    (LSB)|
+ * +================+=======================+
+ * |       0        |        NINT[8:1]      |
+ * +----------------+-----------------------+
+ * |       1        | NINT[0], NFRAC[22:16] |
+ * +----------------+-----------------------+
+ * |       2        |       NFRAC[15:8]     |
+ * +----------------+-----------------------+
+ * |       3        |       NFRAC[7:0]      |
+ * +----------------+-----------------------+
+ *
+ * (Note 3) Packed as follows:
+ *
+ * +================+=======================+
+ * |      Bit(s)    |         Value         |
+ * +================+=======================+
+ * |        7       |          TX           |
+ * +----------------+-----------------------+
+ * |        6       |          RX           |
+ * +----------------+-----------------------+
+ * |      [5:0]     |        FREQSEL        |
+ * +----------------+-----------------------+
+ *
+ * (Notes 4) Band-selection bit = 1 implies "Low band". 0 = "High band"
+ */
+pub struct NiosPktRetuneRequest {
+    pkt: NiosPktRetune,
+}
+
+impl NiosPktRetuneRequest {
+    /* Denotes that the retune should not be scheduled - it should occur "now" */
+    pub const RETUNE_NOW: u64 = 0x00;
+
+    /* Specify this value instead of a timestamp to clear the retune queue */
+    pub const CLEAR_QUEUE: u64 = u64::MAX; // -1
+
+    /* Denotes no tune word is supplied. */
+    // pub const NO_HINT: u8 = 0xff;
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        module: u8,
+        timestamp: u64,
+        nint: u16,
+        nfrac: u32,
+        freqsel: u8,
+        vcocap: u8,
+        band: Band,
+        tune: Tune,
+        xb_gpio: u8,
+    ) -> Self {
+        let pkt = NiosPktRetune::new(
+            module, timestamp, nint, nfrac, freqsel, vcocap, band, tune, xb_gpio,
+        );
+        Self { pkt }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn set(
+        &mut self,
+        module: u8,
+        timestamp: u64,
+        nint: u16,
+        nfrac: u32,
+        freqsel: u8,
+        vcocap: u8,
+        band: Band,
+        tune: Tune,
+        xb_gpio: u8,
+    ) -> &mut NiosPktRetuneRequest {
+        self.pkt.set(
+            module, timestamp, nint, nfrac, freqsel, vcocap, band, tune, xb_gpio,
+        );
+        self
+    }
+
+    pub fn set_magic(&mut self, magic: u8) -> &mut Self {
+        self.pkt.set_magic(magic);
+        self
+    }
+
+    pub fn set_timestamp(&mut self, timestamp: u64) -> &mut Self {
+        self.pkt.set_timestamp(timestamp);
+        self
+    }
+
+    pub fn set_nint(&mut self, nint: u16) -> &mut Self {
+        self.pkt.set_nint(nint);
+        self
+    }
+
+    pub fn set_nfrac(&mut self, nfrac: u32) -> &mut Self {
+        self.pkt.set_nfrac(nfrac);
+        self
+    }
+
+    pub fn set_rx_flag(&mut self, flag: bool) -> &mut Self {
+        self.pkt.set_rx_flag(flag);
+        self
+    }
+
+    pub fn set_tx_flag(&mut self, flag: bool) -> &mut Self {
+        self.pkt.set_tx_flag(flag);
+        self
+    }
+
+    pub fn set_freqsel(&mut self, freqsel: u8, module: u8) -> &mut Self {
+        self.pkt.set_freqsel(freqsel, module);
+        self
+    }
+
+    pub fn set_band(&mut self, band: Band) -> &mut Self {
+        self.pkt.set_band(band);
+        self
+    }
+
+    pub fn set_tune(&mut self, tune: Tune) -> &mut Self {
+        self.pkt.set_tune(tune);
+        self
+    }
+
+    pub fn set_vcocap(&mut self, vcocap: u8) -> &mut Self {
+        self.pkt.set_vcocap(vcocap);
+        self
+    }
+
+    pub fn set_xb_gpio(&mut self, xb_gpio: u8) -> &mut Self {
+        self.pkt.set_xb_gpio(xb_gpio);
+        self
+    }
+
+    pub fn magic(&self) -> u8 {
+        self.pkt.magic()
+    }
+
+    pub fn nint(&self) -> u16 {
+        self.pkt.nint()
+    }
+
+    pub fn nfrac(&self) -> u32 {
+        self.pkt.nfrac()
+    }
+
+    pub fn freqsel(&self) -> u8 {
+        self.pkt.freqsel()
+    }
+
+    pub fn vcocap(&self) -> u8 {
+        self.pkt.vcocap()
+    }
+
+    pub fn rx_flag(&self) -> u8 {
+        self.pkt.rx_flag()
+    }
+    pub fn tx_flag(&self) -> u8 {
+        self.pkt.tx_flag()
+    }
+
+    pub fn tune(&self) -> Tune {
+        self.pkt.tune()
+    }
+
+    pub fn band(&self) -> Band {
+        self.pkt.band()
+    }
+
+    pub fn xb_gpio(&self) -> u8 {
+        self.pkt.xb_gpio()
+    }
+
+    // pub fn module(&self) -> u8 {
+    //     self.pkt.module()
+    // }
+
+    pub fn timestamp(&self) -> u64 {
+        self.pkt.timestamp()
+    }
+}
+
+impl From<Vec<u8>> for NiosPktRetuneRequest {
+    fn from(value: Vec<u8>) -> Self {
+        Self {
+            pkt: NiosPktRetune::from(value),
+        }
+    }
+}
+
 impl From<NiosPktRetuneRequest> for Vec<u8> {
     fn from(value: NiosPktRetuneRequest) -> Self {
-        value.buf
+        value.pkt.buf
     }
 }
 
@@ -461,7 +619,7 @@ impl Debug for NiosPktRetuneRequest {
  */
 
 pub struct NiosPktRetuneResponse {
-    buf: Vec<u8>,
+    pkt: NiosPktRetune,
 }
 impl NiosPktRetuneResponse {
     const IDX_VCOCAP: usize = 9;
@@ -472,36 +630,38 @@ impl NiosPktRetuneResponse {
     const FLAG_DURATION_VCOCAP_VALID: u8 = 0x1;
     const FLAG_SUCCESS: u8 = 0x2;
 
+    // pub fn buf_ptr(&self) -> *const u8 {
+    //     self.pkt.buf_ptr()
+    // }
+
     pub fn magic(&self) -> u8 {
-        self.buf.magic()
+        self.pkt.magic()
     }
-
     pub fn duration(&self) -> u64 {
-        self.buf.duration_or_timestamp()
+        self.pkt.timestamp()
     }
-
     pub fn vcocap(&self) -> u8 {
-        self.buf[Self::IDX_VCOCAP] & Self::MASK_VCOCAP
+        self.pkt.buf[Self::IDX_VCOCAP] & Self::MASK_VCOCAP
     }
-
     pub fn duration_and_vcocap_valid(&self) -> bool {
-        self.buf[Self::IDX_FLAGS] & Self::FLAG_DURATION_VCOCAP_VALID != 0
+        self.pkt.buf[Self::IDX_FLAGS] & Self::FLAG_DURATION_VCOCAP_VALID != 0
     }
-
     pub fn is_success(&self) -> bool {
-        self.buf[Self::IDX_FLAGS] & Self::FLAG_SUCCESS != 0
+        self.pkt.buf[Self::IDX_FLAGS] & Self::FLAG_SUCCESS != 0
     }
 }
 
 impl From<Vec<u8>> for NiosPktRetuneResponse {
     fn from(value: Vec<u8>) -> Self {
-        Self { buf: value }
+        Self {
+            pkt: NiosPktRetune::from(value),
+        }
     }
 }
 
 impl From<NiosPktRetuneResponse> for Vec<u8> {
     fn from(value: NiosPktRetuneResponse) -> Self {
-        value.buf
+        value.pkt.buf
     }
 }
 

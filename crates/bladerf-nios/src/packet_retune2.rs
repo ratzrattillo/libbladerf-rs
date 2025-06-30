@@ -1,62 +1,14 @@
-/* This file defines the Host <-> FPGA (NIOS II) packet formats for
- * retune2 messages. This packet is formatted, as follows. All values are
- * little-endian.
- *
- *                              Request
- *                      ----------------------
- *
- * +================+=========================================================+
- * |  Byte offset   |                       Description                       |
- * +================+=========================================================+
- * |        0       | Magic Value                                             |
- * +----------------+---------------------------------------------------------+
- * |        1       | 64-bit timestamp denoting when to retune. (Note 1)      |
- * +----------------+---------------------------------------------------------+
- * |        9       | 16-bit Nios fast lock profile number to load (Note 2)   |
- * +----------------+---------------------------------------------------------+
- * |       11       | 8-bit RFFE fast lock profile slot to use                |
- * +----------------+---------------------------------------------------------+
- * |       12       | Bit  7:     RX bit (set if this is an RX profile        |
- * |                | Bits 6:     TX output port selection                    |
- * |                | Bits [5:0]: RX input port selection                     |
- * +----------------+---------------------------------------------------------+
- * |       13       | Bits [7:6]: External TX2 SPDT switch setting            |
- * |                | Bits [5:4]: External TX1 SPDT switch setting            |
- * |                | Bits [3:2]: External RX2 SPDT switch setting            |
- * |                | Bits [1:0]: External RX1 SPDT switch setting            |
- * +----------------+---------------------------------------------------------+
- * |       14-15    | 8-bit reserved words. Should be set to 0x00.            |
- * +----------------+---------------------------------------------------------+
- *
- * (Note 1) Special Timestamp Values:
- *
- * Tune "Now":          0x0000000000000000
- * Clear Retune Queue:  0xffffffffffffffff
- *
- * When the "Clear Retune Queue" value is used, all of the other tuning
- * parameters are ignored.
- *
- * (Note 2) Packed as follows:
- *
- * +================+=======================+
- * |   Byte offset  | (MSB)   Value    (LSB)|
- * +================+=======================+
- * |       0        |  NIOS_PROFILE[7:0]    |
- * +----------------+-----------------------+
- * |       1        |  NIOS_PROFILE[15:8]   |
- * +----------------+-----------------------+
- *
- */
 use crate::NiosPktMagic;
 use crate::packet_base::GenericNiosPkt;
 use bladerf_globals::BladeRfDirection;
 use bladerf_globals::bladerf_channel_is_tx;
+use std::fmt::{Debug, Formatter};
 
-pub struct NiosPktRetune2Request {
-    buf: Vec<u8>,
+struct NiosPktRetune2 {
+    pub buf: Vec<u8>,
 }
 
-impl NiosPktRetune2Request {
+impl NiosPktRetune2 {
     const IDX_NIOS_PROFILE: usize = 9;
     const IDX_RFFE_PROFILE: usize = 11;
     const IDX_RFFE_PORT: usize = 12;
@@ -81,7 +33,7 @@ impl NiosPktRetune2Request {
         port: u8,
         spdt: u8,
     ) -> Self {
-        let mut pkt: NiosPktRetune2Request = vec![0u8; 16].into();
+        let mut pkt: NiosPktRetune2 = vec![0u8; 16].into();
         pkt.set(module, timestamp, nios_profile, rffe_profile, port, spdt);
         pkt
     }
@@ -103,17 +55,6 @@ impl NiosPktRetune2Request {
             .set_port(port, module)
             .set_spdt(spdt)
     }
-
-    // use crate::ValidationError;
-    // pub fn validate(&self) -> Result<(), ValidationError> {
-    //     if self.magic() != NiosPktMagic::Retune2 as u8 {
-    //         return Err(ValidationError::InvalidMagic(self.magic()));
-    //     }
-    //     if self.buf.len() != 16 {
-    //         return Err(ValidationError::InvalidLength(self.buf.len()));
-    //     }
-    //     Ok(())
-    // }
 
     pub fn set_magic(&mut self, magic: u8) -> &mut Self {
         self.buf.set_magic(magic);
@@ -180,17 +121,194 @@ impl NiosPktRetune2Request {
     pub fn spdt(&self) -> u8 {
         self.buf[Self::IDX_SPDT]
     }
+
+    // use crate::ValidationError;
+    // pub fn validate(&self) -> Result<(), ValidationError> {
+    //     if self.magic() != NiosPktMagic::Retune2 as u8 {
+    //         return Err(ValidationError::InvalidMagic(self.magic()));
+    //     }
+    //     if self.buf.len() != 16 {
+    //         return Err(ValidationError::InvalidLength(self.buf.len()));
+    //     }
+    //     Ok(())
+    // }
 }
 
-impl From<Vec<u8>> for NiosPktRetune2Request {
+impl From<Vec<u8>> for NiosPktRetune2 {
     fn from(value: Vec<u8>) -> Self {
         Self { buf: value }
     }
 }
 
+impl From<NiosPktRetune2> for Vec<u8> {
+    fn from(value: NiosPktRetune2) -> Self {
+        value.buf
+    }
+}
+
+/* This file defines the Host <-> FPGA (NIOS II) packet formats for
+ * retune2 messages. This packet is formatted, as follows. All values are
+ * little-endian.
+ *
+ *                              Request
+ *                      ----------------------
+ *
+ * +================+=========================================================+
+ * |  Byte offset   |                       Description                       |
+ * +================+=========================================================+
+ * |        0       | Magic Value                                             |
+ * +----------------+---------------------------------------------------------+
+ * |        1       | 64-bit timestamp denoting when to retune. (Note 1)      |
+ * +----------------+---------------------------------------------------------+
+ * |        9       | 16-bit Nios fast lock profile number to load (Note 2)   |
+ * +----------------+---------------------------------------------------------+
+ * |       11       | 8-bit RFFE fast lock profile slot to use                |
+ * +----------------+---------------------------------------------------------+
+ * |       12       | Bit  7:     RX bit (set if this is an RX profile        |
+ * |                | Bits 6:     TX output port selection                    |
+ * |                | Bits [5:0]: RX input port selection                     |
+ * +----------------+---------------------------------------------------------+
+ * |       13       | Bits [7:6]: External TX2 SPDT switch setting            |
+ * |                | Bits [5:4]: External TX1 SPDT switch setting            |
+ * |                | Bits [3:2]: External RX2 SPDT switch setting            |
+ * |                | Bits [1:0]: External RX1 SPDT switch setting            |
+ * +----------------+---------------------------------------------------------+
+ * |       14-15    | 8-bit reserved words. Should be set to 0x00.            |
+ * +----------------+---------------------------------------------------------+
+ *
+ * (Note 1) Special Timestamp Values:
+ *
+ * Tune "Now":          0x0000000000000000
+ * Clear Retune Queue:  0xffffffffffffffff
+ *
+ * When the "Clear Retune Queue" value is used, all of the other tuning
+ * parameters are ignored.
+ *
+ * (Note 2) Packed as follows:
+ *
+ * +================+=======================+
+ * |   Byte offset  | (MSB)   Value    (LSB)|
+ * +================+=======================+
+ * |       0        |  NIOS_PROFILE[7:0]    |
+ * +----------------+-----------------------+
+ * |       1        |  NIOS_PROFILE[15:8]   |
+ * +----------------+-----------------------+
+ *
+ */
+
+pub struct NiosPktRetune2Request {
+    pkt: NiosPktRetune2,
+}
+
+impl NiosPktRetune2Request {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        module: u8,
+        timestamp: u64,
+        nios_profile: u16,
+        rffe_profile: u8,
+        port: u8,
+        spdt: u8,
+    ) -> Self {
+        Self {
+            pkt: NiosPktRetune2::new(module, timestamp, nios_profile, rffe_profile, port, spdt),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn set(
+        &mut self,
+        module: u8,
+        timestamp: u64,
+        nios_profile: u16,
+        rffe_profile: u8,
+        port: u8,
+        spdt: u8,
+    ) -> &mut Self {
+        self.pkt
+            .set(module, timestamp, nios_profile, rffe_profile, port, spdt);
+        self
+    }
+
+    pub fn set_magic(&mut self, magic: u8) -> &mut Self {
+        self.pkt.set_magic(magic);
+        self
+    }
+
+    pub fn set_timestamp(&mut self, timestamp: u64) -> &mut Self {
+        self.pkt.set_timestamp(timestamp);
+        self
+    }
+
+    pub fn set_nios_profile(&mut self, nios_profile: u16) -> &mut Self {
+        self.pkt.set_nios_profile(nios_profile);
+        self
+    }
+
+    pub fn set_rffe_profile(&mut self, rffe_profile: u8) -> &mut Self {
+        self.pkt.set_rffe_profile(rffe_profile);
+        self
+    }
+
+    pub fn set_port(&mut self, port: u8, module: u8) -> &mut Self {
+        self.pkt.set_port(port, module);
+        self
+    }
+
+    pub fn set_spdt(&mut self, spdt: u8) -> &mut Self {
+        self.pkt.set_spdt(spdt);
+        self
+    }
+
+    pub fn magic(&self) -> u8 {
+        self.pkt.magic()
+    }
+
+    pub fn timestamp(&self) -> u64 {
+        self.pkt.timestamp()
+    }
+
+    pub fn nios_profile(&self) -> u16 {
+        self.pkt.nios_profile()
+    }
+
+    pub fn rffe_profile(&self) -> u8 {
+        self.pkt.rffe_profile()
+    }
+
+    pub fn port(&self) -> u8 {
+        self.pkt.port()
+    }
+
+    pub fn spdt(&self) -> u8 {
+        self.pkt.spdt()
+    }
+}
+
+impl From<Vec<u8>> for NiosPktRetune2Request {
+    fn from(value: Vec<u8>) -> Self {
+        Self {
+            pkt: NiosPktRetune2::from(value),
+        }
+    }
+}
+
 impl From<NiosPktRetune2Request> for Vec<u8> {
     fn from(value: NiosPktRetune2Request) -> Self {
-        value.buf
+        value.pkt.buf
+    }
+}
+
+impl Debug for NiosPktRetune2Request {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NiosPktRetune2Request")
+            .field("magic", &format_args!("{:#x}", self.magic()))
+            .field("timestamp", &format_args!("{:#x}", self.timestamp()))
+            .field("nios_profile", &format_args!("{:#x}", self.nios_profile()))
+            .field("rffe_profile", &format_args!("{:#x}", self.rffe_profile()))
+            .field("port", &format_args!("{:#x}", self.port()))
+            .field("spdt", &format_args!("{:#x}", self.spdt()))
+            .finish()
     }
 }
 
@@ -238,40 +356,59 @@ impl From<NiosPktRetune2Request> for Vec<u8> {
  */
 
 pub struct NiosPktRetune2Response {
-    buf: Vec<u8>,
+    pkt: NiosPktRetune2,
 }
 impl NiosPktRetune2Response {
     const IDX_FLAGS: usize = 9;
-    // const IDX_RESERVED: usize = 10;
 
     const FLAG_TSVTUNE_VALID: u8 = 0x1;
     const FLAG_SUCCESS: u8 = 0x2;
 
     pub fn magic(&self) -> u8 {
-        self.buf.magic()
+        self.pkt.magic()
     }
 
     pub fn duration(&self) -> u64 {
-        self.buf.duration_or_timestamp()
+        self.pkt.timestamp()
+    }
+
+    pub fn flags(&self) -> u8 {
+        self.pkt.buf[Self::IDX_FLAGS]
     }
 
     pub fn timestamp_valid(&self) -> bool {
-        self.buf[Self::IDX_FLAGS] & Self::FLAG_TSVTUNE_VALID != 0
+        self.flags() & Self::FLAG_TSVTUNE_VALID != 0
     }
 
     pub fn is_success(&self) -> bool {
-        self.buf[Self::IDX_FLAGS] & Self::FLAG_SUCCESS != 0
+        self.flags() & Self::FLAG_SUCCESS != 0
     }
 }
 
 impl From<Vec<u8>> for NiosPktRetune2Response {
     fn from(value: Vec<u8>) -> Self {
-        Self { buf: value }
+        Self {
+            pkt: NiosPktRetune2::from(value),
+        }
     }
 }
 
 impl From<NiosPktRetune2Response> for Vec<u8> {
     fn from(value: NiosPktRetune2Response) -> Self {
-        value.buf
+        value.pkt.buf
+    }
+}
+
+impl Debug for NiosPktRetune2Response {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NiosPktRetune2Response")
+            .field("magic", &format_args!("{:#x}", self.magic()))
+            .field("duration", &format_args!("{:#x}", self.duration()))
+            .field(
+                "timestamp_valid",
+                &format_args!("{}", self.timestamp_valid()),
+            )
+            .field("is_success", &format_args!("{}", self.is_success()))
+            .finish()
     }
 }

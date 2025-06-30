@@ -22,7 +22,6 @@ use nusb::transfer::{ControlIn, ControlOut, ControlType, Recipient};
 use nusb::{Device, DeviceInfo, Speed};
 use std::num::NonZero;
 use std::time::Duration;
-use bladerf_globals::bladerf1::BladerfXb::BladerfXbNone;
 
 impl BladeRf1 {
     async fn list_bladerf1() -> Result<impl Iterator<Item = DeviceInfo>> {
@@ -60,7 +59,9 @@ impl BladeRf1 {
             lms,
             si5338,
             dac,
-            xb: BladerfXbNone,
+            xb100: None,
+            xb200: None,
+            xb300: None,
         }))
     }
 
@@ -151,8 +152,13 @@ impl BladeRf1 {
     }
 
     /// Read from the configuration GPIO register.
-    pub(crate) async fn config_gpio_read(&self) -> Result<u32> {        
-        let request = NiosReq8x32::new(NIOS_PKT_8X32_TARGET_CONTROL, NiosReq8x32::FLAG_READ, 0x0, 0x0);
+    pub(crate) async fn config_gpio_read(&self) -> Result<u32> {
+        let request = NiosReq8x32::new(
+            NIOS_PKT_8X32_TARGET_CONTROL,
+            NiosReq8x32::FLAG_READ,
+            0x0,
+            0x0,
+        );
         let response_vec = self
             .interface
             .nios_send(ENDPOINT_OUT, ENDPOINT_IN, request.into())
@@ -173,7 +179,12 @@ impl BladeRf1 {
             }
         }
 
-        let request = NiosReq8x32::new(NIOS_PKT_8X32_TARGET_CONTROL, NiosReq8x32::FLAG_WRITE, 0x0, data);
+        let request = NiosReq8x32::new(
+            NIOS_PKT_8X32_TARGET_CONTROL,
+            NiosReq8x32::FLAG_WRITE,
+            0x0,
+            data,
+        );
         let response_vec = self
             .interface
             .nios_send(ENDPOINT_OUT, ENDPOINT_IN, request.into())

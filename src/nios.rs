@@ -2,11 +2,14 @@
 
 use anyhow::{Result, anyhow};
 use bladerf_globals::{ENDPOINT_IN, ENDPOINT_OUT};
+use bladerf_nios::packet_generic::{
+    NiosReq8x8, NiosReq8x16, NiosReq8x32, NiosReq8x64, NiosReq16x64, NiosReq32x32, NiosResp8x8,
+    NiosResp8x16, NiosResp8x32, NiosResp8x64, NiosResp16x64, NiosResp32x32,
+};
 use bladerf_nios::packet_retune::{Band, NiosPktRetuneRequest, NiosPktRetuneResponse, Tune};
+use bladerf_nios::*;
 use nusb::Interface;
 use nusb::transfer::{Buffer, Bulk, In, Out};
-use bladerf_nios::packet_generic::{NiosReq32x32, NiosResp32x32};
-use bladerf_nios::*;
 
 pub trait Nios {
     fn nios_send(
@@ -27,8 +30,60 @@ pub trait Nios {
         tune: Tune,
         xb_gpio: u8,
     ) -> impl Future<Output = Result<()>> + Send;
-    fn nios_32x32_masked_write(&self, id: u8, mask: u32, val: u32) -> impl Future<Output = Result<()>> + Send;
-    fn nios_expansion_gpio_write(&self, mask: u32, val: u32) -> impl Future<Output = Result<()>> + Send;
+    fn nios_8x8_read(&self, id: u8, addr: u8) -> impl Future<Output = Result<u8>> + Send;
+    fn nios_8x8_write(&self, id: u8, addr: u8, data: u8)
+    -> impl Future<Output = Result<()>> + Send;
+    fn nios_8x16_read(&self, id: u8, addr: u8) -> impl Future<Output = Result<u16>> + Send;
+    fn nios_8x16_write(
+        &self,
+        id: u8,
+        addr: u8,
+        data: u16,
+    ) -> impl Future<Output = Result<()>> + Send;
+    fn nios_8x32_read(&self, id: u8, addr: u8) -> impl Future<Output = Result<u32>> + Send;
+    fn nios_8x32_write(
+        &self,
+        id: u8,
+        addr: u8,
+        data: u32,
+    ) -> impl Future<Output = Result<()>> + Send;
+    fn nios_8x64_read(&self, id: u8, addr: u8) -> impl Future<Output = Result<u64>> + Send;
+    fn nios_8x64_write(
+        &self,
+        id: u8,
+        addr: u8,
+        data: u64,
+    ) -> impl Future<Output = Result<()>> + Send;
+    fn nios_16x64_read(&self, id: u8, addr: u16) -> impl Future<Output = Result<u64>> + Send;
+    fn nios_16x64_write(
+        &self,
+        id: u8,
+        addr: u16,
+        data: u64,
+    ) -> impl Future<Output = Result<()>> + Send;
+    fn nios_32x32_masked_read(&self, id: u8, mask: u32)
+    -> impl Future<Output = Result<u32>> + Send;
+    fn nios_32x32_masked_write(
+        &self,
+        id: u8,
+        mask: u32,
+        val: u32,
+    ) -> impl Future<Output = Result<()>> + Send;
+    fn nios_config_read(&self) -> impl Future<Output = Result<u32>> + Send;
+    fn nios_config_write(&self, value: u32) -> impl Future<Output = Result<()>> + Send;
+    fn nios_xb200_synth_write(&self, value: u32) -> impl Future<Output = Result<()>> + Send;
+    fn nios_expansion_gpio_read(&self) -> impl Future<Output = Result<u32>> + Send;
+    fn nios_expansion_gpio_write(
+        &self,
+        mask: u32,
+        val: u32,
+    ) -> impl Future<Output = Result<()>> + Send;
+    fn nios_expansion_gpio_dir_read(&self) -> impl Future<Output = Result<u32>> + Send;
+    fn nios_expansion_gpio_dir_write(
+        &self,
+        mask: u32,
+        val: u32,
+    ) -> impl Future<Output = Result<()>> + Send;
 }
 
 impl Nios for Interface {
@@ -131,16 +186,164 @@ impl Nios for Interface {
         Ok(())
     }
 
+    async fn nios_8x8_read(&self, id: u8, addr: u8) -> Result<u8> {
+        type PktType = NiosReq8x16;
+        /* The address is used as a mask of bits to read and return */
+        let pkt = PktType::new(id, PktType::FLAG_READ, addr, 0);
+        let response_vec = self
+            .nios_send(ENDPOINT_OUT, ENDPOINT_IN, pkt.into())
+            .await?;
+        Ok(NiosResp8x8::from(response_vec).data())
+    }
+
+    async fn nios_8x8_write(&self, id: u8, addr: u8, data: u8) -> Result<()> {
+        type PktType = NiosReq8x8;
+        /* The address is used as a mask of bits to read and return */
+        let pkt = PktType::new(id, PktType::FLAG_WRITE, addr, data);
+        let resp = self
+            .nios_send(ENDPOINT_OUT, ENDPOINT_IN, pkt.into())
+            .await?;
+        let resp_pkt: NiosResp8x8 = resp.into();
+        resp_pkt.is_success()
+    }
+
+    async fn nios_8x16_read(&self, id: u8, addr: u8) -> Result<u16> {
+        type PktType = NiosReq8x16;
+        /* The address is used as a mask of bits to read and return */
+        let pkt = PktType::new(id, PktType::FLAG_READ, addr, 0);
+        let response_vec = self
+            .nios_send(ENDPOINT_OUT, ENDPOINT_IN, pkt.into())
+            .await?;
+        Ok(NiosResp8x16::from(response_vec).data())
+    }
+
+    async fn nios_8x16_write(&self, id: u8, addr: u8, data: u16) -> Result<()> {
+        type PktType = NiosReq8x16;
+        /* The address is used as a mask of bits to read and return */
+        let pkt = PktType::new(id, PktType::FLAG_WRITE, addr, data);
+        let resp = self
+            .nios_send(ENDPOINT_OUT, ENDPOINT_IN, pkt.into())
+            .await?;
+        let resp_pkt: NiosResp8x16 = resp.into();
+        resp_pkt.is_success()
+    }
+
+    async fn nios_8x32_read(&self, id: u8, addr: u8) -> Result<u32> {
+        type PktType = NiosReq8x32;
+        /* The address is used as a mask of bits to read and return */
+        let pkt = PktType::new(id, PktType::FLAG_READ, addr, 0);
+        let response_vec = self
+            .nios_send(ENDPOINT_OUT, ENDPOINT_IN, pkt.into())
+            .await?;
+        Ok(NiosResp8x32::from(response_vec).data())
+    }
+
+    async fn nios_8x32_write(&self, id: u8, addr: u8, data: u32) -> Result<()> {
+        type PktType = NiosReq8x32;
+        /* The address is used as a mask of bits to read and return */
+        let pkt = PktType::new(id, PktType::FLAG_WRITE, addr, data);
+        let resp = self
+            .nios_send(ENDPOINT_OUT, ENDPOINT_IN, pkt.into())
+            .await?;
+        let resp_pkt: NiosResp8x32 = resp.into();
+        resp_pkt.is_success()
+    }
+
+    async fn nios_8x64_read(&self, id: u8, addr: u8) -> Result<u64> {
+        type PktType = NiosReq8x64;
+        /* The address is used as a mask of bits to read and return */
+        let pkt = PktType::new(id, PktType::FLAG_READ, addr, 0);
+        let response_vec = self
+            .nios_send(ENDPOINT_OUT, ENDPOINT_IN, pkt.into())
+            .await?;
+        Ok(NiosResp8x64::from(response_vec).data())
+    }
+
+    async fn nios_8x64_write(&self, id: u8, addr: u8, data: u64) -> Result<()> {
+        type PktType = NiosReq8x64;
+        /* The address is used as a mask of bits to read and return */
+        let pkt = PktType::new(id, PktType::FLAG_WRITE, addr, data);
+        let resp = self
+            .nios_send(ENDPOINT_OUT, ENDPOINT_IN, pkt.into())
+            .await?;
+        let resp_pkt: NiosResp8x64 = resp.into();
+        resp_pkt.is_success()
+    }
+
+    async fn nios_16x64_read(&self, id: u8, addr: u16) -> Result<u64> {
+        type PktType = NiosReq16x64;
+        /* The address is used as a mask of bits to read and return */
+        let pkt = PktType::new(id, PktType::FLAG_READ, addr, 0);
+        let response_vec = self
+            .nios_send(ENDPOINT_OUT, ENDPOINT_IN, pkt.into())
+            .await?;
+        Ok(NiosResp16x64::from(response_vec).data())
+    }
+
+    async fn nios_16x64_write(&self, id: u8, addr: u16, data: u64) -> Result<()> {
+        type PktType = NiosReq16x64;
+        /* The address is used as a mask of bits to read and return */
+        let pkt = PktType::new(id, PktType::FLAG_WRITE, addr, data);
+        let resp = self
+            .nios_send(ENDPOINT_OUT, ENDPOINT_IN, pkt.into())
+            .await?;
+        let resp_pkt: NiosResp16x64 = resp.into();
+        resp_pkt.is_success()
+    }
+
+    async fn nios_32x32_masked_read(&self, id: u8, mask: u32) -> Result<u32> {
+        type PktType = NiosReq32x32;
+        /* The address is used as a mask of bits to read and return */
+        let pkt = PktType::new(id, PktType::FLAG_READ, mask, 0);
+        let response_vec = self
+            .nios_send(ENDPOINT_OUT, ENDPOINT_IN, pkt.into())
+            .await?;
+        Ok(NiosResp32x32::from(response_vec).data())
+    }
+
     async fn nios_32x32_masked_write(&self, id: u8, mask: u32, val: u32) -> Result<()> {
         type PktType = NiosReq32x32;
         /* The address is used as a mask of bits to read and return */
         let pkt = PktType::new(id, PktType::FLAG_WRITE, mask, val);
-        let resp = self.nios_send(ENDPOINT_OUT, ENDPOINT_IN, pkt.into()).await?;
+        let resp = self
+            .nios_send(ENDPOINT_OUT, ENDPOINT_IN, pkt.into())
+            .await?;
         let resp_pkt: NiosResp32x32 = resp.into();
         resp_pkt.is_success()
     }
 
+    async fn nios_config_read(&self) -> Result<u32> {
+        self.nios_32x32_masked_read(NIOS_PKT_8X32_TARGET_CONTROL, 0)
+            .await
+    }
+
+    async fn nios_config_write(&self, value: u32) -> Result<()> {
+        self.nios_8x32_write(NIOS_PKT_8X32_TARGET_CONTROL, 0, value)
+            .await
+    }
+
+    async fn nios_xb200_synth_write(&self, value: u32) -> Result<()> {
+        self.nios_8x32_write(NIOS_PKT_8X32_TARGET_ADF4351, 0, value)
+            .await
+    }
+
+    async fn nios_expansion_gpio_read(&self) -> Result<u32> {
+        self.nios_32x32_masked_read(NIOS_PKT_32X32_TARGET_EXP, 0xffffffff)
+            .await
+    }
+
     async fn nios_expansion_gpio_write(&self, mask: u32, val: u32) -> Result<()> {
-        self.nios_32x32_masked_write(NIOS_PKT_32X32_TARGET_EXP, mask, val).await
+        self.nios_32x32_masked_write(NIOS_PKT_32X32_TARGET_EXP, mask, val)
+            .await
+    }
+
+    async fn nios_expansion_gpio_dir_read(&self) -> Result<u32> {
+        self.nios_32x32_masked_read(NIOS_PKT_32X32_TARGET_EXP_DIR, 0xffffffff)
+            .await
+    }
+
+    async fn nios_expansion_gpio_dir_write(&self, mask: u32, val: u32) -> Result<()> {
+        self.nios_32x32_masked_write(NIOS_PKT_32X32_TARGET_EXP_DIR, mask, val)
+            .await
     }
 }

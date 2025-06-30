@@ -137,144 +137,143 @@ pub const BLADERF_XB_GPIO_30: u8 = bladerf_xb_gpio!(30);
 pub const BLADERF_XB_GPIO_31: u8 = bladerf_xb_gpio!(31);
 
 /** Pin bitmask for Expansion GPIO 32 (U74 pin 56) */
-pub const BLADERF_XB_GPIO_32 : u8 = bladerf_xb_gpio!(32);
-
+pub const BLADERF_XB_GPIO_32: u8 = bladerf_xb_gpio!(32);
 
 /** Bitmask for XB-200 header J7, pin 1 */
-pub const BLADERF_XB200_PIN_J7_1  : u8 = BLADERF_XB_GPIO_10;
+pub const BLADERF_XB200_PIN_J7_1: u8 = BLADERF_XB_GPIO_10;
 
 /** Bitmask for XB-200 header J7, pin 2 */
-pub const BLADERF_XB200_PIN_J7_2 : u8 =  BLADERF_XB_GPIO_11;
+pub const BLADERF_XB200_PIN_J7_2: u8 = BLADERF_XB_GPIO_11;
 
 /** Bitmask for XB-200 header J7, pin 5 */
-pub const BLADERF_XB200_PIN_J7_5  : u8 = BLADERF_XB_GPIO_08;
+pub const BLADERF_XB200_PIN_J7_5: u8 = BLADERF_XB_GPIO_08;
 
 /** Bitmask for XB-200 header J7, pin 6 */
-pub const BLADERF_XB200_PIN_J7_6 : u8 =  BLADERF_XB_GPIO_09;
+pub const BLADERF_XB200_PIN_J7_6: u8 = BLADERF_XB_GPIO_09;
 
 /** Bitmask for XB-200 header J13, pin 1 */
-pub const BLADERF_XB200_PIN_J13_1 : u8 =  BLADERF_XB_GPIO_17;
+pub const BLADERF_XB200_PIN_J13_1: u8 = BLADERF_XB_GPIO_17;
 
 /** Bitmask for XB-200 header J13, pin 2 */
-pub const BLADERF_XB200_PIN_J13_2  : u8 = BLADERF_XB_GPIO_18;
+pub const BLADERF_XB200_PIN_J13_2: u8 = BLADERF_XB_GPIO_18;
 
 /* XB-200 J13 Pin 6 is actually reserved for SPI */
 
 /** Bitmask for XB-200 header J16, pin 1 */
-pub const BLADERF_XB200_PIN_J16_1  : u8 = BLADERF_XB_GPIO_31;
+pub const BLADERF_XB200_PIN_J16_1: u8 = BLADERF_XB_GPIO_31;
 
 /** Bitmask for XB-200 header J16, pin 2 */
-pub const BLADERF_XB200_PIN_J16_2 : u8 =  BLADERF_XB_GPIO_32;
+pub const BLADERF_XB200_PIN_J16_2: u8 = BLADERF_XB_GPIO_32;
 
 /** Bitmask for XB-200 header J16, pin 3 */
-pub const BLADERF_XB200_PIN_J16_3 : u8 =  BLADERF_XB_GPIO_19;
+pub const BLADERF_XB200_PIN_J16_3: u8 = BLADERF_XB_GPIO_19;
 
 /** Bitmask for XB-200 header J16, pin 4 */
-pub const BLADERF_XB200_PIN_J16_4 : u8 =  BLADERF_XB_GPIO_20;
+pub const BLADERF_XB200_PIN_J16_4: u8 = BLADERF_XB_GPIO_20;
 
 /** Bitmask for XB-200 header J16, pin 5 */
-pub const BLADERF_XB200_PIN_J16_5  : u8 = BLADERF_XB_GPIO_21;
+pub const BLADERF_XB200_PIN_J16_5: u8 = BLADERF_XB_GPIO_21;
 
 /** Bitmask for XB-200 header J16, pin 6 */
-pub const BLADERF_XB200_PIN_J16_6  : u8 = BLADERF_XB_GPIO_24;
+pub const BLADERF_XB200_PIN_J16_6: u8 = BLADERF_XB_GPIO_24;
 
 /** Bitmask for XB-100 header J2, pin 3 */
-pub const BLADERF_XB100_PIN_J2_3 : u8 =  BLADERF_XB_GPIO_07;
+pub const BLADERF_XB100_PIN_J2_3: u8 = BLADERF_XB_GPIO_07;
 
 /** Bitmask for XB-100 header J2, pin 4 */
-pub const BLADERF_XB100_PIN_J2_4  : u8 = BLADERF_XB_GPIO_08;
+pub const BLADERF_XB100_PIN_J2_4: u8 = BLADERF_XB_GPIO_08;
 
 /** Bitmask for XB-100 header J3, pin 3 */
-pub const BLADERF_XB100_PIN_J3_3  : u8 = BLADERF_XB_GPIO_09;
+pub const BLADERF_XB100_PIN_J3_3: u8 = BLADERF_XB_GPIO_09;
 
 /** Bitmask for XB-100 header J3, pin 4 */
-pub const BLADERF_XB100_PIN_J3_4 : u8 =  BLADERF_XB_GPIO_10;
+pub const BLADERF_XB100_PIN_J3_4: u8 = BLADERF_XB_GPIO_10;
 
 /** Bitmask for XB-100 header J4, pin 3 */
-pub const BLADERF_XB100_PIN_J4_3 : u8 =  BLADERF_XB_GPIO_11;
+pub const BLADERF_XB100_PIN_J4_3: u8 = BLADERF_XB_GPIO_11;
 
 /** Bitmask for XB-100 header J4, pin 4 */
-pub const BLADERF_XB100_PIN_J4_4 : u8 =  BLADERF_XB_GPIO_12;
+pub const BLADERF_XB100_PIN_J4_4: u8 = BLADERF_XB_GPIO_12;
 
 /** Bitmask for XB-100 header J5, pin 3 */
-pub const BLADERF_XB100_PIN_J5_3  : u8 = BLADERF_XB_GPIO_13;
+pub const BLADERF_XB100_PIN_J5_3: u8 = BLADERF_XB_GPIO_13;
 
 /** Bitmask for XB-100 header J5, pin 4 */
-pub const BLADERF_XB100_PIN_J5_4  : u8 = BLADERF_XB_GPIO_14;
+pub const BLADERF_XB100_PIN_J5_4: u8 = BLADERF_XB_GPIO_14;
 
 /** Bitmask for XB-100 header J11, pin 2 */
-pub const BLADERF_XB100_PIN_J11_2  : u8 = BLADERF_XB_GPIO_05;
+pub const BLADERF_XB100_PIN_J11_2: u8 = BLADERF_XB_GPIO_05;
 
 /** Bitmask for XB-100 header J11, pin 3 */
-pub const BLADERF_XB100_PIN_J11_3  : u8 = BLADERF_XB_GPIO_04;
+pub const BLADERF_XB100_PIN_J11_3: u8 = BLADERF_XB_GPIO_04;
 
 /** Bitmask for XB-100 header J11, pin 4 */
-pub const BLADERF_XB100_PIN_J11_4  : u8 = BLADERF_XB_GPIO_03;
+pub const BLADERF_XB100_PIN_J11_4: u8 = BLADERF_XB_GPIO_03;
 
 /** Bitmask for XB-100 header J11, pin 5 */
-pub const BLADERF_XB100_PIN_J11_5  : u8 = BLADERF_XB_GPIO_06;
+pub const BLADERF_XB100_PIN_J11_5: u8 = BLADERF_XB_GPIO_06;
 
 /** Bitmask for XB-100 header J12, pin 2 */
-pub const BLADERF_XB100_PIN_J12_2 : u8 =  BLADERF_XB_GPIO_01;
+pub const BLADERF_XB100_PIN_J12_2: u8 = BLADERF_XB_GPIO_01;
 
 /*  XB-100 header J12, pins 3 and 4 are reserved for SPI */
 
 /** Bitmask for XB-100 header J12, pin 5 */
-pub const BLADERF_XB100_PIN_J12_5  : u8 = BLADERF_XB_GPIO_02;
+pub const BLADERF_XB100_PIN_J12_5: u8 = BLADERF_XB_GPIO_02;
 
 /** Bitmask for XB-100 LED_D1 (blue) */
-pub const BLADERF_XB100_LED_D1 : u8 =  BLADERF_XB_GPIO_24;
+pub const BLADERF_XB100_LED_D1: u8 = BLADERF_XB_GPIO_24;
 
 /** Bitmask for XB-100 LED_D2 (blue) */
-pub const BLADERF_XB100_LED_D2 : u8 =  BLADERF_XB_GPIO_32;
+pub const BLADERF_XB100_LED_D2: u8 = BLADERF_XB_GPIO_32;
 
 /** Bitmask for XB-100 LED_D3 (blue) */
-pub const BLADERF_XB100_LED_D3 : u8 =  BLADERF_XB_GPIO_30;
+pub const BLADERF_XB100_LED_D3: u8 = BLADERF_XB_GPIO_30;
 
 /** Bitmask for XB-100 LED_D4 (red) */
-pub const BLADERF_XB100_LED_D4  : u8 = BLADERF_XB_GPIO_28;
+pub const BLADERF_XB100_LED_D4: u8 = BLADERF_XB_GPIO_28;
 
 /** Bitmask for XB-100 LED_D5 (red) */
-pub const BLADERF_XB100_LED_D5  : u8 = BLADERF_XB_GPIO_23;
+pub const BLADERF_XB100_LED_D5: u8 = BLADERF_XB_GPIO_23;
 
 /** Bitmask for XB-100 LED_D6 (red) */
-pub const BLADERF_XB100_LED_D6  : u8 = BLADERF_XB_GPIO_25;
+pub const BLADERF_XB100_LED_D6: u8 = BLADERF_XB_GPIO_25;
 
 /** Bitmask for XB-100 LED_D7 (green) */
-pub const BLADERF_XB100_LED_D7 : u8 =  BLADERF_XB_GPIO_31;
+pub const BLADERF_XB100_LED_D7: u8 = BLADERF_XB_GPIO_31;
 
 /** Bitmask for XB-100 LED_D8 (green) */
-pub const BLADERF_XB100_LED_D8 : u8 =  BLADERF_XB_GPIO_29;
+pub const BLADERF_XB100_LED_D8: u8 = BLADERF_XB_GPIO_29;
 
 /** Bitmask for XB-100 tricolor LED, red cathode */
-pub const BLADERF_XB100_TLED_RED  : u8 = BLADERF_XB_GPIO_22;
+pub const BLADERF_XB100_TLED_RED: u8 = BLADERF_XB_GPIO_22;
 
 /** Bitmask for XB-100 tricolor LED, green cathode */
-pub const BLADERF_XB100_TLED_GREEN  : u8 = BLADERF_XB_GPIO_21;
+pub const BLADERF_XB100_TLED_GREEN: u8 = BLADERF_XB_GPIO_21;
 
 /** Bitmask for XB-100 tricolor LED, blue cathode */
-pub const BLADERF_XB100_TLED_BLUE  : u8 = BLADERF_XB_GPIO_20;
+pub const BLADERF_XB100_TLED_BLUE: u8 = BLADERF_XB_GPIO_20;
 
 /** Bitmask for XB-100 DIP switch 1 */
-pub const BLADERF_XB100_DIP_SW1  : u8 = BLADERF_XB_GPIO_27;
+pub const BLADERF_XB100_DIP_SW1: u8 = BLADERF_XB_GPIO_27;
 
 /** Bitmask for XB-100 DIP switch 2 */
-pub const BLADERF_XB100_DIP_SW2 : u8 =  BLADERF_XB_GPIO_26;
+pub const BLADERF_XB100_DIP_SW2: u8 = BLADERF_XB_GPIO_26;
 
 /** Bitmask for XB-100 DIP switch 3 */
-pub const BLADERF_XB100_DIP_SW3  : u8 = BLADERF_XB_GPIO_16;
+pub const BLADERF_XB100_DIP_SW3: u8 = BLADERF_XB_GPIO_16;
 
 /** Bitmask for XB-100 DIP switch 4 */
-pub const BLADERF_XB100_DIP_SW4  : u8 = BLADERF_XB_GPIO_15;
+pub const BLADERF_XB100_DIP_SW4: u8 = BLADERF_XB_GPIO_15;
 
 /** Bitmask for XB-100 button J6 */
-pub const BLADERF_XB100_BTN_J6 : u8 =  BLADERF_XB_GPIO_19;
+pub const BLADERF_XB100_BTN_J6: u8 = BLADERF_XB_GPIO_19;
 
 /** Bitmask for XB-100 button J7 */
-pub const BLADERF_XB100_BTN_J7 : u8 =  BLADERF_XB_GPIO_18;
+pub const BLADERF_XB100_BTN_J7: u8 = BLADERF_XB_GPIO_18;
 
 /** Bitmask for XB-100 button J8 */
-pub const BLADERF_XB100_BTN_J8  : u8 = BLADERF_XB_GPIO_17;
+pub const BLADERF_XB100_BTN_J8: u8 = BLADERF_XB_GPIO_17;
 
 // struct bladerf1_board_data {
 //     /* Board state */
@@ -323,7 +322,15 @@ impl BladeRf1 {
     // Maybe directly access self.xb instead of cloning it...
     pub fn expansion_get_attached(&self) -> BladerfXb {
         // CHECK_BOARD_STATE(STATE_FPGA_LOADED);
-        self.xb.clone()
+        if self.xb100.is_some() {
+            BladerfXb100
+        } else if self.xb200.is_some() {
+            BladerfXb200
+        } else if self.xb300.is_some() {
+            BladerfXb300
+        } else {
+            BladerfXbNone
+        }
     }
 
     pub async fn expansion_attach(&mut self, xb: BladerfXb) -> Result<()> {
@@ -384,7 +391,7 @@ impl BladeRf1 {
 
         /* Cache what we have attached in our device handle to alleviate the
          * need to go read the device state */
-        self.xb = xb;
+        // self.xb = xb;
 
         Ok(())
     }

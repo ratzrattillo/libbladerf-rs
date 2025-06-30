@@ -61,7 +61,7 @@ impl SI5338 {
 
     pub async fn read(&self, addr: u8) -> anyhow::Result<u8> {
         type ReqType = NiosReq8x8;
-        
+
         let request = ReqType::new(NIOS_PKT_8X8_TARGET_SI5338, ReqType::FLAG_READ, addr, 0x0);
 
         let response = self
@@ -73,7 +73,7 @@ impl SI5338 {
 
     pub async fn write(&self, addr: u8, data: u8) -> anyhow::Result<u8> {
         type ReqType = NiosReq8x8;
-        
+
         let request = ReqType::new(NIOS_PKT_8X8_TARGET_SI5338, ReqType::FLAG_WRITE, addr, data);
 
         let response = self
