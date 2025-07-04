@@ -75,35 +75,7 @@ impl NumToByte for u64 {
     }
 }
 
-// pub type NiossPkt = NiosRequest<u8, u8>;
-// impl NiossPkt {
-//     pub fn xyz() {
-//
-//     }
-//
-//     pub fn testing(&self) {
-//         self.
-//     }
-// }
-
-// pub trait NiossPkt {
-//
-// }
-//
-// pub trait Huso : NiossPkt {
-//
-// }
-
-// pub struct NiosPkt<A, D>
-// where
-//     A: NumToByte + Debug + Display + LowerHex,
-//     D: NumToByte + Debug + Display + LowerHex,
-// {
-//     buf: Vec<u8>,
-//     phantom: std::marker::PhantomData<(A, D)>,
-// }
-
-struct NiosPkt<A, D>
+pub struct NiosPkt<A, D>
 where
     A: NumToByte + Debug + Display + LowerHex,
     D: NumToByte + Debug + Display + LowerHex,
@@ -123,7 +95,7 @@ where
     pub const IDX_DATA: usize = Self::IDX_ADDR + size_of::<A>();
     // pub const IDX_PADDING: usize = Self::IDX_DATA + size_of::<D>();
 
-    // pub const FLAG_READ: u8 = 0;
+    pub const FLAG_READ: u8 = 0;
     pub const FLAG_WRITE: u8 = 1;
     pub const FLAG_SUCCESS: u8 = 2;
 
@@ -154,27 +126,23 @@ where
             .set_addr(addr)
             .set_data(data)
     }
-
     pub fn magic(&self) -> u8 {
         self.buf.magic()
     }
     pub fn target_id(&self) -> u8 {
         self.buf[Self::IDX_TARGET_ID]
     }
-
     pub fn flags(&self) -> u8 {
         self.buf[Self::IDX_FLAGS]
     }
-
     pub fn addr(&self) -> A {
         A::from_le_bytes(&self.buf[Self::IDX_ADDR..(Self::IDX_ADDR + size_of::<A>())])
     }
     pub fn data(&self) -> D {
         D::from_le_bytes(&self.buf[Self::IDX_DATA..(Self::IDX_DATA + size_of::<D>())])
     }
-
-    pub fn success(&self) -> Result<()> {
-        if self.buf[Self::IDX_FLAGS] & Self::FLAG_SUCCESS != 0 {
+    pub fn is_success(&self) -> Result<()> {
+        if self.buf[Self::IDX_FLAGS] & Self::FLAG_SUCCESS == 0 {
             return Err(anyhow!("response packet reported failure."));
         }
         Ok(())
@@ -437,7 +405,7 @@ where
         self.pkt.data()
     }
     pub fn is_success(&self) -> Result<()> {
-        self.pkt.success()
+        self.pkt.is_success()
     }
     pub fn is_write(&self) -> bool {
         self.pkt.write()
@@ -493,6 +461,7 @@ where
 {
     pkt: NiosPkt<A, D>,
 }
+
 impl<A, D> NiosPktResponse<A, D>
 where
     A: NumToByte + Debug + Display + LowerHex,
@@ -514,7 +483,7 @@ where
         self.pkt.data()
     }
     pub fn is_success(&self) -> Result<()> {
-        self.pkt.success()
+        self.pkt.is_success()
     }
     pub fn is_write(&self) -> bool {
         self.pkt.write()

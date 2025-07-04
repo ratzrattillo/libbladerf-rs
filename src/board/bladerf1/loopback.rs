@@ -51,7 +51,7 @@ impl BladeRf1 {
     }
 
     pub fn is_loopback_mode_supported(&self, lb: BladerfLoopback) -> bool {
-        let supported_modes = vec![
+        let supported_modes = [
             BladerfLoopback::None,
             BladerfLoopback::BbTxlpfRxvga2,
             BladerfLoopback::BbTxlpfRxlpf,
@@ -63,6 +63,6 @@ impl BladeRf1 {
             BladerfLoopback::Lna3,
         ];
 
-        supported_modes.iter().find(|e| *e == &lb).is_some()
+        supported_modes.contains(&lb)
     }
 }

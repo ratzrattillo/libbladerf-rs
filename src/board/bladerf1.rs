@@ -34,26 +34,8 @@ pub enum BladeRfError {
 }
 
 struct BoardData {
-    speed: Option<Speed>,
+    speed: Speed,
 }
-
-/**
- * Expansion boards
- */
-// #[derive(Clone, PartialEq, Debug)]
-// pub enum BladerfXb {
-//     /**< No expansion boards attached */
-//     BladerfXbNone = 0,
-//     /**< XB-100 GPIO expansion board.
-//          *   This device is not yet supported in
-//          *   libbladeRF, and is here as a placeholder
-//          *   for future support. */
-//     BladerfXb100,
-//     /**< XB-200 Transverter board */
-//     BladerfXb200,
-//     /**< XB-300 Amplifier board */
-//     BladerfXb300,
-// }
 
 /// Representation of a BladeRF1 device.
 pub struct BladeRf1 {

@@ -2,6 +2,7 @@
 // assert_eq!(size_of::<u64>(), 8);
 
 pub mod bladerf1;
+mod bladerf2;
 
 use std::time::Duration;
 

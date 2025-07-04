@@ -9,7 +9,7 @@ impl BladeRf1 {
     /* Sample RX FPGA Mux */
     /******************************************************************************/
 
-    pub async fn set_rx_mux(&self, mode: BladerfRxMux) -> Result<u32> {
+    pub async fn set_rx_mux(&self, mode: BladerfRxMux) -> Result<()> {
         // CHECK_BOARD_STATE(STATE_INITIALIZED);
 
         /* Validate desired mux mode */
@@ -19,7 +19,7 @@ impl BladeRf1 {
             let mut config_gpio = self.config_gpio_read().await?;
 
             /* Clear out and assign the associated RX mux bits */
-            config_gpio &= !BLADERF_GPIO_RX_MUX_MASK as u32;
+            config_gpio &= !(BLADERF_GPIO_RX_MUX_MASK as u32);
             config_gpio |= rx_mux_val;
 
             self.config_gpio_write(config_gpio).await

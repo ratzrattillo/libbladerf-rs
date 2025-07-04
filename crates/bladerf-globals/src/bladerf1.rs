@@ -1,4 +1,5 @@
 use anyhow::anyhow;
+use std::fmt::{Display, Formatter};
 
 /// BladeRF1 USB vendor ID.
 pub const BLADERF1_USB_VID: u16 = 0x2CF0;
@@ -54,18 +55,15 @@ pub const BLADERF_FREQUENCY_MIN: u32 = 237500000;
  */
 pub const BLADERF_FREQUENCY_MAX: u32 = 3800000000;
 
-/** @} (End of BLADERF1_CONSTANTS) */
-
-/**
- * @ingroup FN_IMAGE
- * @defgroup BLADERF_FLASH_CONSTANTS Flash image format constants
- *
- * \note These apply to both the bladeRF1 and bladeRF2, but they are still in
- *       bladeRF1.h for the time being.
- *
- * @{
- */
-
+// /**
+//  * @ingroup FN_IMAGE
+//  * @defgroup BLADERF_FLASH_CONSTANTS Flash image format constants
+//  *
+//  * \note These apply to both the bladeRF1 and bladeRF2, but they are still in
+//  *       bladeRF1.h for the time being.
+//  *
+//  * @{
+//  */
 /** Byte address of FX3 firmware */
 pub const BLADERF_FLASH_ADDR_FIRMWARE: u32 = 0x00000000;
 
@@ -165,30 +163,30 @@ impl From<u32> for BladerfRxMux {
         }
     }
 }
-/**
- * @defgroup FN_BLADERF1_GAIN Gain stages (deprecated)
- *
- * These functions provide control over the device's RX and TX gain stages.
- *
- * \deprecated Use bladerf_get_gain_range(), bladerf_set_gain(), and
- *             bladerf_get_gain() to control total system gain. For direct
- *             control of individual gain stages, use bladerf_get_gain_stages(),
- *             bladerf_get_gain_stage_range(), bladerf_set_gain_stage(), and
- *             bladerf_get_gain_stage().
- *
- * @{
- */
 
-/**
- * In general, the gains should be incremented in the following order (and
- * decremented in the reverse order).
- *
- * <b>TX:</b> `TXVGA1`, `TXVGA2`
- *
- * <b>RX:</b> `LNA`, `RXVGA`, `RXVGA2`
- *
- */
-
+// /**
+//  * @defgroup FN_BLADERF1_GAIN Gain stages (deprecated)
+//  *
+//  * These functions provide control over the device's RX and TX gain stages.
+//  *
+//  * \deprecated Use bladerf_get_gain_range(), bladerf_set_gain(), and
+//  *             bladerf_get_gain() to control total system gain. For direct
+//  *             control of individual gain stages, use bladerf_get_gain_stages(),
+//  *             bladerf_get_gain_stage_range(), bladerf_set_gain_stage(), and
+//  *             bladerf_get_gain_stage().
+//  *
+//  * @{
+//  */
+//
+// /**
+//  * In general, the gains should be incremented in the following order (and
+//  * decremented in the reverse order).
+//  *
+//  * <b>TX:</b> `TXVGA1`, `TXVGA2`
+//  *
+//  * <b>RX:</b> `LNA`, `RXVGA`, `RXVGA2`
+//  *
+//  */
 /** Minimum RXVGA1 gain, in dB
 *
 * \deprecated Use bladerf_get_gain_stage_range()
@@ -402,4 +400,47 @@ pub enum BladerfXb {
     BladerfXb200,
     /**< XB-300 Amplifier board */
     BladerfXb300,
+}
+
+/**
+ * Version structure for FPGA, firmware, libbladeRF, and associated utilities
+ */
+#[derive(Debug)]
+pub struct BladeRfVersion {
+    /**< Major version */
+    pub major: u16,
+    /**< Minor version */
+    pub minor: u16,
+    /**< Patch version */
+    pub patch: u16,
+}
+
+impl Display for BladeRfVersion {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!("{}.{}.{}", self.major, self.minor, self.patch))
+    }
+}
+
+/**
+ * Quick Re-tune parameters.
+ *
+ * @note These parameters, which are associated with the RFIC's register values,
+ *       are sensitive to changes in the operating environment (e.g.,
+ *       temperature).
+ *
+ * This structure should be filled in via bladerf_get_quick_tune().
+ */
+pub struct BladeRf1QuickTune {
+    /**< Choice of VCO and VCO division factor */
+    pub freqsel: u8,
+    /**< VCOCAP value */
+    pub vcocap: u8,
+    /**< Integer portion of LO frequency value */
+    pub nint: u16,
+    /**< Fractional portion of LO frequency value */
+    pub nfrac: u32,
+    /**< Flag bits used internally by libbladeRF */
+    pub flags: u8,
+    /**< Flag bits used to configure XB */
+    pub xb_gpio: u8,
 }

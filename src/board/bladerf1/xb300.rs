@@ -5,11 +5,11 @@ use anyhow::{Result, anyhow};
 pub const BLADERF_XB_AUX_EN: u32 = 0x000002;
 pub const BLADERF_XB_TX_LED: u32 = 0x000010;
 pub const BLADERF_XB_RX_LED: u32 = 0x000020;
-pub const BLADERF_XB_TRX_TXn: u32 = 0x000040;
-pub const BLADERF_XB_TRX_RXn: u32 = 0x000080;
+pub const BLADERF_XB_TRX_TXN: u32 = 0x000040;
+pub const BLADERF_XB_TRX_RXN: u32 = 0x000080;
 pub const BLADERF_XB_TRX_MASK: u32 = 0x0000c0;
 pub const BLADERF_XB_PA_EN: u32 = 0x000200;
-pub const BLADERF_XB_LNA_ENn: u32 = 0x000400;
+pub const BLADERF_XB_LNA_ENN: u32 = 0x000400;
 pub const BLADERF_XB_CS: u32 = 0x010000;
 pub const BLADERF_XB_CSEL: u32 = 0x040000;
 pub const BLADERF_XB_DOUT: u32 = 0x100000;
@@ -21,13 +21,13 @@ pub const BLADERF_XB_SCLK: u32 = 0x400000;
 #[derive(Debug)]
 pub enum BladeRfXb300Trx {
     /**< Invalid TRX selection */
-    INVAL = -1,
+    Inval = -1,
     /**< TRX antenna operates as TX */
-    TX = 0,
+    Tx = 0,
     /**< TRX antenna operates as RX */
-    RX,
+    Rx,
     /**< TRX antenna unset */
-    UNSET,
+    Unset,
 }
 
 /**
@@ -36,13 +36,13 @@ pub enum BladeRfXb300Trx {
 #[derive(Debug)]
 pub enum BladeRfXb300Amplifier {
     /**< Invalid amplifier selection */
-    INVAL = -1,
+    Inval = -1,
     /**< TX Power amplifier */
-    PA = 0,
+    Pa = 0,
     /**< RX LNA */
-    LNA,
+    Lna,
     /**< Auxillary Power amplifier */
-    AUX,
+    Aux,
 }
 
 pub struct Xb300 {}
@@ -50,14 +50,14 @@ pub struct Xb300 {}
 impl BladeRf1 {
     pub async fn xb300_attach(&mut self) -> Result<()> {
         let mut val = BLADERF_XB_TX_LED | BLADERF_XB_RX_LED | BLADERF_XB_TRX_MASK;
-        val |= BLADERF_XB_PA_EN | BLADERF_XB_LNA_ENn;
+        val |= BLADERF_XB_PA_EN | BLADERF_XB_LNA_ENN;
         val |= BLADERF_XB_CSEL | BLADERF_XB_SCLK | BLADERF_XB_CS;
 
         self.interface
             .nios_expansion_gpio_dir_write(0xffffffff, val)
             .await?;
 
-        val = BLADERF_XB_CS | BLADERF_XB_LNA_ENn;
+        val = BLADERF_XB_CS | BLADERF_XB_LNA_ENN;
         self.interface
             .nios_expansion_gpio_write(0xffffffff, val)
             .await?;
@@ -72,7 +72,7 @@ impl BladeRf1 {
     }
 
     pub async fn xb300_enable(&self, _enable: bool) -> Result<()> {
-        let val = BLADERF_XB_CS | BLADERF_XB_CSEL | BLADERF_XB_LNA_ENn;
+        let val = BLADERF_XB_CS | BLADERF_XB_CSEL | BLADERF_XB_LNA_ENN;
         self.interface
             .nios_expansion_gpio_write(0xffffffff, val)
             .await?;
@@ -85,7 +85,7 @@ impl BladeRf1 {
 
     pub async fn xb300_init(&self) -> Result<()> {
         log::debug!("Setting TRX path to TX\n");
-        self.xb300_set_trx(BladeRfXb300Trx::TX).await
+        self.xb300_set_trx(BladeRfXb300Trx::Tx).await
     }
 
     pub async fn xb300_set_trx(&self, trx: BladeRfXb300Trx) -> Result<()> {
@@ -93,14 +93,14 @@ impl BladeRf1 {
         val &= !BLADERF_XB_TRX_MASK;
 
         match trx {
-            BladeRfXb300Trx::RX => val |= BLADERF_XB_TRX_RXn,
+            BladeRfXb300Trx::Rx => val |= BLADERF_XB_TRX_RXN,
 
-            BladeRfXb300Trx::TX => val |= BLADERF_XB_TRX_TXn,
+            BladeRfXb300Trx::Tx => val |= BLADERF_XB_TRX_TXN,
 
-            BladeRfXb300Trx::UNSET => {}
+            BladeRfXb300Trx::Unset => {}
 
             _ => {
-                log::debug!("Invalid TRX option: {:?}", trx);
+                log::debug!("Invalid TRX option: {trx:?}");
                 return Err(anyhow!("Invalid TRX option: %d"));
             }
         }
@@ -115,12 +115,12 @@ impl BladeRf1 {
         val &= BLADERF_XB_TRX_MASK;
 
         let trx = if val == 0 {
-            BladeRfXb300Trx::UNSET
+            BladeRfXb300Trx::Unset
         } else {
-            if val & BLADERF_XB_TRX_RXn != 0 {
-                BladeRfXb300Trx::RX
+            if val & BLADERF_XB_TRX_RXN != 0 {
+                BladeRfXb300Trx::Rx
             } else {
-                BladeRfXb300Trx::TX
+                BladeRfXb300Trx::Tx
             }
         };
 
@@ -147,7 +147,7 @@ impl BladeRf1 {
         let mut val = self.interface.nios_expansion_gpio_read().await?;
 
         match amp {
-            BladeRfXb300Amplifier::PA => {
+            BladeRfXb300Amplifier::Pa => {
                 if enable {
                     val |= BLADERF_XB_TX_LED;
                     val |= BLADERF_XB_PA_EN;
@@ -156,16 +156,16 @@ impl BladeRf1 {
                     val &= !BLADERF_XB_PA_EN;
                 }
             }
-            BladeRfXb300Amplifier::LNA => {
+            BladeRfXb300Amplifier::Lna => {
                 if enable {
                     val |= BLADERF_XB_RX_LED;
-                    val &= !BLADERF_XB_LNA_ENn;
+                    val &= !BLADERF_XB_LNA_ENN;
                 } else {
                     val &= !BLADERF_XB_RX_LED;
-                    val |= BLADERF_XB_LNA_ENn;
+                    val |= BLADERF_XB_LNA_ENN;
                 }
             }
-            BladeRfXb300Amplifier::AUX => {
+            BladeRfXb300Amplifier::Aux => {
                 if enable {
                     val |= BLADERF_XB_AUX_EN;
                 } else {
@@ -173,7 +173,7 @@ impl BladeRf1 {
                 }
             }
             _ => {
-                log::debug!("Invalid amplifier selection: {:?}", amp);
+                log::debug!("Invalid amplifier selection: {amp:?}");
                 return Err(anyhow!("Invalid amplifier selection"));
             }
         }
@@ -187,11 +187,11 @@ impl BladeRf1 {
         let val = self.interface.nios_expansion_gpio_read().await?;
 
         match amp {
-            BladeRfXb300Amplifier::PA => Ok(val & BLADERF_XB_PA_EN != 0),
-            BladeRfXb300Amplifier::LNA => Ok(val & BLADERF_XB_LNA_ENn != 0),
-            BladeRfXb300Amplifier::AUX => Ok(val & BLADERF_XB_AUX_EN != 0),
+            BladeRfXb300Amplifier::Pa => Ok(val & BLADERF_XB_PA_EN != 0),
+            BladeRfXb300Amplifier::Lna => Ok(val & BLADERF_XB_LNA_ENN != 0),
+            BladeRfXb300Amplifier::Aux => Ok(val & BLADERF_XB_AUX_EN != 0),
             _ => {
-                log::debug!("Read back invalid amplifier setting: {:?}", amp);
+                log::debug!("Read back invalid amplifier setting: {amp:?}");
                 Err(anyhow!("Read back invalid amplifier setting"))
             }
         }
@@ -221,7 +221,7 @@ impl BladeRf1 {
 
             let rval = self.interface.nios_expansion_gpio_read().await?;
 
-            if i >= 2 && i <= 11 {
+            if (2..=11).contains(&i) {
                 ret |= (!!(rval & BLADERF_XB_DOUT)) << (11 - i);
             }
         }

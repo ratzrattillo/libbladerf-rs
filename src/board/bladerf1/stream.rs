@@ -50,26 +50,26 @@ impl BladeRf1 {
 
         let mut gpio_val = self.config_gpio_read().await?;
 
-        println!("gpio_val {gpio_val:#08x}");
+        log::debug!("gpio_val {gpio_val:#08x}");
         if format == BladerfFormat::PacketMeta {
             gpio_val |= BLADERF_GPIO_PACKET;
             use_timestamps = true;
-            println!("BladerfFormat::PacketMeta");
+            log::debug!("BladerfFormat::PacketMeta");
         } else {
             gpio_val &= !BLADERF_GPIO_PACKET;
-            println!("else");
+            log::debug!("else");
         }
-        println!("gpio_val {gpio_val:#08x}");
+        log::debug!("gpio_val {gpio_val:#08x}");
 
         if use_timestamps {
-            println!("use_timestamps");
+            log::debug!("use_timestamps");
             gpio_val |= BLADERF_GPIO_TIMESTAMP | BLADERF_GPIO_TIMESTAMP_DIV2;
         } else {
-            println!("dont use_timestamps");
+            log::debug!("dont use_timestamps");
             gpio_val &= !(BLADERF_GPIO_TIMESTAMP | BLADERF_GPIO_TIMESTAMP_DIV2);
         }
 
-        println!("gpio_val {gpio_val:#08x}");
+        log::debug!("gpio_val {gpio_val:#08x}");
 
         self.config_gpio_write(gpio_val).await?;
         // if (status == 0) {
@@ -117,7 +117,7 @@ impl BladeRf1 {
             .interface
             .control_in(pkt, Duration::from_secs(5))
             .await?;
-        println!("Control Response Data: {vec:?}");
+        log::debug!("Control Response Data: {vec:?}");
         Ok(())
     }
 
@@ -140,17 +140,17 @@ impl BladeRf1 {
 
         let max_packet_size = ep_bulk_in.max_packet_size();
         let max_frame_size = max_packet_size * factor;
-        println!("Max Packet Size: {max_packet_size}");
+        log::debug!("Max Packet Size: {max_packet_size}");
 
         for _i in 0..n_transfers {
             let buffer = ep_bulk_in.allocate(max_frame_size);
             ep_bulk_in.submit(buffer);
-            // println!("submitted_transfers: {i}");
+            // log::debug!("submitted_transfers: {i}");
         }
 
         loop {
             let result = ep_bulk_in.next_complete().await;
-            // println!("{result:?}");
+            // log::debug!("{result:?}");
             if result.status.is_err() {
                 break;
             }

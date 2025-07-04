@@ -9,7 +9,7 @@ impl BladeRf1 {
         //CHECK_BOARD_STATE(STATE_INITIALIZED);
 
         bandwidth = bandwidth.clamp(BLADERF_BANDWIDTH_MIN, BLADERF_BANDWIDTH_MAX);
-        println!("Clamped bandwidth to {bandwidth}");
+        log::debug!("Clamped bandwidth to {bandwidth}");
 
         let bw: LmsBw = bandwidth.into();
 

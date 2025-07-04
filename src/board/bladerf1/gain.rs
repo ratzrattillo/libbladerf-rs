@@ -109,7 +109,7 @@ impl BladeRf1 {
         }
     }
 
-    pub async fn set_gain_mode(&self, channel: u8, mode: BladerfGainMode) -> Result<u32> {
+    pub async fn set_gain_mode(&self, channel: u8, mode: BladerfGainMode) -> Result<()> {
         if bladerf_channel_is_tx!(channel) {
             return Err(anyhow!("Setting gain mode for TX is not supported"));
         }
@@ -331,14 +331,8 @@ impl BladeRf1 {
 
         // verification
         if gain != 0 {
-            println!(
-                "unable to achieve requested gain {} (missed by {})\n",
-                orig_gain, gain
-            );
-            println!(
-                "gain={} -> txvga2={} txvga1={} remainder={}\n",
-                orig_gain, txvga2, txvga1, gain
-            );
+            log::debug!("unable to achieve requested gain {orig_gain} (missed by {gain})\n");
+            log::debug!("gain={orig_gain} -> txvga2={txvga2} txvga1={txvga1} remainder={gain}\n");
         }
 
         self.lms.txvga1_set_gain(txvga1).await?;
@@ -365,7 +359,7 @@ impl BladeRf1 {
         (lna, gain) = Self::_apportion_gain(&lna_range, lna, gain);
         if lna > BLADERF_LNA_GAIN_MID_DB {
             gain += lna - BLADERF_LNA_GAIN_MID_DB;
-            lna -= lna - BLADERF_LNA_GAIN_MID_DB;
+            lna = lna - (lna - BLADERF_LNA_GAIN_MID_DB);
         }
 
         // apportion gain to RXVGA1
@@ -391,13 +385,9 @@ impl BladeRf1 {
 
         // verification
         if gain != 0 {
-            println!(
-                "unable to achieve requested gain {} (missed by {})\n",
-                orig_gain, gain
-            );
-            println!(
-                "gain={} -> 1xvga1={} lna={} rxvga2={} remainder={}\n",
-                orig_gain, rxvga1, lna, rxvga2, gain
+            log::debug!("unable to achieve requested gain {orig_gain} (missed by {gain})\n");
+            log::debug!(
+                "gain={orig_gain} -> 1xvga1={rxvga1} lna={lna} rxvga2={rxvga2} remainder={gain}\n"
             );
         }
 

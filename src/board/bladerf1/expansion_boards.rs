@@ -7,18 +7,17 @@ use bladerf_globals::bladerf1::BladerfXb::{
     BladerfXb100, BladerfXb200, BladerfXb300, BladerfXbNone,
 };
 
-/**
- * @defgroup FN_EXP_IO Expansion I/O
- *
- * These definitions and functions provide high-level functionality for
- * manipulating pins on the bladeRF1 U74 Expansion Header, and the associated
- * mappings on expansion boards.
- *
- * These functions are thread-safe.
- *
- * @{
- */
-
+// /**
+//  * @defgroup FN_EXP_IO Expansion I/O
+//  *
+//  * These definitions and functions provide high-level functionality for
+//  * manipulating pins on the bladeRF1 U74 Expansion Header, and the associated
+//  * mappings on expansion boards.
+//  *
+//  * These functions are thread-safe.
+//  *
+//  * @{
+//  */
 /** Expansion pin GPIO number to bitmask */
 #[macro_export]
 macro_rules! bladerf_xb_gpio {
@@ -357,7 +356,7 @@ impl BladeRf1 {
             self.xb100_enable(true).await?;
 
             log::debug!("Initializing XB100");
-            // self.xb100_init().await?;
+            self.xb100_init()?;
         } else if xb == BladerfXb200 {
             // if (!have_cap(board_data->capabilities, BLADERF_CAP_XB200)) {
             //   log::debug!("%s: XB200 support requires FPGA v0.0.5 or later\n", __FUNCTION__);
@@ -365,27 +364,27 @@ impl BladeRf1 {
             // }
 
             log::debug!("Attaching XB200");
-            //self.xb200_attach().await?;
+            self.xb200_attach().await?;
 
             log::debug!("Enabling XB200");
-            //self.xb200_enable(true).await?;
+            self.xb200_enable(true).await?;
 
             log::debug!("Initializing XB200");
-            //self.xb200_init().await?;
+            self.xb200_init().await?;
         } else if xb == BladerfXb300 {
             log::debug!("Attaching XB300");
-            //self.xb300_attach().await?;
+            self.xb300_attach().await?;
 
             log::debug!("Enabling XB300");
-            //self.xb300_enable(true).await?;
+            self.xb300_enable(true).await?;
 
             log::debug!("Initializing XB300");
-            //self.xb300_init().await?;
+            self.xb300_init().await?;
         } else if xb == BladerfXbNone {
             log::debug!("Disabling an attached XB is not supported.");
             return Err(BladeRfError::Unsupported.into());
         } else {
-            log::debug!("Unknown xb type: {:?}", xb);
+            log::debug!("Unknown xb type: {xb:?}");
             return Err(BladeRfError::Unsupported.into());
         }
 

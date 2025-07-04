@@ -7,12 +7,8 @@ use bladerf_globals::bladerf1::{
     BLADERF_RXVGA2_GAIN_MAX, BLADERF_RXVGA2_GAIN_MIN, BLADERF_TXVGA1_GAIN_MAX,
     BLADERF_TXVGA1_GAIN_MIN, BLADERF_TXVGA2_GAIN_MAX, BLADERF_TXVGA2_GAIN_MIN, BladerfLnaGain,
 };
-use bladerf_globals::{
-    BLADERF_MODULE_RX, BLADERF_MODULE_TX, BladerfLoopback, BladerfLpfMode, ENDPOINT_IN,
-    ENDPOINT_OUT,
-};
+use bladerf_globals::{BLADERF_MODULE_RX, BLADERF_MODULE_TX, BladerfLoopback, BladerfLpfMode};
 use bladerf_nios::NIOS_PKT_8X8_TARGET_LMS6;
-use bladerf_nios::packet_generic::{NiosReq8x8, NiosResp8x8};
 use bladerf_nios::packet_retune::{Band, NiosPktRetuneRequest, Tune};
 use nusb::Interface;
 
@@ -106,77 +102,77 @@ pub const BANDS: [FreqRange; 16] = [
     FreqRange {
         low: VCO3_LOW / 16,
         high: VCO3_HIGH / 16,
-        value: (VCO3 | DIV16),
+        value: VCO3 | DIV16,
     },
     FreqRange {
         low: VCO2_LOW / 16,
         high: VCO2_HIGH / 16,
-        value: (VCO2 | DIV16),
+        value: VCO2 | DIV16,
     },
     FreqRange {
         low: VCO1_LOW / 16,
         high: VCO1_HIGH / 16,
-        value: (VCO1 | DIV16),
+        value: VCO1 | DIV16,
     },
     FreqRange {
         low: VCO4_LOW / 8,
         high: VCO4_HIGH / 8,
-        value: (VCO4 | DIV8),
+        value: VCO4 | DIV8,
     },
     FreqRange {
         low: VCO3_LOW / 8,
         high: VCO3_HIGH / 8,
-        value: (VCO3 | DIV8),
+        value: VCO3 | DIV8,
     },
     FreqRange {
         low: VCO2_LOW / 8,
         high: VCO2_HIGH / 8,
-        value: (VCO2 | DIV8),
+        value: VCO2 | DIV8,
     },
     FreqRange {
         low: VCO1_LOW / 8,
         high: VCO1_HIGH / 8,
-        value: (VCO1 | DIV8),
+        value: VCO1 | DIV8,
     },
     FreqRange {
         low: VCO4_LOW / 4,
         high: VCO4_HIGH / 4,
-        value: (VCO4 | DIV4),
+        value: VCO4 | DIV4,
     },
     FreqRange {
         low: VCO3_LOW / 4,
         high: VCO3_HIGH / 4,
-        value: (VCO3 | DIV4),
+        value: VCO3 | DIV4,
     },
     FreqRange {
         low: VCO2_LOW / 4,
         high: VCO2_HIGH / 4,
-        value: (VCO2 | DIV4),
+        value: VCO2 | DIV4,
     },
     FreqRange {
         low: VCO1_LOW / 4,
         high: VCO1_HIGH / 4,
-        value: (VCO1 | DIV4),
+        value: VCO1 | DIV4,
     },
     FreqRange {
         low: VCO4_LOW / 2,
         high: VCO4_HIGH / 2,
-        value: (VCO4 | DIV2),
+        value: VCO4 | DIV2,
     },
     FreqRange {
         low: VCO3_LOW / 2,
         high: VCO3_HIGH / 2,
-        value: (VCO3 | DIV2),
+        value: VCO3 | DIV2,
     },
     FreqRange {
         low: VCO2_LOW / 2,
         high: VCO2_HIGH / 2,
-        value: (VCO2 | DIV2),
+        value: VCO2 | DIV2,
     },
     FreqRange {
         low: VCO1_LOW / 2,
         high: BLADERF_FREQUENCY_MAX as u64,
-        value: (VCO1 | DIV2),
+        value: VCO1 | DIV2,
     },
 ];
 
@@ -504,13 +500,13 @@ impl From<u32> for LmsBw {
         } else if value <= khz!(8750) {
             LmsBw::Bw8p75mhz
         } else if value <= mhz!(10) {
-            LmsBw::Bw1p75mhz
+            LmsBw::Bw10mhz
         } else if value <= mhz!(12) {
-            LmsBw::Bw1p75mhz
+            LmsBw::Bw12mhz
         } else if value <= mhz!(14) {
-            LmsBw::Bw1p75mhz
+            LmsBw::Bw14mhz
         } else if value <= mhz!(20) {
-            LmsBw::Bw1p75mhz
+            LmsBw::Bw20mhz
         } else {
             LmsBw::Bw28mhz
         }
@@ -611,30 +607,18 @@ impl LMS6002D {
     }
 
     pub async fn read(&self, addr: u8) -> Result<u8> {
-        type ReqType = NiosReq8x8;
-
-        let request = ReqType::new(NIOS_PKT_8X8_TARGET_LMS6, ReqType::FLAG_READ, addr, 0x0);
-
-        let response = self
-            .interface
-            .nios_send(ENDPOINT_OUT, ENDPOINT_IN, request.into())
-            .await?;
-        Ok(NiosResp8x8::from(response).data())
+        self.interface
+            .nios_read::<u8, u8>(NIOS_PKT_8X8_TARGET_LMS6, addr)
+            .await
     }
 
-    pub async fn write(&self, addr: u8, data: u8) -> Result<u8> {
-        type ReqType = NiosReq8x8;
-
-        let request = ReqType::new(NIOS_PKT_8X8_TARGET_LMS6, ReqType::FLAG_WRITE, addr, data);
-
-        let response = self
-            .interface
-            .nios_send(ENDPOINT_OUT, ENDPOINT_IN, request.into())
-            .await?;
-        Ok(NiosResp8x8::from(response).data())
+    pub async fn write(&self, addr: u8, data: u8) -> Result<()> {
+        self.interface
+            .nios_write::<u8, u8>(NIOS_PKT_8X8_TARGET_LMS6, addr, data)
+            .await
     }
 
-    pub async fn set(&self, addr: u8, mask: u8) -> Result<u8> {
+    pub async fn set(&self, addr: u8, mask: u8) -> Result<()> {
         let data = self.read(addr).await?;
         self.write(addr, data | mask).await
     }
@@ -649,7 +633,7 @@ impl LMS6002D {
         Ok(vtune)
     }
 
-    pub async fn enable_rffe(&self, module: u8, enable: bool) -> Result<u8> {
+    pub async fn enable_rffe(&self, module: u8, enable: bool) -> Result<()> {
         let (addr, shift) = if module == BLADERF_MODULE_TX {
             (0x40u8, 1u8)
         } else {
@@ -665,7 +649,7 @@ impl LMS6002D {
         self.write(addr, data).await
     }
 
-    pub async fn config_charge_pumps(&self, module: u8) -> Result<u8> {
+    pub async fn config_charge_pumps(&self, module: u8) -> Result<()> {
         let base: u8 = if module == BLADERF_MODULE_RX {
             0x20
         } else {
@@ -777,7 +761,7 @@ impl LMS6002D {
         Ok(f)
     }
 
-    pub async fn write_vcocap(&self, base: u8, vcocap: u8, vcocap_reg_state: u8) -> Result<u8> {
+    pub async fn write_vcocap(&self, base: u8, vcocap: u8, vcocap_reg_state: u8) -> Result<()> {
         assert!(vcocap <= VCOCAP_MAX_VALUE);
         // println!("Writing VCOCAP=%u\n", vcocap);
 
@@ -790,7 +774,7 @@ impl LMS6002D {
         // return status;
     }
 
-    pub async fn loopback_path(&self, mode: &BladerfLoopback) -> Result<u8> {
+    pub async fn loopback_path(&self, mode: &BladerfLoopback) -> Result<()> {
         let mut loopbben = self.read(0x46).await?;
         let mut lben_lbrf = self.read(0x08).await?;
 
@@ -864,7 +848,7 @@ impl LMS6002D {
         }
     }
 
-    pub async fn lpf_set_mode(&self, channel: u8, mode: BladerfLpfMode) -> Result<u8> {
+    pub async fn lpf_set_mode(&self, channel: u8, mode: BladerfLpfMode) -> Result<()> {
         let reg: u8 = if channel == BLADERF_MODULE_RX {
             0x54
         } else {
@@ -894,7 +878,7 @@ impl LMS6002D {
     }
 
     /* Power up/down RF loopback switch */
-    pub async fn enable_rf_loopback_switch(&self, enable: bool) -> Result<u8> {
+    pub async fn enable_rf_loopback_switch(&self, enable: bool) -> Result<()> {
         let mut regval = self.read(0x0b).await?;
 
         if enable {
@@ -1031,7 +1015,7 @@ impl LMS6002D {
         }
     }
 
-    pub async fn set_loopback_mode(&self, mode: BladerfLoopback) -> Result<u8> {
+    pub async fn set_loopback_mode(&self, mode: BladerfLoopback) -> Result<()> {
         /* Verify a valid mode is provided before shutting anything down */
         match mode {
             BladerfLoopback::None => {}
@@ -1109,7 +1093,7 @@ impl LMS6002D {
         Ok(loopback != BladerfLoopback::None)
     }
 
-    pub async fn write_pll_config(&self, module: u8, freqsel: u8, low_band: bool) -> Result<u8> {
+    pub async fn write_pll_config(&self, module: u8, freqsel: u8, low_band: bool) -> Result<()> {
         let addr = if module == BLADERF_MODULE_TX {
             0x15
         } else {
@@ -1468,7 +1452,7 @@ impl LMS6002D {
         /* Write the initial vcocap estimate first to allow for adequate time for
          * VTUNE to stabilize. We need to be sure to keep the upper bits of
          * this register and perform a RMW, as bit 7 is VOVCOREG[0]. */
-        let mut result = self.read(base + 9).await;
+        let result = self.read(base + 9).await;
         if result.is_err() {
             self.turn_off_dsms().await?;
             return Err(anyhow!("Failed to read vcocap regstate!"));
@@ -1477,14 +1461,14 @@ impl LMS6002D {
 
         vcocap_reg_state &= !0x3f;
 
-        result = self.write_vcocap(base, f.vcocap, vcocap_reg_state).await;
+        let result = self.write_vcocap(base, f.vcocap, vcocap_reg_state).await;
         if result.is_err() {
             self.turn_off_dsms().await?;
             return Err(anyhow!("Failed to write vcocap_reg_state!"));
         }
 
         let low_band = (f.flags & LMS_FREQ_FLAGS_LOW_BAND) != 0;
-        result = self.write_pll_config(module, f.freqsel, low_band).await;
+        let result = self.write_pll_config(module, f.freqsel, low_band).await;
         if result.is_err() {
             self.turn_off_dsms().await?;
             return Err(anyhow!("Failed to write pll_config!"));
@@ -1497,7 +1481,7 @@ impl LMS6002D {
         freq_data[3] = (f.nfrac & 0xff) as u8;
 
         for (idx, value) in freq_data.iter().enumerate() {
-            result = self.write(pll_base + idx as u8, *value).await;
+            let result = self.write(pll_base + idx as u8, *value).await;
             if result.is_err() {
                 self.turn_off_dsms().await?;
                 return Err(anyhow!("Failed to write pll {}!", pll_base + idx as u8));
@@ -1545,7 +1529,7 @@ impl LMS6002D {
         Ok(())
     }
 
-    pub async fn turn_off_dsms(&self) -> Result<u8> {
+    pub async fn turn_off_dsms(&self) -> Result<()> {
         let mut data = self.read(0x09).await?;
         data &= !0x05;
         self.write(0x09, data).await
@@ -1576,7 +1560,7 @@ impl LMS6002D {
         Ok(())
     }
 
-    pub async fn select_pa(&self, pa: LmsPa) -> Result<u8> {
+    pub async fn select_pa(&self, pa: LmsPa) -> Result<()> {
         // status = LMS_READ(dev, 0x44, &data);
         let mut data = self.read(0x44).await?;
 
@@ -1627,7 +1611,7 @@ impl LMS6002D {
     }
 
     /* Select which LNA to enable */
-    pub async fn select_lna(&self, lna: LmsLna) -> Result<u8> {
+    pub async fn select_lna(&self, lna: LmsLna) -> Result<()> {
         let mut data = self.read(0x75).await?;
 
         data &= !(3 << 4);
@@ -1636,7 +1620,7 @@ impl LMS6002D {
         self.write(0x75, data).await
     }
 
-    pub async fn select_band(&self, module: u8, band: Band) -> Result<u8> {
+    pub async fn select_band(&self, module: u8, band: Band) -> Result<()> {
         /* If loopback mode disabled, avoid changing the PA or LNA selection,
          * as these need to remain are powered down or disabled */
         // status = is_loopback_enabled(dev);
@@ -1647,7 +1631,7 @@ impl LMS6002D {
         // }
         if self.is_loopback_enabled().await? {
             println!("Loopback enabled!");
-            return Ok(0);
+            return Ok(());
         }
 
         // if (module == BLADERF_MODULE_TX) {
@@ -1872,8 +1856,7 @@ impl LMS6002D {
             qt
         } else {
             // if (dev->xb == BLADERF_XB_200) {
-            //     log_info("Consider supplying the quick_tune parameter to"
-            //              " bladerf_schedule_retune() when the XB-200 is enabled.\n");
+            //     log::info!("Consider supplying the quick_tune parameter to bladerf_schedule_retune() when the XB-200 is enabled.");
             // }
             Self::calculate_tuning_params(frequency)?
         };
@@ -1975,6 +1958,6 @@ impl LMS6002D {
 
         // Lookup the bandwidth for returned u8 in lookup table
         // and convert u32 bandwidth into Enum
-        Ok(LmsBw::from_index(data).into())
+        Ok(LmsBw::from_index(data))
     }
 }

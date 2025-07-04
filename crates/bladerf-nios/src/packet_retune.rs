@@ -95,7 +95,7 @@ impl NiosPktRetune {
         // assert!(nint <= Self::NINT_MASK);
 
         // self.buf[Self::IDX_INTFRAC] = 0x00; // Clear out first byte
-        // self.buf[Self::IDX_INTFRAC + 1] &= !(0x1 << 7) as u8; // Clear the first bit of second byte
+        // self.buf[Self::IDX_INTFRAC + 1] &= !((0x1 << 7) as u8); // Clear the first bit of second byte
 
         self.buf[Self::IDX_INTFRAC] = (nint >> 1) as u8; // 1019 >> 1 = 509 = 0x1FD as u8 = 0xFD
         println!("Self::IDX_INTFRAC + 0: {:#x}", self.buf[Self::IDX_INTFRAC]);
