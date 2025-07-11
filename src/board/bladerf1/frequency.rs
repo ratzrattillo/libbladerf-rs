@@ -9,13 +9,8 @@ use crate::xb200::BladerfXb200Path;
 use anyhow::Result;
 use anyhow::anyhow;
 use bladerf_globals::bladerf1::{BLADERF_FREQUENCY_MAX, BLADERF_FREQUENCY_MIN, BladeRf1QuickTune};
-use bladerf_globals::{SdrRange, bladerf_channel_rx};
+use bladerf_globals::{SdrRange, TuningMode, bladerf_channel_rx};
 use bladerf_nios::packet_retune::{Band, NiosPktRetuneRequest};
-
-enum TuningMode {
-    Host,
-    Fpga,
-}
 
 impl BladeRf1 {
     pub async fn set_frequency(&mut self, channel: u8, mut frequency: u64) -> Result<()> {
@@ -39,15 +34,8 @@ impl BladeRf1 {
             }
         }
 
-        // TODO: The tuning mode should be read from the board config
-        // In the packet captures, this is where the changes happen:
-        // -  Packet No. 317 in rx-BladeRFTest-unix-filtered.pcapng
-        // -  Packet No. 230 in rx-rusttool-filtered.pcapng
-        // This is maybe due to the tuning mode being FPGA and not Host
-        let mode = TuningMode::Fpga;
-
         // For tuning HOST Tuning Mode:
-        match mode {
+        match &self.board_data.tuning_mode {
             TuningMode::Host => {
                 self.lms.set_frequency(channel, frequency as u32).await?;
                 let band = if frequency < BLADERF1_BAND_HIGH as u64 {

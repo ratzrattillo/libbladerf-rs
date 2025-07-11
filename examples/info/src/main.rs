@@ -29,7 +29,7 @@ async fn main() -> Result<()> {
     // let xb = bladerf.expansion_get_attached();
     // println!("XB: {xb:?}");
 
-    tokio::time::sleep(Duration::from_secs(10)).await;
+    // tokio::time::sleep(Duration::from_secs(10)).await;
 
     bladerf.expansion_attach(BladerfXb200).await?;
 
@@ -40,12 +40,12 @@ async fn main() -> Result<()> {
     println!("Frequency Range: {frequency_range:?}");
 
     // Set Frequency to minimum frequency
-    // bladerf
-    //     .set_frequency(BLADERF_MODULE_RX, frequency_range.min as u64)
-    //     .await?;
-    // bladerf
-    //     .set_frequency(BLADERF_MODULE_TX, frequency_range.min as u64)
-    //     .await?;
+    bladerf
+        .set_frequency(BLADERF_MODULE_RX, frequency_range.min as u64)
+        .await?;
+    bladerf
+        .set_frequency(BLADERF_MODULE_TX, frequency_range.min as u64)
+        .await?;
 
     let frequency_rx = bladerf.get_frequency(BLADERF_MODULE_RX).await?;
     let frequency_tx = bladerf.get_frequency(BLADERF_MODULE_TX).await?;

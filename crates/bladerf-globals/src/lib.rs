@@ -19,6 +19,11 @@ macro_rules! bladerf_channel_tx {
     };
 }
 
+pub enum TuningMode {
+    Host,
+    Fpga,
+}
+
 #[derive(Debug)]
 pub struct SdrRange<T> {
     pub min: T,

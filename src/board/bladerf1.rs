@@ -18,6 +18,7 @@ use crate::hardware::dac161s055::DAC161S055;
 use crate::hardware::lms6002d::LMS6002D;
 use crate::hardware::si5338::SI5338;
 use crate::xb200::Xb200;
+use bladerf_globals::TuningMode;
 use nusb::{Device, Interface, Speed};
 
 #[derive(thiserror::Error, Debug)]
@@ -33,8 +34,14 @@ pub enum BladeRfError {
     Invalid,
 }
 
+// TODO: The tuning mode should be read from the board config
+// In the packet captures, this is where the changes happen:
+// -  Packet No. 317 in rx-BladeRFTest-unix-filtered.pcapng
+// -  Packet No. 230 in rx-rusttool-filtered.pcapng
+// This is maybe due to the tuning mode being FPGA and not Host
 struct BoardData {
     speed: Speed,
+    tuning_mode: TuningMode,
 }
 
 /// Representation of a BladeRF1 device.

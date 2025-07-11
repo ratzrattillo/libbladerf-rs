@@ -11,8 +11,8 @@ use bladerf_globals::bladerf1::{
 use bladerf_globals::{
     BLADE_USB_CMD_GET_LOOPBACK, BLADE_USB_CMD_RF_RX, BLADE_USB_CMD_RF_TX,
     BLADE_USB_CMD_SET_LOOPBACK, BLADERF_MODULE_RX, BLADERF_MODULE_TX, BladeRfDirection,
-    BladerfGainMode, DescriptorTypes, StringDescriptors, TIMEOUT, USB_IF_NULL, USB_IF_RF_LINK,
-    bladerf_channel_is_tx, bladerf_channel_rx, bladerf_channel_tx,
+    BladerfGainMode, DescriptorTypes, StringDescriptors, TIMEOUT, TuningMode, USB_IF_NULL,
+    USB_IF_RF_LINK, bladerf_channel_is_tx, bladerf_channel_rx, bladerf_channel_tx,
 };
 use bladerf_nios::packet_retune::Band;
 use nusb::descriptors::ConfigurationDescriptor;
@@ -22,7 +22,7 @@ use std::num::NonZero;
 use std::time::Duration;
 
 impl BladeRf1 {
-    async fn list_bladerf1() -> Result<impl Iterator<Item = DeviceInfo>> {
+    pub async fn list_bladerf1() -> Result<impl Iterator<Item = DeviceInfo>> {
         Ok(nusb::list_devices().await?.filter(|dev| {
             dev.vendor_id() == BLADERF1_USB_VID && dev.product_id() == BLADERF1_USB_PID
         }))
@@ -38,6 +38,7 @@ impl BladeRf1 {
 
         let board_data = BoardData {
             speed: device.speed().expect("Could not determine device speed!"),
+            tuning_mode: TuningMode::Fpga,
         };
 
         if board_data.speed < Speed::High {

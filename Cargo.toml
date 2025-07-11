@@ -21,3 +21,4 @@ nusb = { git = "https://github.com/kevinmehall/nusb", branch="main", features = 
 bladerf-nios = { path= "crates/bladerf-nios" }
 bladerf-globals = { path= "crates/bladerf-globals" }
 log = "0.4.27"
+num-complex = "0.4"
