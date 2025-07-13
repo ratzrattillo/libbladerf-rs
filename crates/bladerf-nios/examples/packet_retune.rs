@@ -6,10 +6,10 @@ fn main() {
         0x54, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x3f, 0xb9, 0x55, 0x55, 0xac, 0x1f,
         0x00,
     ];
-    println!("{plain_vec:x?}");
+    log::info!("{plain_vec:x?}");
 
     let from_plain_vec = NiosPktRetuneRequest::from(plain_vec);
-    println!("{from_plain_vec:?}");
+    log::info!("{from_plain_vec:?}");
 
     let from_new = NiosPktRetuneRequest::new(
         BLADERF_MODULE_TX,
@@ -22,8 +22,8 @@ fn main() {
         Tune::Normal,
         0x00,
     );
-    println!("{from_new:?}");
+    log::info!("{from_new:?}");
 
     let from_new_vec: Vec<u8> = from_new.into();
-    println!("{from_new_vec:x?}");
+    log::info!("{from_new_vec:x?}");
 }

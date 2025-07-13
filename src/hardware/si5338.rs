@@ -156,7 +156,7 @@ impl SI5338 {
         ms.p3 = ms.c;
 
         // log_verbose("MSx P1: 0x%8.8x (%u) P2: 0x%8.8x (%u) P3: 0x%8.8x (%u)\n", ms.p1, ms.p1, ms.p2, ms.p2, ms.p3, ms.p3);
-        println!("{:016x} {:016x} {:016x}", ms.p1, ms.p2, ms.p3);
+        log::debug!("{:016x} {:016x} {:016x}", ms.p1, ms.p2, ms.p3);
 
         /* Regs */
         /* Could probably be also expressed with to_le_bytes() or unsafe copy operations */
@@ -250,13 +250,13 @@ impl SI5338 {
     pub async fn write_multisynth(&self, ms: &Si5338Multisynth) -> Result<()> {
         let mut val = self.read(36 + ms.index).await?;
         val |= ms.enable;
-        println!("Wrote enable register: {val:x}");
+        log::debug!("Wrote enable register: {val:x}");
         self.write(36 + ms.index, val).await?;
 
         /* Write out the registers */
         for i in 0..ms.regs.len() {
             self.write((ms.base + i as u16) as u8, ms.regs[i]).await?;
-            println!("Wrote regs[{i}]: {}", ms.regs[i]);
+            log::debug!("Wrote regs[{i}]: {}", ms.regs[i]);
         }
 
         /* Calculate r_power from c_count */
@@ -271,7 +271,7 @@ impl SI5338 {
         val = 0xc0;
         val |= r_power << 2;
 
-        println!("Wrote r register: {val:x}");
+        log::debug!("Wrote r register: {val:x}");
 
         self.write(ms.index + 31, val).await
     }
@@ -419,7 +419,9 @@ impl SI5338 {
         let act = self.set_rational_sample_rate(channel, &mut req).await?;
 
         if act.num != 0 {
-            println!("Non-integer sample rate set from integer sample rate, truncating output.\n");
+            log::debug!(
+                "Non-integer sample rate set from integer sample rate, truncating output.\n"
+            );
         }
 
         assert!(act.integer <= u32::MAX as u64);
@@ -454,7 +456,7 @@ impl SI5338 {
         let actual = self.get_rational_sample_rate(channel).await?;
 
         if actual.num != 0 {
-            println!("Fractional sample rate truncated during integer sample rate retrieval");
+            log::debug!("Fractional sample rate truncated during integer sample rate retrieval");
         }
 
         assert!(actual.integer <= u32::MAX as u64);
@@ -482,7 +484,7 @@ impl SI5338 {
 
     pub async fn set_smb_freq(&self, rate: u32) -> Result<u32> {
         let mut req = BladerfRationalRate::default();
-        println!("Setting integer SMB frequency: {rate}");
+        log::debug!("Setting integer SMB frequency: {rate}");
         req.integer = rate as u64;
         req.num = 0;
         req.den = 1;
@@ -490,12 +492,12 @@ impl SI5338 {
         let act = self.set_rational_smb_freq(&req).await?;
 
         if act.num != 0 {
-            println!("Non-integer SMB frequency set from integer frequency, truncating output.");
+            log::debug!("Non-integer SMB frequency set from integer frequency, truncating output.");
         }
 
         assert!(act.integer <= u32::MAX as u64);
 
-        println!("Set actual integer SMB frequency: {}", act.integer);
+        log::debug!("Set actual integer SMB frequency: {}", act.integer);
 
         Ok(act.integer as u32)
     }
@@ -519,7 +521,9 @@ impl SI5338 {
         let actual = self.get_rational_smb_freq().await?;
 
         if actual.num != 0 {
-            println!("Fractional SMB frequency truncated during integer SMB frequency retrieval");
+            log::debug!(
+                "Fractional SMB frequency truncated during integer SMB frequency retrieval"
+            );
         }
 
         assert!(actual.integer <= u32::MAX as u64);

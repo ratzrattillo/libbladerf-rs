@@ -7,10 +7,10 @@ fn main() {
     let mut packet = PktType::new(1, PktType::FLAG_WRITE, 3, 4);
 
     // Print debug output of a newly created packet
-    println!("{packet:#?}");
+    log::info!("{packet:#?}");
 
     // Print display output of a newly created packet
-    println!("{packet}");
+    log::info!("{packet}");
 
     // Get pointer to underlying buffer
     //let _ptr = packet.as_mut_ptr();

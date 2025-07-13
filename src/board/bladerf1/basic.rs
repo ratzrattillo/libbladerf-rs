@@ -128,6 +128,7 @@ impl BladeRf1 {
     pub async fn serial(&self) -> Result<String> {
         self.get_string_descriptor(NonZero::try_from(StringDescriptors::Serial as u8)?)
             .await
+        // ?.strip_prefix('"').unwrap().strip_suffix('"').unwrap().to_owned()
     }
 
     /// Return the devices' manufacturer (Nuand)

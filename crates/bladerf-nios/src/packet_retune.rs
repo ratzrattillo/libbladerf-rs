@@ -98,12 +98,12 @@ impl NiosPktRetune {
         // self.buf[Self::IDX_INTFRAC + 1] &= !((0x1 << 7) as u8); // Clear the first bit of second byte
 
         self.buf[Self::IDX_INTFRAC] = (nint >> 1) as u8; // 1019 >> 1 = 509 = 0x1FD as u8 = 0xFD
-        println!("Self::IDX_INTFRAC + 0: {:#x}", self.buf[Self::IDX_INTFRAC]);
+        // println!("Self::IDX_INTFRAC + 0: {:#x}", self.buf[Self::IDX_INTFRAC]);
         self.buf[Self::IDX_INTFRAC + 1] |= ((nint & 0x1) << 7) as u8;
-        println!(
-            "Self::IDX_INTFRAC + 1: {:#x}",
-            self.buf[Self::IDX_INTFRAC + 1]
-        );
+        // println!(
+        //     "Self::IDX_INTFRAC + 1: {:#x}",
+        //     self.buf[Self::IDX_INTFRAC + 1]
+        // );
         self
     }
 
@@ -115,20 +115,20 @@ impl NiosPktRetune {
         // self.buf[Self::IDX_INTFRAC + 3] = 0x00; // Clear third byte
 
         self.buf[Self::IDX_INTFRAC + 1] |= ((nfrac >> 16) & 0x7f) as u8; // 4893355 >> 16 = 74(0x4A), 0x4A & 0x7f = 0x4A
-        println!(
-            "Self::IDX_INTFRAC + 1: {:#x}",
-            self.buf[Self::IDX_INTFRAC + 1]
-        );
+        // println!(
+        //     "Self::IDX_INTFRAC + 1: {:#x}",
+        //     self.buf[Self::IDX_INTFRAC + 1]
+        // );
         self.buf[Self::IDX_INTFRAC + 2] = (nfrac >> 8) as u8; // 4893355 >> 8 = 19114(0x4AAA), as u8 = 0xAA
-        println!(
-            "Self::IDX_INTFRAC + 2: {:#x}",
-            self.buf[Self::IDX_INTFRAC + 2]
-        );
+        // println!(
+        //     "Self::IDX_INTFRAC + 2: {:#x}",
+        //     self.buf[Self::IDX_INTFRAC + 2]
+        // );
         self.buf[Self::IDX_INTFRAC + 3] = nfrac as u8; // 4893355 as u8 = 0xAB
-        println!(
-            "Self::IDX_INTFRAC + 3: {:#x}",
-            self.buf[Self::IDX_INTFRAC + 3]
-        );
+        // println!(
+        //     "Self::IDX_INTFRAC + 3: {:#x}",
+        //     self.buf[Self::IDX_INTFRAC + 3]
+        // );
         self
     }
 
@@ -219,7 +219,7 @@ impl NiosPktRetune {
     pub fn nint(&self) -> u16 {
         let mut nint = (self.buf[Self::IDX_INTFRAC] as u16) << 1;
         nint |= (self.buf[Self::IDX_INTFRAC + 1] as u16) >> 7;
-        println!("nint: {nint:#x?}");
+        // log::debug!("nint: {nint:#x?}");
         nint
     }
 

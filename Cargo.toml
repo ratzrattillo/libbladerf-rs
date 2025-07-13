@@ -20,5 +20,5 @@ thiserror = "2.0"
 nusb = { git = "https://github.com/kevinmehall/nusb", branch="main", features = ["tokio"] }
 bladerf-nios = { path= "crates/bladerf-nios" }
 bladerf-globals = { path= "crates/bladerf-globals" }
-log = "0.4.27"
+log = "0.4"
 num-complex = "0.4"

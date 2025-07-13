@@ -1124,7 +1124,7 @@ impl LMS6002D {
     ) -> Result<u8> {
         for _ in 0..VTUNE_MAX_ITERATIONS {
             if vcocap >= VCOCAP_MAX_VALUE {
-                println!("vtune_high_to_norm: VCOCAP hit max value.");
+                log::debug!("vtune_high_to_norm: VCOCAP hit max value.");
                 return Ok(VCOCAP_MAX_VALUE);
             }
 
@@ -1135,7 +1135,7 @@ impl LMS6002D {
             let vtune = self.get_vtune(base, VTUNE_DELAY_SMALL).await?;
 
             if vtune == VCO_NORM {
-                println!("VTUNE NORM @ VCOCAP={vcocap}");
+                log::debug!("VTUNE NORM @ VCOCAP={vcocap}");
                 // println!("VTUNE HIGH @ VCOCAP={}", *vtune_high_limit);
                 return Ok(vcocap - 1);
             }
@@ -1155,10 +1155,10 @@ impl LMS6002D {
         vcocap_reg_state: u8,
     ) -> Result<u8> {
         for _ in 0..VTUNE_MAX_ITERATIONS {
-            println!("base: {base}, vcocap: {vcocap}, vcocap_reg_state: {vcocap_reg_state}");
+            log::debug!("base: {base}, vcocap: {vcocap}, vcocap_reg_state: {vcocap_reg_state}");
 
             if vcocap == 0 {
-                println!("vtune_norm_to_high: VCOCAP hit min value.");
+                log::debug!("vtune_norm_to_high: VCOCAP hit min value.");
                 return Ok(0);
             }
 
@@ -1167,10 +1167,10 @@ impl LMS6002D {
             self.write_vcocap(base, vcocap, vcocap_reg_state).await?;
 
             let vtune = self.get_vtune(base, VTUNE_DELAY_SMALL).await?;
-            println!("vtune: {vtune}");
+            log::debug!("vtune: {vtune}");
 
             if vtune == VCO_HIGH {
-                println!("VTUNE HIGH @ VCOCAP={vcocap}");
+                log::debug!("VTUNE HIGH @ VCOCAP={vcocap}");
                 return Ok(vcocap);
             }
         }
@@ -1191,7 +1191,7 @@ impl LMS6002D {
     ) -> Result<u8> {
         for _ in 0..VTUNE_MAX_ITERATIONS {
             if vcocap == 0 {
-                println!("vtune_low_to_norm: VCOCAP hit min value.");
+                log::debug!("vtune_low_to_norm: VCOCAP hit min value.");
                 return Ok(0);
             }
 
@@ -1202,7 +1202,7 @@ impl LMS6002D {
             let vtune = self.get_vtune(base, VTUNE_DELAY_SMALL).await?;
 
             if vtune == VCO_NORM {
-                println!("VTUNE NORM @ VCOCAP={vcocap}");
+                log::debug!("VTUNE NORM @ VCOCAP={vcocap}");
                 return Ok(vcocap + 1);
             }
         }
@@ -1237,16 +1237,16 @@ impl LMS6002D {
             let vtune = self.get_vtune(base, 0).await?;
 
             if vtune == target_value {
-                println!("VTUNE reached {target_value} at iteration {i}");
+                log::debug!("VTUNE reached {target_value} at iteration {i}");
                 return Ok(());
             } else {
-                println!("VTUNE was {vtune}. Waiting and retrying...");
+                log::debug!("VTUNE was {vtune}. Waiting and retrying...");
 
                 //VTUNE_BUSY_WAIT(10);
             }
         }
 
-        println!("Timed out while waiting for VTUNE={target_value}. Walking VCOCAP...\n");
+        log::debug!("Timed out while waiting for VTUNE={target_value}. Walking VCOCAP...\n");
 
         while *vcocap != limit {
             *vcocap = (*vcocap as i8 + inc) as u8;
@@ -1255,12 +1255,12 @@ impl LMS6002D {
 
             let vtune = self.get_vtune(base, VTUNE_DELAY_SMALL).await?;
             if vtune == target_value {
-                println!("VTUNE={vtune} reached with VCOCAP={vcocap}");
+                log::debug!("VTUNE={vtune} reached with VCOCAP={vcocap}");
                 return Ok(());
             }
         }
 
-        println!("VTUNE did not reach {target_value}. Tuning may not be nominal.");
+        log::debug!("VTUNE did not reach {target_value}. Tuning may not be nominal.");
         Ok(())
 
         // #   ifdef ERROR_ON_NO_VTUNE_LIMIT
@@ -1299,19 +1299,19 @@ impl LMS6002D {
 
         match vtune {
             VCO_HIGH => {
-                println!("Estimate HIGH: Walking down to NORM.");
+                log::debug!("Estimate HIGH: Walking down to NORM.");
                 vtune_high_limit = self
                     .vtune_high_to_norm(base, vcocap, vcocap_reg_state)
                     .await?;
             }
             VCO_NORM => {
-                println!("Estimate NORM: Walking up to HIGH.");
+                log::debug!("Estimate NORM: Walking up to HIGH.");
                 vtune_high_limit = self
                     .vtune_norm_to_high(base, vcocap, vcocap_reg_state)
                     .await?;
             }
             VCO_LOW => {
-                println!("Estimate LOW: Walking down to NORM.");
+                log::debug!("Estimate LOW: Walking down to NORM.");
                 vtune_low_limit = self
                     .vtune_low_to_norm(base, vcocap, vcocap_reg_state)
                     .await?;
@@ -1331,7 +1331,7 @@ impl LMS6002D {
                         vcocap = vtune_high_limit + VCOCAP_MAX_LOW_HIGH;
                     } else {
                         vcocap = VCOCAP_MAX_VALUE;
-                        println!("Clamping VCOCAP to {vcocap}.");
+                        log::debug!("Clamping VCOCAP to {vcocap}.");
                     }
                 }
                 _ => {
@@ -1343,11 +1343,11 @@ impl LMS6002D {
 
             self.write_vcocap(base, vcocap, vcocap_reg_state).await?;
 
-            println!("Waiting for VTUNE LOW @ VCOCAP={vcocap}");
+            log::debug!("Waiting for VTUNE LOW @ VCOCAP={vcocap}");
             self.wait_for_vtune_value(base, VCO_LOW, &mut vcocap, vcocap_reg_state)
                 .await?;
 
-            println!("Walking VTUNE LOW to NORM from VCOCAP={vcocap}");
+            log::debug!("Walking VTUNE LOW to NORM from VCOCAP={vcocap}");
             vtune_low_limit = self
                 .vtune_low_to_norm(base, vcocap, vcocap_reg_state)
                 .await?;
@@ -1363,7 +1363,7 @@ impl LMS6002D {
                         vcocap = vtune_low_limit - VCOCAP_MAX_LOW_HIGH;
                     } else {
                         vcocap = 0;
-                        println!("Clamping VCOCAP to {vcocap}.");
+                        log::debug!("Clamping VCOCAP to {vcocap}.");
                     }
                 }
                 _ => {
@@ -1375,11 +1375,11 @@ impl LMS6002D {
 
             self.write_vcocap(base, vcocap, vcocap_reg_state).await?;
 
-            println!("Waiting for VTUNE HIGH @ VCOCAP={vcocap}");
+            log::debug!("Waiting for VTUNE HIGH @ VCOCAP={vcocap}");
             self.wait_for_vtune_value(base, VCO_HIGH, &mut vcocap, vcocap_reg_state)
                 .await?;
 
-            println!("Walking VTUNE HIGH to NORM from VCOCAP={vcocap}");
+            log::debug!("Walking VTUNE HIGH to NORM from VCOCAP={vcocap}");
             vtune_high_limit = self
                 .vtune_high_to_norm(base, vcocap, vcocap_reg_state)
                 .await?;
@@ -1387,10 +1387,10 @@ impl LMS6002D {
 
         vcocap = vtune_high_limit + (vtune_low_limit - vtune_high_limit) / 2;
 
-        println!("VTUNE LOW:   {vtune_low_limit}");
-        println!("VTUNE NORM:  {vcocap}");
-        println!("VTUNE Est:   {vcocap_est}"); // , vcocap_est - vcocap
-        println!("VTUNE HIGH:  {vtune_high_limit}");
+        log::debug!("VTUNE LOW:   {vtune_low_limit}");
+        log::debug!("VTUNE NORM:  {vcocap}");
+        log::debug!("VTUNE Est:   {vcocap_est}"); // , vcocap_est - vcocap
+        log::debug!("VTUNE HIGH:  {vtune_high_limit}");
 
         // #       if LMS_COUNT_BUSY_WAITS
         //     println!("Busy waits:  %u\n", busy_wait_count);
@@ -1522,7 +1522,7 @@ impl LMS6002D {
             f.vcocap_result = f.vcocap;
         } else {
             /* Walk down VCOCAP values find an optimal values */
-            println!("Tuning VCOCAP...");
+            log::debug!("Tuning VCOCAP...");
             f.vcocap_result = self.tune_vcocap(f.vcocap, base, vcocap_reg_state).await?;
         }
 
@@ -1630,7 +1630,7 @@ impl LMS6002D {
         //     return 0;
         // }
         if self.is_loopback_enabled().await? {
-            println!("Loopback enabled!");
+            log::debug!("Loopback enabled!");
             return Ok(());
         }
 
@@ -1660,7 +1660,7 @@ impl LMS6002D {
 
     pub async fn set_frequency(&self, channel: u8, frequency: u32) -> Result<LmsFreq> {
         let mut f = Self::calculate_tuning_params(frequency)?;
-        println!("{f:?}");
+        log::debug!("{f:?}");
 
         self.set_precalculated_frequency(channel, &mut f).await?;
         Ok(f)
@@ -1861,7 +1861,7 @@ impl LMS6002D {
             Self::calculate_tuning_params(frequency)?
         };
 
-        println!("{f:?}");
+        log::debug!("{f:?}");
 
         let band = if f.flags & LMS_FREQ_FLAGS_LOW_BAND != 0 {
             Band::Low
