@@ -106,32 +106,28 @@ pub enum BladerfXb200Path {
     Mix = 1,
 }
 
-// struct xb200_xb_data {
-//     /* Track filterbank selection for RX and TX auto-selection */
-//     bladerf_xb200_filter auto_filter[2];
-// };
-
 pub struct Xb200 {
-    rx_filterbank: Option<BladerfXb200Filter>,
-    tx_filterbank: Option<BladerfXb200Filter>,
+    /* Track filterbank selection for RX and TX auto-selection */
+    // rx_filterbank: Option<BladerfXb200Filter>,
+    // tx_filterbank: Option<BladerfXb200Filter>,
 }
 
 impl Xb200 {
-    pub fn set_filterbank(&mut self, ch: u8, filter: Option<BladerfXb200Filter>) {
-        if bladerf_channel_rx!(ch) != 0 {
-            self.rx_filterbank = filter;
-        } else {
-            self.tx_filterbank = filter;
-        }
-    }
-
-    pub fn get_filterbank(&self, ch: u8) -> &Option<BladerfXb200Filter> {
-        if bladerf_channel_rx!(ch) != 0 {
-            &self.rx_filterbank
-        } else {
-            &self.tx_filterbank
-        }
-    }
+    // pub fn set_filterbank(&mut self, ch: u8, filter: Option<BladerfXb200Filter>) {
+    //     if bladerf_channel_rx!(ch) != 0 {
+    //         self.rx_filterbank = filter;
+    //     } else {
+    //         self.tx_filterbank = filter;
+    //     }
+    // }
+    //
+    // pub fn get_filterbank(&self, ch: u8) -> &Option<BladerfXb200Filter> {
+    //     if bladerf_channel_rx!(ch) != 0 {
+    //         &self.rx_filterbank
+    //     } else {
+    //         &self.tx_filterbank
+    //     }
+    // }
 }
 
 impl BladeRf1 {
@@ -149,7 +145,7 @@ impl BladeRf1 {
             "RESERVED",
         ];
 
-        log::debug!("Attaching transverter board");
+        log::debug!("Attaching XB200 transverter board");
         // Out: 41010000270000000000000000000000
         let mut val8 = self.si5338.read(39).await?;
         log::debug!("[xb200_attach] si5338_read: {val8}");
@@ -172,29 +168,13 @@ impl BladeRf1 {
         log::debug!("[xb200_attach] config_gpio_write: {val}");
         self.config_gpio_write(val).await?;
 
-        // TODO: Remove, as it just serves as a check
-        let mut val = self.config_gpio_read().await?;
-        log::debug!("[xb200_attach] config_gpio_read: {val}");
-
-        // TODO: Remove, as val is not used afterwards.
-        val = self.interface.nios_expansion_gpio_read().await?;
-        log::debug!("[xb200_attach] expansion_gpio_read: {val}");
-
         self.interface
             .nios_expansion_gpio_dir_write(0xffffffff, 0x3C00383E)
             .await?;
 
-        // TODO: DEBUG ONLY, REMOVE
-        val = self.interface.nios_expansion_gpio_read().await?;
-        log::debug!("[xb200_attach] expansion_gpio_read: {val}");
-
         self.interface
             .nios_expansion_gpio_write(0xffffffff, 0x800)
             .await?;
-
-        // TODO: DEBUG ONLY, REMOVE
-        val = self.interface.nios_expansion_gpio_read().await?;
-        log::debug!("[xb200_attach] expansion_gpio_read: {val}");
 
         // Load ADF4351 registers via SPI
         // Refer to ADF4351 reference manual for register set
@@ -206,22 +186,11 @@ impl BladeRf1 {
 
         log::debug!("MUXOUT: {}", mux_lut[muxout]);
 
-        // TODO: DEBUG ONLY, REMOVE
-        val = self.interface.nios_expansion_gpio_read().await?;
-        log::debug!("[xb200_attach] expansion_gpio_read: {val}");
-
         let value = 0x60008E42 | (1 << 8) | ((muxout as u32) << 26);
         log::debug!("[xb200_attach] value: {value}");
         self.interface.nios_xb200_synth_write(value).await?;
 
-        // TODO: DEBUG ONLY, REMOVE
-        val = self.interface.nios_expansion_gpio_read().await?;
-        log::debug!("[xb200_attach] expansion_gpio_read: {val}");
-
         self.interface.nios_xb200_synth_write(0x08008011).await?;
-        // TODO: DEBUG ONLY, REMOVE
-        val = self.interface.nios_expansion_gpio_read().await?;
-        log::debug!("[xb200_attach] expansion_gpio_read: {val}");
 
         // Somehow here, actually the MUXOUT Bit should be set...
         self.interface.nios_xb200_synth_write(0x00410000).await?;
@@ -239,8 +208,8 @@ impl BladeRf1 {
             .await?;
 
         self.xb200 = Some(Xb200 {
-            rx_filterbank: None,
-            tx_filterbank: None,
+            // rx_filterbank: None,
+            // tx_filterbank: None,
         });
 
         Ok(())
@@ -354,10 +323,10 @@ impl BladeRf1 {
         if filter == BladerfXb200Filter::Auto1db || filter == BladerfXb200Filter::Auto3db {
             /* Save which soft auto filter mode we're in */
             // xb_data->auto_filter[ch] = filter;
-            self.xb200
-                .as_mut()
-                .unwrap()
-                .set_filterbank(ch, Some(filter));
+            // self.xb200
+            //     .as_mut()
+            //     .unwrap()
+            //     .set_filterbank(ch, Some(filter));
 
             // TODO: Check substraction here if expansion board is attached
             let frequency = self.get_frequency(ch).await?;
@@ -366,7 +335,7 @@ impl BladeRf1 {
         } else {
             /* Invalidate the soft auto filter mode entry */
             // xb_data->auto_filter[ch] = -1;
-            self.xb200.as_mut().unwrap().set_filterbank(ch, None);
+            // self.xb200.as_mut().unwrap().set_filterbank(ch, None);
 
             self.set_filterbank_mux(ch, filter).await?;
         }
@@ -388,9 +357,7 @@ impl BladeRf1 {
             return Err(anyhow!("xb_200 not attached!"));
         }
 
-        let filter = if self.xb200.as_ref().unwrap().get_filterbank(ch)
-            == &Some(BladerfXb200Filter::Auto1db)
-        {
+        let filter = if self.xb200_get_filterbank(ch).await? == BladerfXb200Filter::Auto1db {
             if (37774405..=59535436).contains(&frequency) {
                 Ok(BladerfXb200Filter::_50M)
             } else if (128326173..=166711171).contains(&frequency) {
@@ -400,9 +367,7 @@ impl BladeRf1 {
             } else {
                 Ok(BladerfXb200Filter::Custom)
             }
-        } else if self.xb200.as_ref().unwrap().get_filterbank(ch)
-            == &Some(BladerfXb200Filter::Auto3db)
-        {
+        } else if self.xb200_get_filterbank(ch).await? == BladerfXb200Filter::Auto3db {
             if (34782924..=61899260).contains(&frequency) {
                 Ok(BladerfXb200Filter::_50M)
             } else if (121956957..=178444099).contains(&frequency) {

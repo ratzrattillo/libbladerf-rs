@@ -128,7 +128,7 @@ async fn main() -> Result<()> {
 
     // bladerf.async_run_stream().await?;
 
-    bladerf.perform_format_deconfig(&Rx)?;
+    bladerf.perform_format_deconfig(Rx)?;
     // tokio::time::sleep(Duration::from_secs(1)).await;
     bladerf.enable_module(BLADERF_MODULE_RX, false).await?;
 

@@ -1,14 +1,113 @@
-use crate::{BladeRf1, BladeRfError};
-use anyhow::Result;
+use crate::{BladeRf1, BladeRf1RxStreamer, BladeRfError};
+use anyhow::{Result, anyhow};
 use bladerf_globals::bladerf1::{
     BLADERF_GPIO_PACKET, BLADERF_GPIO_TIMESTAMP, BLADERF_GPIO_TIMESTAMP_DIV2,
 };
-use bladerf_globals::{BladeRfDirection, BladerfFormat};
+use bladerf_globals::{BLADERF_MODULE_RX, BladeRfDirection, BladerfFormat};
 use num_complex::Complex32;
+use nusb::Speed;
 use nusb::transfer::{Bulk, ControlIn, ControlType, In, Recipient};
 use std::io::BufRead;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+impl BladeRf1RxStreamer {
+    // TODO Adjust to proper value
+    // const MTU: usize = 4 * 16384;
+
+    pub fn new(
+        dev: Arc<Mutex<BladeRf1>>,
+        buffer_size: usize,
+        num_transfers: Option<usize>,
+        timeout: Option<Duration>,
+    ) -> Result<Self> {
+        let mut reader = dev
+            .lock()
+            .unwrap()
+            .interface
+            .endpoint::<Bulk, In>(0x81)?
+            .reader(buffer_size);
+        if let Some(t) = timeout {
+            reader.set_read_timeout(t)
+        }
+        if let Some(n) = num_transfers {
+            reader.set_num_transfers(n)
+        }
+        Ok(Self { dev, reader })
+    }
+
+    pub fn mtu(&self) -> Result<usize> {
+        let speed = self.dev.lock().unwrap().speed();
+        match speed {
+            Speed::High => Ok(512),
+            Speed::Super | Speed::SuperPlus => Ok(1024),
+            _ => Err(anyhow!("Unsupported USB transfer speed!")),
+        }
+    }
+
+    pub async fn activate(&mut self) -> Result<()> {
+        let dev = self.dev.lock().unwrap();
+        dev.perform_format_config(BladeRfDirection::Rx, BladerfFormat::Sc16Q11)
+            .await?;
+        dev.enable_module(BLADERF_MODULE_RX, true).await?;
+        dev.experimental_control_urb().await
+    }
+
+    pub async fn deactivate(&mut self) -> Result<()> {
+        let dev = self.dev.lock().unwrap();
+        dev.perform_format_deconfig(BladeRfDirection::Rx)?;
+        dev.enable_module(BLADERF_MODULE_RX, false).await
+    }
+
+    pub fn read_sync(
+        &mut self,
+        buffers: &mut [&mut [Complex32]],
+        timeout_us: i64,
+    ) -> Result<usize> {
+        let num_channels = buffers.len();
+        log::debug!("num_channels: {num_channels}");
+        // TODO: What happens if buffers for the different channels have different sizes? Is that possible?
+        let buffer_size = buffers[0].len();
+        log::debug!("buffer_size: {buffer_size}");
+
+        if buffers.is_empty() || buffers[0].is_empty() {
+            log::debug!("no buffers available, or buffers have a length of zero!");
+            return Ok(0);
+        }
+        if buffers.len() > 1 {
+            log::debug!(
+                "bladerf1 only supports reading from one RX channel. Please provide a one dimensional buffer!"
+            );
+            return Err(BladeRfError::Unsupported.into());
+        }
+
+        self.reader
+            .set_read_timeout(Duration::from_micros(timeout_us as u64));
+
+        let buf = self.reader.fill_buf()?;
+
+        let mut received = 0;
+        for (dst, src) in buffers[0].iter_mut().zip(
+            buf.chunks_exact(4)
+                .map(|buf| buf.split_at(2))
+                .map(|(re, im)| {
+                    (
+                        i16::from_le_bytes(<[u8; 2]>::try_from(re).unwrap()) as f32,
+                        i16::from_le_bytes(<[u8; 2]>::try_from(im).unwrap()) as f32,
+                    )
+                })
+                .map(|(re, im)| Complex32::new(re, im)),
+        ) {
+            *dst = src;
+            received += 4;
+        }
+
+        self.reader.consume(received);
+        log::debug!("consumed length: {received}");
+
+        Ok(received / 4)
+    }
+}
 impl BladeRf1 {
     /// Perform the neccessary device configuration for the specified format
     /// (e.g., enabling/disabling timestamp support), first checking that the
@@ -91,7 +190,7 @@ impl BladeRf1 {
      *
      * @return 0 on success, BLADERF_ERR_* on failure
      */
-    pub fn perform_format_deconfig(&self, direction: &BladeRfDirection) -> Result<()> {
+    pub fn perform_format_deconfig(&self, direction: BladeRfDirection) -> Result<()> {
         //struct bladerf1_board_data *board_data = dev->board_data;
 
         match direction {
@@ -121,57 +220,6 @@ impl BladeRf1 {
             .await?;
         log::debug!("Control Response Data: {vec:?}");
         Ok(())
-    }
-
-    pub fn read_sync(&self, buffers: &mut [&mut [Complex32]], timeout_us: i64) -> Result<usize> {
-        let num_channels = buffers.len();
-        log::debug!("num_channels: {num_channels}");
-        // TODO: What happens if buffers for the different channels have different sizes? Is that possible?
-        let buffer_size = buffers[0].len();
-        log::debug!("buffer_size: {buffer_size}");
-
-        if buffers.is_empty() || buffers[0].is_empty() {
-            log::debug!("no buffers available, or buffers have a length of zero!");
-            return Ok(0);
-        }
-        if buffers.len() > 1 {
-            log::debug!(
-                "bladerf1 only supports reading from one RX channel. Please provide a one dimensional buffer!"
-            );
-            return Err(BladeRfError::Unsupported.into());
-        }
-
-        let ep_bulk_in = self.interface.endpoint::<Bulk, In>(0x81)?;
-        let mut reader = ep_bulk_in
-            .reader(buffer_size)
-            .with_num_transfers(1)
-            .with_read_timeout(Duration::from_micros(timeout_us as u64));
-
-        let buf = reader.fill_buf()?;
-
-        for (idx, sample) in buf
-            .chunks_exact(4)
-            .map(|buf| buf.split_at(2))
-            .map(|(re, im)| {
-                (
-                    i16::from_le_bytes(<[u8; 2]>::try_from(re).unwrap()) as f32,
-                    i16::from_le_bytes(<[u8; 2]>::try_from(im).unwrap()) as f32,
-                )
-            })
-            .map(|(re, im)| Complex32::new(re, im))
-            .enumerate()
-        {
-            // log::debug!("{sample}");
-            buffers[0][idx] = sample;
-        }
-
-        // mark the bytes we worked with as read
-        let length = buf.len();
-        log::debug!("buffer length: {length}");
-        reader.consume(length);
-        log::debug!("consumed length: {length}");
-
-        Ok(length / 4)
     }
 
     // pub fn write_all_sync(

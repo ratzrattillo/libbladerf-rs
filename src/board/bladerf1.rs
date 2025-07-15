@@ -19,7 +19,10 @@ use crate::hardware::lms6002d::LMS6002D;
 use crate::hardware::si5338::SI5338;
 use crate::xb200::Xb200;
 use bladerf_globals::TuningMode;
+use nusb::io::EndpointRead;
+use nusb::transfer::Bulk;
 use nusb::{Device, Interface, Speed};
+use std::sync::{Arc, Mutex};
 
 #[derive(thiserror::Error, Debug)]
 pub enum BladeRfError {
@@ -42,6 +45,11 @@ pub enum BladeRfError {
 struct BoardData {
     speed: Speed,
     tuning_mode: TuningMode,
+}
+
+pub struct BladeRf1RxStreamer {
+    dev: Arc<Mutex<BladeRf1>>,
+    reader: EndpointRead<Bulk>,
 }
 
 /// Representation of a BladeRF1 device.

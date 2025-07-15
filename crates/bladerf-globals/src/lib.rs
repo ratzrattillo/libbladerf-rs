@@ -35,7 +35,7 @@ pub struct SdrRange<T> {
 /**
  * Stream direction
  */
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone)]
 #[repr(u8)]
 pub enum BladeRfDirection {
     Rx = 0, // Receive direction

@@ -79,7 +79,6 @@ impl BladeRf1 {
 
         let _pwr = self.xb300_get_output_power().await?;
 
-        // return status;
         Ok(())
     }
 

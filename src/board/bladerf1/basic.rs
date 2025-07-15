@@ -470,10 +470,10 @@ impl BladeRf1 {
 
     /// Enable/Disable RF Module via the USB backend.
     /// This method should probably be moved to some USB backend dedicated source file.
-    async fn usb_enable_module(&self, direction: &BladeRfDirection, enable: bool) -> Result<()> {
+    async fn usb_enable_module(&self, direction: BladeRfDirection, enable: bool) -> Result<()> {
         let val = enable as u16;
 
-        let cmd = if *direction == BladeRfDirection::Rx {
+        let cmd = if direction == BladeRfDirection::Rx {
             BLADE_USB_CMD_RF_RX
         } else {
             BLADE_USB_CMD_RF_TX
@@ -538,12 +538,12 @@ impl BladeRf1 {
 
         if !enable {
             // sync_deinit(&board_data->sync[ch]);
-            self.perform_format_deconfig(&direction)?;
+            self.perform_format_deconfig(direction.clone())?;
         }
 
         self.lms.enable_rffe(module, enable).await?;
 
-        self.usb_enable_module(&direction, enable).await
+        self.usb_enable_module(direction.clone(), enable).await
     }
 
     /// FPGA Band Selection
