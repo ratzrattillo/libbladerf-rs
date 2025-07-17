@@ -1,6 +1,7 @@
 // #![allow(private_interfaces, dead_code)]
 mod bandwidth;
 mod basic;
+mod corrections;
 pub(crate) mod expansion_boards;
 mod frequency;
 mod gain;
@@ -19,7 +20,7 @@ use crate::hardware::lms6002d::LMS6002D;
 use crate::hardware::si5338::SI5338;
 use crate::xb200::Xb200;
 use bladerf_globals::TuningMode;
-use nusb::io::EndpointRead;
+use nusb::io::{EndpointRead, EndpointWrite};
 use nusb::transfer::Bulk;
 use nusb::{Device, Interface, Speed};
 use std::sync::{Arc, Mutex};
@@ -50,6 +51,13 @@ struct BoardData {
 pub struct BladeRf1RxStreamer {
     dev: Arc<Mutex<BladeRf1>>,
     reader: EndpointRead<Bulk>,
+    mtu: usize,
+}
+
+pub struct BladeRf1TxStreamer {
+    dev: Arc<Mutex<BladeRf1>>,
+    writer: EndpointWrite<Bulk>,
+    mtu: usize,
 }
 
 /// Representation of a BladeRF1 device.

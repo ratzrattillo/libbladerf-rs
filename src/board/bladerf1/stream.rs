@@ -1,48 +1,37 @@
-use crate::{BladeRf1, BladeRf1RxStreamer, BladeRfError};
-use anyhow::{Result, anyhow};
+use crate::{BladeRf1, BladeRf1RxStreamer, BladeRf1TxStreamer, BladeRfError};
+use anyhow::Result;
 use bladerf_globals::bladerf1::{
     BLADERF_GPIO_PACKET, BLADERF_GPIO_TIMESTAMP, BLADERF_GPIO_TIMESTAMP_DIV2,
 };
-use bladerf_globals::{BLADERF_MODULE_RX, BladeRfDirection, BladerfFormat};
+use bladerf_globals::{BLADERF_MODULE_RX, BLADERF_MODULE_TX, BladeRfDirection, BladerfFormat};
 use num_complex::Complex32;
-use nusb::Speed;
-use nusb::transfer::{Bulk, ControlIn, ControlType, In, Recipient};
-use std::io::BufRead;
+use nusb::transfer::{Bulk, ControlIn, ControlType, In, Out, Recipient};
+use std::io::{BufRead, Write};
 use std::sync::{Arc, Mutex};
+use std::thread::sleep;
 use std::time::Duration;
 
 impl BladeRf1RxStreamer {
-    // TODO Adjust to proper value
-    // const MTU: usize = 4 * 16384;
-
     pub fn new(
         dev: Arc<Mutex<BladeRf1>>,
-        buffer_size: usize,
         num_transfers: Option<usize>,
         timeout: Option<Duration>,
     ) -> Result<Self> {
-        let mut reader = dev
-            .lock()
-            .unwrap()
-            .interface
-            .endpoint::<Bulk, In>(0x81)?
-            .reader(buffer_size);
+        let endpoint = dev.lock().unwrap().interface.endpoint::<Bulk, In>(0x81)?;
+        let mtu = endpoint.max_packet_size();
+        // println!("Using mtu: {}", mtu);
+        let mut reader = endpoint.reader(mtu);
         if let Some(t) = timeout {
             reader.set_read_timeout(t)
         }
         if let Some(n) = num_transfers {
             reader.set_num_transfers(n)
         }
-        Ok(Self { dev, reader })
+        Ok(Self { dev, reader, mtu })
     }
 
     pub fn mtu(&self) -> Result<usize> {
-        let speed = self.dev.lock().unwrap().speed();
-        match speed {
-            Speed::High => Ok(512),
-            Speed::Super | Speed::SuperPlus => Ok(1024),
-            _ => Err(anyhow!("Unsupported USB transfer speed!")),
-        }
+        Ok(self.mtu)
     }
 
     pub async fn activate(&mut self) -> Result<()> {
@@ -65,16 +54,15 @@ impl BladeRf1RxStreamer {
         timeout_us: i64,
     ) -> Result<usize> {
         let num_channels = buffers.len();
-        log::debug!("num_channels: {num_channels}");
-        // TODO: What happens if buffers for the different channels have different sizes? Is that possible?
-        let buffer_size = buffers[0].len();
-        log::debug!("buffer_size: {buffer_size}");
+        // log::debug!("num_channels: {num_channels}");
+        // let buffer_size = buffers[0].len();
+        // log::debug!("buffer_size: {buffer_size}");
 
         if buffers.is_empty() || buffers[0].is_empty() {
             log::debug!("no buffers available, or buffers have a length of zero!");
             return Ok(0);
         }
-        if buffers.len() > 1 {
+        if num_channels > 1 {
             log::debug!(
                 "bladerf1 only supports reading from one RX channel. Please provide a one dimensional buffer!"
             );
@@ -92,6 +80,8 @@ impl BladeRf1RxStreamer {
                 .map(|buf| buf.split_at(2))
                 .map(|(re, im)| {
                     (
+                        // i16::from_le_bytes(<[u8; 2]>::try_from(re).unwrap()) as f32 / 2047.5,
+                        // i16::from_le_bytes(<[u8; 2]>::try_from(im).unwrap()) as f32 / 2047.5,
                         i16::from_le_bytes(<[u8; 2]>::try_from(re).unwrap()) as f32,
                         i16::from_le_bytes(<[u8; 2]>::try_from(im).unwrap()) as f32,
                     )
@@ -99,15 +89,91 @@ impl BladeRf1RxStreamer {
                 .map(|(re, im)| Complex32::new(re, im)),
         ) {
             *dst = src;
+            log::debug!("{src}");
             received += 4;
         }
 
         self.reader.consume(received);
-        log::debug!("consumed length: {received}");
+        // log::debug!("consumed length: {received}");
 
         Ok(received / 4)
     }
 }
+
+impl BladeRf1TxStreamer {
+    pub fn new(
+        dev: Arc<Mutex<BladeRf1>>,
+        num_transfers: Option<usize>,
+        timeout: Option<Duration>,
+    ) -> Result<Self> {
+        let endpoint = dev.lock().unwrap().interface.endpoint::<Bulk, Out>(0x01)?;
+        let mtu = endpoint.max_packet_size();
+        // println!("Using mtu: {}", mtu);
+        let mut writer = endpoint.writer(mtu);
+        if let Some(t) = timeout {
+            writer.set_write_timeout(t)
+        }
+        if let Some(n) = num_transfers {
+            writer.set_num_transfers(n)
+        }
+        Ok(Self { dev, writer, mtu })
+    }
+
+    pub fn mtu(&self) -> Result<usize> {
+        Ok(self.mtu)
+    }
+
+    pub async fn activate(&mut self) -> Result<()> {
+        let dev = self.dev.lock().unwrap();
+        //dev.perform_format_config(BladeRfDirection::Rx, BladerfFormat::Sc16Q11)
+        //    .await?;
+        dev.enable_module(BLADERF_MODULE_TX, true).await
+        // dev.experimental_control_urb().await
+    }
+
+    pub async fn deactivate(&mut self) -> Result<()> {
+        let dev = self.dev.lock().unwrap();
+        // dev.perform_format_deconfig(BladeRfDirection::Rx)?;
+        dev.enable_module(BLADERF_MODULE_TX, false).await
+    }
+
+    pub fn write(
+        &mut self,
+        _buffers: &[&[Complex32]],
+        _at_ns: Option<i64>,
+        _end_burst: bool,
+        _timeout_us: i64,
+    ) -> Result<usize> {
+        todo!()
+    }
+
+    pub fn write_all(
+        &mut self,
+        buffers: &[&[Complex32]],
+        at_ns: Option<i64>,
+        end_burst: bool,
+        timeout_us: i64,
+    ) -> Result<()> {
+        self.writer
+            .set_write_timeout(Duration::from_micros(timeout_us as u64));
+        if let Some(t) = at_ns {
+            sleep(Duration::from_nanos(t as u64));
+        }
+        for (re, im) in buffers[0]
+            .iter()
+            // .map(|c| ((c.re * 2047.5) as i16, (c.im * 2047.5) as i16))
+            .map(|c| (c.re as i16, c.im as i16))
+        {
+            let _ = self.writer.write(re.to_le_bytes().as_slice())?;
+            let _ = self.writer.write(im.to_le_bytes().as_slice())?;
+        }
+        if end_burst {
+            self.writer.submit();
+        }
+        Ok(())
+    }
+}
+
 impl BladeRf1 {
     /// Perform the neccessary device configuration for the specified format
     /// (e.g., enabling/disabling timestamp support), first checking that the

@@ -2,7 +2,7 @@
 
 use anyhow::{Result, anyhow};
 use bladerf_globals::bladerf1::BladeRfVersion;
-use bladerf_globals::{ENDPOINT_IN, ENDPOINT_OUT};
+use bladerf_globals::{ENDPOINT_IN, ENDPOINT_OUT, BLADERF_MODULE_RX, BLADERF_MODULE_TX};
 use bladerf_nios::packet_generic::{NiosPkt, NumToByte};
 use bladerf_nios::packet_retune::{Band, NiosPktRetuneRequest, NiosPktRetuneResponse, Tune};
 use bladerf_nios::*;
@@ -73,6 +73,18 @@ pub trait Nios {
         val: u32,
     ) -> impl Future<Output = Result<()>> + Send;
     fn nios_get_fpga_version(&self) -> impl Future<Output = Result<BladeRfVersion>> + Send;
+    fn nios_get_iq_gain_correction(&self, ch: u8) -> impl Future<Output = Result<i16>> + Send;
+    fn nios_get_iq_phase_correction(&self, ch: u8) -> impl Future<Output = Result<i16>> + Send;
+    fn nios_set_iq_gain_correction(
+        &self,
+        ch: u8,
+        value: i16,
+    ) -> impl Future<Output = Result<()>> + Send;
+    fn nios_set_iq_phase_correction(
+        &self,
+        ch: u8,
+        value: i16,
+    ) -> impl Future<Output = Result<()>> + Send;
 }
 
 impl Nios for Interface {
@@ -272,5 +284,85 @@ impl Nios for Interface {
             patch: ((regval & 0xffff) as u16).to_be(),
         };
         Ok(version)
+    }
+
+    async fn nios_get_iq_gain_correction(&self, ch: u8) -> Result<i16> {
+        match ch {
+            BLADERF_MODULE_RX => Ok(self
+                .nios_read::<u8, u16>(
+                    NIOS_PKT_8X16_TARGET_IQ_CORR,
+                    NIOS_PKT_8X16_ADDR_IQ_CORR_RX_GAIN,
+                )
+                .await? as i16),
+            BLADERF_MODULE_TX => Ok(self
+                .nios_read::<u8, u16>(
+                    NIOS_PKT_8X16_TARGET_IQ_CORR,
+                    NIOS_PKT_8X16_ADDR_IQ_CORR_TX_GAIN,
+                )
+                .await? as i16),
+            _ => Err(anyhow!("Invalid channel: {ch}")),
+        }
+    }
+
+    async fn nios_get_iq_phase_correction(&self, ch: u8) -> Result<i16> {
+        match ch {
+            BLADERF_MODULE_RX => Ok(self
+                .nios_read::<u8, u16>(
+                    NIOS_PKT_8X16_TARGET_IQ_CORR,
+                    NIOS_PKT_8X16_ADDR_IQ_CORR_RX_PHASE,
+                )
+                .await? as i16),
+            BLADERF_MODULE_TX => Ok(self
+                .nios_read::<u8, u16>(
+                    NIOS_PKT_8X16_TARGET_IQ_CORR,
+                    NIOS_PKT_8X16_ADDR_IQ_CORR_TX_PHASE,
+                )
+                .await? as i16),
+            _ => Err(anyhow!("Invalid channel: {ch}")),
+        }
+    }
+
+    async fn nios_set_iq_gain_correction(&self, ch: u8, value: i16) -> Result<()> {
+        match ch {
+            BLADERF_MODULE_RX => {
+                self.nios_write::<u8, u16>(
+                    NIOS_PKT_8X16_TARGET_IQ_CORR,
+                    NIOS_PKT_8X16_ADDR_IQ_CORR_RX_GAIN,
+                    value as u16,
+                )
+                .await
+            }
+            BLADERF_MODULE_TX => {
+                self.nios_write::<u8, u16>(
+                    NIOS_PKT_8X16_TARGET_IQ_CORR,
+                    NIOS_PKT_8X16_ADDR_IQ_CORR_TX_GAIN,
+                    value as u16,
+                )
+                .await
+            }
+            _ => Err(anyhow!("Invalid channel: {ch}")),
+        }
+    }
+
+    async fn nios_set_iq_phase_correction(&self, ch: u8, value: i16) -> Result<()> {
+        match ch {
+            BLADERF_MODULE_RX => {
+                self.nios_write::<u8, u16>(
+                    NIOS_PKT_8X16_TARGET_IQ_CORR,
+                    NIOS_PKT_8X16_ADDR_IQ_CORR_RX_PHASE,
+                    value as u16,
+                )
+                .await
+            }
+            BLADERF_MODULE_TX => {
+                self.nios_write::<u8, u16>(
+                    NIOS_PKT_8X16_TARGET_IQ_CORR,
+                    NIOS_PKT_8X16_ADDR_IQ_CORR_TX_PHASE,
+                    value as u16,
+                )
+                .await
+            }
+            _ => Err(anyhow!("Invalid channel: {ch}")),
+        }
     }
 }

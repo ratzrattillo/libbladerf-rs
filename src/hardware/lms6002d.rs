@@ -1960,4 +1960,126 @@ impl LMS6002D {
         // and convert u32 bandwidth into Enum
         Ok(LmsBw::from_index(data))
     }
+
+    fn scale_dc_offset(module: u8, mut value: i16) -> Result<u8> {
+        match module {
+            BLADERF_MODULE_RX => {
+                /* RX only has 6 bits of scale to work with, remove normalization */
+                value >>= 5;
+
+                if value < 0 {
+                    if value <= -64 {
+                        /* Clamp */
+                        value = 0x3f;
+                    } else {
+                        value = (-value) & 0x3f;
+                    }
+
+                    /* This register uses bit 6 to denote a negative value */
+                    value |= 1 << 6;
+                } else {
+                    if value >= 64 {
+                        /* Clamp */
+                        value = 0x3f;
+                    } else {
+                        value &= 0x3f;
+                    }
+                }
+
+                Ok(value as u8)
+            }
+            BLADERF_MODULE_TX => {
+                /* TX only has 7 bits of scale to work with, remove normalization */
+                value >>= 4;
+
+                /* LMS6002D 0x00 = -16, 0x80 = 0, 0xff = 15.9375 */
+                if value >= 0 {
+                    let ret = (if value >= 128 { 0x7f } else { value & 0x7f }) as u8;
+
+                    /* Assert bit 7 for positive numbers */
+                    Ok((1 << 7) | ret)
+                } else {
+                    Ok((if value <= -128 { 0x00 } else { value & 0x7f }) as u8)
+                }
+            }
+            _ => Err(anyhow!("Invalid module selected!")),
+        }
+    }
+
+    async fn set_dc_offset(&self, module: u8, addr: u8, value: i16) -> Result<()> {
+        let regval = match module {
+            BLADERF_MODULE_RX => {
+                let mut tmp = self.read(addr).await?;
+                /* Bit 7 is unrelated to lms dc correction, save its state */
+                tmp &= 1 << 7;
+                Self::scale_dc_offset(module, value)? | tmp
+            }
+            BLADERF_MODULE_TX => Self::scale_dc_offset(module, value)?,
+            _ => return Err(anyhow!("Invalid module selected!")),
+        };
+
+        self.write(addr, regval).await
+    }
+
+    pub async fn set_dc_offset_i(&self, module: u8, value: i16) -> Result<()> {
+        let addr = if module == BLADERF_MODULE_TX {
+            0x42
+        } else {
+            0x71
+        };
+        self.set_dc_offset(module, addr, value).await
+    }
+
+    pub async fn set_dc_offset_q(&self, module: u8, value: i16) -> Result<()> {
+        let addr = if module == BLADERF_MODULE_TX {
+            0x43
+        } else {
+            0x72
+        };
+        self.set_dc_offset(module, addr, value).await
+    }
+
+    async fn get_dc_offset(&self, module: u8, addr: u8) -> Result<i16> {
+        let mut tmp = self.read(addr).await?;
+
+        match module {
+            BLADERF_MODULE_RX => {
+                /* Mask out an unrelated control bit */
+                tmp &= 0x7f;
+
+                /* Determine sign */
+                let value = if tmp & (1 << 6) != 0 {
+                    -((tmp & 0x3f) as i16)
+                } else {
+                    (tmp & 0x3f) as i16
+                };
+
+                /* Renormalize to 2048 */
+                Ok(value << 5)
+            }
+            BLADERF_MODULE_TX => {
+                /* Renormalize to 2048 */
+                Ok((tmp as i16) << 4)
+            }
+            _ => Err(anyhow!("Invalid module selected!")),
+        }
+    }
+
+    pub async fn get_dc_offset_i(&self, module: u8) -> Result<i16> {
+        let addr = if module == BLADERF_MODULE_TX {
+            0x42
+        } else {
+            0x71
+        };
+        self.get_dc_offset(module, addr).await
+    }
+
+    pub async fn get_dc_offset_q(&self, module: u8) -> Result<i16> {
+        let addr = if module == BLADERF_MODULE_TX {
+            0x43
+        } else {
+            0x72
+        };
+        self.get_dc_offset(module, addr).await
+    }
 }
