@@ -1,3 +1,7 @@
 - Inconsistent naming of Bladerf like e.g. BladerfRationalRate or BladeRfRationalRate
 - Let library user decide, if e.g. tokio feature should be used for nusb or not using feature gates
 - in basic.rs config_gpio_write: Speed info should not be determined on every call of gpio_write, but rather at global board_data level.
+- Check, if we can have an entire stateless BladeRF1 instance, not saving any board data but determining everything dynamically or on initialization of the BladeRF1
+- NIOS packet dont claim endoint on every call to nios_send
+- maybe have one hardcoded prereserved Vector that is reused by every call to nios_send.
+- Async in all methods might not be required. Drop async support!

@@ -2,7 +2,7 @@
 
 use anyhow::{Result, anyhow};
 use bladerf_globals::bladerf1::BladeRfVersion;
-use bladerf_globals::{ENDPOINT_IN, ENDPOINT_OUT, BLADERF_MODULE_RX, BLADERF_MODULE_TX};
+use bladerf_globals::{BLADERF_MODULE_RX, BLADERF_MODULE_TX, ENDPOINT_IN, ENDPOINT_OUT};
 use bladerf_nios::packet_generic::{NiosPkt, NumToByte};
 use bladerf_nios::packet_retune::{Band, NiosPktRetuneRequest, NiosPktRetuneResponse, Tune};
 use bladerf_nios::*;
@@ -94,17 +94,19 @@ impl Nios for Interface {
         ep_bulk_in_id: u8,
         mut pkt: Vec<u8>,
     ) -> Result<Vec<u8>> {
+        // TODO: An endpoint handle should probably not be acquired on every call to nios_send!!
         let mut ep_bulk_out = self.endpoint::<Bulk, Out>(ep_bulk_out_id)?;
         let mut ep_bulk_in = self.endpoint::<Bulk, In>(ep_bulk_in_id)?;
 
-        // Nusb specifically requires the buffer to be a nonzero multiple of endpoint.max_packet_size()
+        // TODO: Nusb specifically requires the buffer to be a nonzero multiple of endpoint.max_packet_size()
         // TODO: This could be performance optimized, by leaving out these checks, if we can be sure,
         // TODO: that all the packets given to this method have a reserved size of max_packet_len().
-        let additional = if pkt.len() < ep_bulk_in.max_packet_size() {
-            ep_bulk_in.max_packet_size() - pkt.len()
+        let additional = if pkt.capacity() < ep_bulk_in.max_packet_size() {
+            ep_bulk_in.max_packet_size() - pkt.capacity()
         } else {
-            pkt.len() % ep_bulk_in.max_packet_size()
+            pkt.capacity() % ep_bulk_in.max_packet_size()
         };
+        // reserve does nothing, if capacity is already sufficient
         pkt.reserve(additional);
 
         ep_bulk_out.submit(Buffer::from(pkt));
@@ -123,7 +125,7 @@ impl Nios for Interface {
         // Todo: We might not be able to easily check for a success flag, as we do not
         // Todo: know which kind of packet was sent.
         // type NiosPkt = NiosPkt8x8;
-        // let nios_pkt = NiosPkt::from(response);
+        // let nios_pkt = NiosPktResponse::<u8,u8>::from(response.buffer);
         // if !nios_pkt.is_success() {
         //     return Err(anyhow!("operation was unsuccessful!"));
         // }
@@ -287,82 +289,44 @@ impl Nios for Interface {
     }
 
     async fn nios_get_iq_gain_correction(&self, ch: u8) -> Result<i16> {
-        match ch {
-            BLADERF_MODULE_RX => Ok(self
-                .nios_read::<u8, u16>(
-                    NIOS_PKT_8X16_TARGET_IQ_CORR,
-                    NIOS_PKT_8X16_ADDR_IQ_CORR_RX_GAIN,
-                )
-                .await? as i16),
-            BLADERF_MODULE_TX => Ok(self
-                .nios_read::<u8, u16>(
-                    NIOS_PKT_8X16_TARGET_IQ_CORR,
-                    NIOS_PKT_8X16_ADDR_IQ_CORR_TX_GAIN,
-                )
-                .await? as i16),
-            _ => Err(anyhow!("Invalid channel: {ch}")),
-        }
+        let addr = match ch {
+            BLADERF_MODULE_RX => NIOS_PKT_8X16_ADDR_IQ_CORR_RX_GAIN,
+            BLADERF_MODULE_TX => NIOS_PKT_8X16_ADDR_IQ_CORR_TX_GAIN,
+            _ => return Err(anyhow!("Invalid channel: {ch}")),
+        };
+        Ok(self
+            .nios_read::<u8, u16>(NIOS_PKT_8X16_TARGET_IQ_CORR, addr)
+            .await? as i16)
     }
 
     async fn nios_get_iq_phase_correction(&self, ch: u8) -> Result<i16> {
-        match ch {
-            BLADERF_MODULE_RX => Ok(self
-                .nios_read::<u8, u16>(
-                    NIOS_PKT_8X16_TARGET_IQ_CORR,
-                    NIOS_PKT_8X16_ADDR_IQ_CORR_RX_PHASE,
-                )
-                .await? as i16),
-            BLADERF_MODULE_TX => Ok(self
-                .nios_read::<u8, u16>(
-                    NIOS_PKT_8X16_TARGET_IQ_CORR,
-                    NIOS_PKT_8X16_ADDR_IQ_CORR_TX_PHASE,
-                )
-                .await? as i16),
-            _ => Err(anyhow!("Invalid channel: {ch}")),
-        }
+        let addr = match ch {
+            BLADERF_MODULE_RX => NIOS_PKT_8X16_ADDR_IQ_CORR_RX_PHASE,
+            BLADERF_MODULE_TX => NIOS_PKT_8X16_ADDR_IQ_CORR_TX_PHASE,
+            _ => return Err(anyhow!("Invalid channel: {ch}")),
+        };
+        Ok(self
+            .nios_read::<u8, u16>(NIOS_PKT_8X16_TARGET_IQ_CORR, addr)
+            .await? as i16)
     }
 
     async fn nios_set_iq_gain_correction(&self, ch: u8, value: i16) -> Result<()> {
-        match ch {
-            BLADERF_MODULE_RX => {
-                self.nios_write::<u8, u16>(
-                    NIOS_PKT_8X16_TARGET_IQ_CORR,
-                    NIOS_PKT_8X16_ADDR_IQ_CORR_RX_GAIN,
-                    value as u16,
-                )
-                .await
-            }
-            BLADERF_MODULE_TX => {
-                self.nios_write::<u8, u16>(
-                    NIOS_PKT_8X16_TARGET_IQ_CORR,
-                    NIOS_PKT_8X16_ADDR_IQ_CORR_TX_GAIN,
-                    value as u16,
-                )
-                .await
-            }
-            _ => Err(anyhow!("Invalid channel: {ch}")),
-        }
+        let addr = match ch {
+            BLADERF_MODULE_RX => NIOS_PKT_8X16_ADDR_IQ_CORR_RX_GAIN,
+            BLADERF_MODULE_TX => NIOS_PKT_8X16_ADDR_IQ_CORR_TX_GAIN,
+            _ => return Err(anyhow!("Invalid channel: {ch}")),
+        };
+        self.nios_write::<u8, u16>(NIOS_PKT_8X16_TARGET_IQ_CORR, addr, value as u16)
+            .await
     }
 
     async fn nios_set_iq_phase_correction(&self, ch: u8, value: i16) -> Result<()> {
-        match ch {
-            BLADERF_MODULE_RX => {
-                self.nios_write::<u8, u16>(
-                    NIOS_PKT_8X16_TARGET_IQ_CORR,
-                    NIOS_PKT_8X16_ADDR_IQ_CORR_RX_PHASE,
-                    value as u16,
-                )
-                .await
-            }
-            BLADERF_MODULE_TX => {
-                self.nios_write::<u8, u16>(
-                    NIOS_PKT_8X16_TARGET_IQ_CORR,
-                    NIOS_PKT_8X16_ADDR_IQ_CORR_TX_PHASE,
-                    value as u16,
-                )
-                .await
-            }
-            _ => Err(anyhow!("Invalid channel: {ch}")),
-        }
+        let addr = match ch {
+            BLADERF_MODULE_RX => NIOS_PKT_8X16_ADDR_IQ_CORR_RX_PHASE,
+            BLADERF_MODULE_TX => NIOS_PKT_8X16_ADDR_IQ_CORR_TX_PHASE,
+            _ => return Err(anyhow!("Invalid channel: {ch}")),
+        };
+        self.nios_write::<u8, u16>(NIOS_PKT_8X16_TARGET_IQ_CORR, addr, value as u16)
+            .await
     }
 }
