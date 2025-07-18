@@ -101,7 +101,7 @@ impl BladeRf1 {
         }
     }
 
-    pub async fn get_gain_modes(&self, channel: u8) -> Result<Vec<BladerfGainMode>> {
+    pub fn get_gain_modes(&self, channel: u8) -> Result<Vec<BladerfGainMode>> {
         if bladerf_channel_is_tx!(channel) {
             Err(anyhow!("TX does not support gain modes"))
         } else {
@@ -109,12 +109,12 @@ impl BladeRf1 {
         }
     }
 
-    pub async fn set_gain_mode(&self, channel: u8, mode: BladerfGainMode) -> Result<()> {
+    pub fn set_gain_mode(&self, channel: u8, mode: BladerfGainMode) -> Result<()> {
         if bladerf_channel_is_tx!(channel) {
             return Err(anyhow!("Setting gain mode for TX is not supported"));
         }
 
-        let mut config_gpio = self.config_gpio_read().await?;
+        let mut config_gpio = self.config_gpio_read()?;
         if mode == BladerfGainMode::Default {
             // Default mode is the same as Automatic mode
             // return Err(anyhow!("Todo: Implement AGC Table"));
@@ -148,11 +148,11 @@ impl BladeRf1 {
             config_gpio &= !BLADERF_GPIO_AGC_ENABLE;
         }
 
-        self.config_gpio_write(config_gpio).await
+        self.config_gpio_write(config_gpio)
     }
 
-    pub async fn get_gain_mode(&self) -> Result<BladerfGainMode> {
-        let data = self.config_gpio_read().await?;
+    pub fn get_gain_mode(&self) -> Result<BladerfGainMode> {
+        let data = self.config_gpio_read()?;
 
         let gain_mode = if data & BLADERF_GPIO_AGC_ENABLE != 0 {
             BladerfGainMode::Default
@@ -162,22 +162,22 @@ impl BladeRf1 {
         Ok(gain_mode)
     }
 
-    pub async fn get_gain_stage(&self, channel: u8, stage: &str) -> Result<i8> {
+    pub fn get_gain_stage(&self, channel: u8, stage: &str) -> Result<i8> {
         // CHECK_BOARD_STATE(STATE_INITIALIZED);
         if channel == BLADERF_MODULE_TX {
             match stage {
-                "txvga1" => self.lms.txvga1_get_gain().await,
-                "txvga2" => self.lms.txvga2_get_gain().await,
+                "txvga1" => self.lms.txvga1_get_gain(),
+                "txvga2" => self.lms.txvga2_get_gain(),
                 _ => Err(anyhow!("invalid stage {stage}")),
             }
         } else if channel == BLADERF_MODULE_RX {
             match stage {
                 "lna" => {
-                    let lna_gain = self.lms.lna_get_gain().await?;
+                    let lna_gain = self.lms.lna_get_gain()?;
                     Ok(Self::_convert_lna_gain_to_gain(lna_gain))
                 }
-                "rxvga1" => self.lms.rxvga1_get_gain().await,
-                "rxvga2" => self.lms.rxvga2_get_gain().await,
+                "rxvga1" => self.lms.rxvga1_get_gain(),
+                "rxvga2" => self.lms.rxvga2_get_gain(),
                 _ => Err(anyhow!("invalid stage {stage}")),
             }
         } else {
@@ -185,23 +185,22 @@ impl BladeRf1 {
         }
     }
 
-    pub async fn set_gain_stage(&self, channel: u8, stage: &str, gain: i8) -> Result<()> {
+    pub fn set_gain_stage(&self, channel: u8, stage: &str, gain: i8) -> Result<()> {
         // CHECK_BOARD_STATE(STATE_INITIALIZED);
 
         /* TODO implement gain clamping */
         match channel {
             BLADERF_MODULE_TX => match stage {
-                "txvga1" => Ok(self.lms.txvga1_set_gain(gain).await?),
-                "txvga2" => Ok(self.lms.txvga2_set_gain(gain).await?),
+                "txvga1" => Ok(self.lms.txvga1_set_gain(gain)?),
+                "txvga2" => Ok(self.lms.txvga2_set_gain(gain)?),
                 _ => Err(anyhow!("invalid stage {stage}")),
             },
             BLADERF_MODULE_RX => match stage {
-                "rxvga1" => Ok(self.lms.rxvga1_set_gain(gain).await?),
-                "rxvga2" => Ok(self.lms.rxvga2_set_gain(gain).await?),
+                "rxvga1" => Ok(self.lms.rxvga1_set_gain(gain)?),
+                "rxvga2" => Ok(self.lms.rxvga2_set_gain(gain)?),
                 "lna" => Ok(self
                     .lms
-                    .lna_set_gain(Self::_convert_gain_to_lna_gain(gain))
-                    .await?),
+                    .lna_set_gain(Self::_convert_gain_to_lna_gain(gain))?),
                 _ => Err(anyhow!("invalid stage {stage}")),
             },
             _ => Err(anyhow!("Invalid channel {channel}")),
@@ -268,17 +267,17 @@ impl BladeRf1 {
         }
     }
 
-    pub async fn get_tx_gain(&self) -> Result<i8> {
-        let txvga1 = self.lms.txvga1_get_gain().await?;
-        let txvga2 = self.lms.txvga2_get_gain().await?;
+    pub fn get_tx_gain(&self) -> Result<i8> {
+        let txvga1 = self.lms.txvga1_get_gain()?;
+        let txvga2 = self.lms.txvga2_get_gain()?;
 
         Ok(txvga1 + txvga2 + BLADERF1_TX_GAIN_OFFSET.round() as i8)
     }
 
-    pub async fn get_rx_gain(&self) -> Result<i8> {
-        let lna_gain = self.lms.lna_get_gain().await?;
-        let rxvga1_gain = self.lms.rxvga1_get_gain().await?;
-        let rxvga2_gain = self.lms.rxvga2_get_gain().await?;
+    pub fn get_rx_gain(&self) -> Result<i8> {
+        let lna_gain = self.lms.lna_get_gain()?;
+        let rxvga1_gain = self.lms.rxvga1_get_gain()?;
+        let rxvga2_gain = self.lms.rxvga2_get_gain()?;
 
         let lna_gain_db = match lna_gain {
             // BladerfLnaGain::Bypass => 0,
@@ -290,27 +289,27 @@ impl BladeRf1 {
         Ok(lna_gain_db + rxvga1_gain + rxvga2_gain + BLADERF1_RX_GAIN_OFFSET.round() as i8)
     }
 
-    pub async fn get_gain(&self, channel: u8) -> Result<i8> {
+    pub fn get_gain(&self, channel: u8) -> Result<i8> {
         // CHECK_BOARD_STATE(STATE_INITIALIZED);
 
         if bladerf_channel_is_tx!(channel) {
-            self.get_tx_gain().await
+            self.get_tx_gain()
         } else {
-            self.get_rx_gain().await
+            self.get_rx_gain()
         }
     }
 
-    pub async fn set_gain(&self, channel: u8, gain: i8) -> Result<()> {
+    pub fn set_gain(&self, channel: u8, gain: i8) -> Result<()> {
         // CHECK_BOARD_STATE(STATE_INITIALIZED);
 
         if bladerf_channel_is_tx!(channel) {
-            self.set_tx_gain(gain).await
+            self.set_tx_gain(gain)
         } else {
-            self.set_rx_gain(gain).await
+            self.set_rx_gain(gain)
         }
     }
 
-    pub async fn set_tx_gain(&self, mut gain: i8) -> Result<()> {
+    pub fn set_tx_gain(&self, mut gain: i8) -> Result<()> {
         let orig_gain = gain;
 
         let txvga1_range = Self::get_gain_stage_range(bladerf_channel_tx!(0), "txvga1")?;
@@ -335,12 +334,12 @@ impl BladeRf1 {
             log::debug!("gain={orig_gain} -> txvga2={txvga2} txvga1={txvga1} remainder={gain}\n");
         }
 
-        self.lms.txvga1_set_gain(txvga1).await?;
-        self.lms.txvga2_set_gain(txvga2).await?;
+        self.lms.txvga1_set_gain(txvga1)?;
+        self.lms.txvga2_set_gain(txvga2)?;
         Ok(())
     }
 
-    pub async fn set_rx_gain(&self, mut gain: i8) -> Result<()> {
+    pub fn set_rx_gain(&self, mut gain: i8) -> Result<()> {
         let orig_gain = gain;
 
         let lna_range = Self::get_gain_stage_range(bladerf_channel_rx!(0), "lna")?;
@@ -393,16 +392,11 @@ impl BladeRf1 {
 
         // that should do it. actually apply the changes:
         self.lms
-            .lna_set_gain(Self::_convert_gain_to_lna_gain(lna))
-            .await?;
+            .lna_set_gain(Self::_convert_gain_to_lna_gain(lna))?;
         // __scale_int(&rxvga1_range, rxvga1 as f32)
-        self.lms
-            .rxvga1_set_gain(rxvga1 / rxvga1_range.scale)
-            .await?;
+        self.lms.rxvga1_set_gain(rxvga1 / rxvga1_range.scale)?;
         // __scale_int(&rxvga2_range, rxvga2 as f32)
-        self.lms
-            .rxvga2_set_gain(rxvga2 / rxvga2_range.scale)
-            .await?;
+        self.lms.rxvga2_set_gain(rxvga2 / rxvga2_range.scale)?;
 
         Ok(())
     }

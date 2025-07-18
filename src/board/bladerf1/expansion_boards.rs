@@ -332,7 +332,7 @@ impl BladeRf1 {
         }
     }
 
-    pub async fn expansion_attach(&mut self, xb: BladerfXb) -> Result<()> {
+    pub fn expansion_attach(&mut self, xb: BladerfXb) -> Result<()> {
         // struct bladerf1_board_data *board_data = dev->board_data;
 
         // CHECK_BOARD_STATE(STATE_INITIALIZED);
@@ -353,7 +353,7 @@ impl BladeRf1 {
             self.xb100_attach()?;
 
             log::debug!("Enabling XB100");
-            self.xb100_enable(true).await?;
+            self.xb100_enable(true)?;
 
             log::debug!("Initializing XB100");
             self.xb100_init()?;
@@ -364,22 +364,22 @@ impl BladeRf1 {
             // }
 
             log::debug!("Attaching XB200");
-            self.xb200_attach().await?;
+            self.xb200_attach()?;
 
             log::debug!("Enabling XB200");
-            self.xb200_enable(true).await?;
+            self.xb200_enable(true)?;
 
             log::debug!("Initializing XB200");
-            self.xb200_init().await?;
+            self.xb200_init()?;
         } else if xb == BladerfXb300 {
             log::debug!("Attaching XB300");
-            self.xb300_attach().await?;
+            self.xb300_attach()?;
 
             log::debug!("Enabling XB300");
-            self.xb300_enable(true).await?;
+            self.xb300_enable(true)?;
 
             log::debug!("Initializing XB300");
-            self.xb300_init().await?;
+            self.xb300_init()?;
         } else if xb == BladerfXbNone {
             log::debug!("Disabling an attached XB is not supported.");
             return Err(BladeRfError::Unsupported.into());

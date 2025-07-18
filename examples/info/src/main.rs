@@ -6,34 +6,33 @@ use bladerf_globals::{BLADERF_MODULE_RX, BLADERF_MODULE_TX};
 use libbladerf_rs::board::bladerf1::BladeRf1;
 use std::time::Duration;
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     env_logger::builder()
         .filter_level(log::LevelFilter::Debug)
         .filter_module("nusb", log::LevelFilter::Info)
         .init();
 
-    let mut bladerf = BladeRf1::from_first().await?;
+    let mut bladerf = BladeRf1::from_first()?;
 
     log::debug!("Speed: {:?}", bladerf.speed());
-    log::debug!("Serial: {}", bladerf.serial().await?);
-    log::debug!("Manufacturer: {}", bladerf.manufacturer().await?);
-    log::debug!("FX3 Firmware: {}", bladerf.fx3_firmware().await?);
-    log::debug!("Product: {}", bladerf.product().await?);
+    log::debug!("Serial: {}", bladerf.serial()?);
+    log::debug!("Manufacturer: {}", bladerf.manufacturer()?);
+    log::debug!("FX3 Firmware: {}", bladerf.fx3_firmware()?);
+    log::debug!("Product: {}", bladerf.product()?);
 
-    let languages = bladerf.get_supported_languages().await?;
+    let languages = bladerf.get_supported_languages()?;
     log::debug!("Languages: {:x?}", languages);
 
-    bladerf.initialize().await?;
+    bladerf.initialize()?;
 
-    log::debug!("FPGA: {}", bladerf.fpga_version().await?);
+    log::debug!("FPGA: {}", bladerf.fpga_version()?);
 
     let xb = bladerf.expansion_get_attached();
     log::debug!("XB: {xb:?}");
 
-    // tokio::time::sleep(Duration::from_secs(10)).await;
+    // tokio::time::sleep(Duration::from_secs(10));
 
-    bladerf.expansion_attach(BladerfXb200).await?;
+    bladerf.expansion_attach(BladerfXb200)?;
 
     let xb = bladerf.expansion_get_attached();
     log::debug!("XB: {xb:?}");
@@ -42,15 +41,11 @@ async fn main() -> Result<()> {
     log::debug!("Frequency Range: {frequency_range:?}");
 
     // Set Frequency to minimum frequency
-    bladerf
-        .set_frequency(BLADERF_MODULE_RX, frequency_range.min as u64)
-        .await?;
-    bladerf
-        .set_frequency(BLADERF_MODULE_TX, frequency_range.min as u64)
-        .await?;
+    bladerf.set_frequency(BLADERF_MODULE_RX, frequency_range.min as u64)?;
+    bladerf.set_frequency(BLADERF_MODULE_TX, frequency_range.min as u64)?;
 
-    let frequency_rx = bladerf.get_frequency(BLADERF_MODULE_RX).await?;
-    let frequency_tx = bladerf.get_frequency(BLADERF_MODULE_TX).await?;
+    let frequency_rx = bladerf.get_frequency(BLADERF_MODULE_RX)?;
+    let frequency_tx = bladerf.get_frequency(BLADERF_MODULE_TX)?;
     log::debug!("Frequency RX: {}", frequency_rx);
     log::debug!("Frequency TX: {}", frequency_tx);
 
@@ -60,13 +55,13 @@ async fn main() -> Result<()> {
     // // Set Sample Rate to minimum Sample Rate
     // bladerf
     //     .set_sample_rate(BLADERF_MODULE_RX, sample_rate_range.min)
-    //     .await?;
+    //     ?;
     // bladerf
     //     .set_sample_rate(BLADERF_MODULE_TX, sample_rate_range.min)
-    //     .await?;
+    //     ?;
     //
-    let sample_rate_rx = bladerf.get_sample_rate(BLADERF_MODULE_RX).await?;
-    let sample_rate_tx = bladerf.get_sample_rate(BLADERF_MODULE_TX).await?;
+    let sample_rate_rx = bladerf.get_sample_rate(BLADERF_MODULE_RX)?;
+    let sample_rate_tx = bladerf.get_sample_rate(BLADERF_MODULE_TX)?;
     log::debug!("Sample Rate RX: {}", sample_rate_rx);
     log::debug!("Sample Rate TX: {}", sample_rate_tx);
 
@@ -76,13 +71,13 @@ async fn main() -> Result<()> {
     // // Set Sample Rate to minimum Sample Rate
     // bladerf
     //     .set_bandwidth(BLADERF_MODULE_RX, bandwidth_range.min)
-    //     .await?;
+    //     ?;
     // bladerf
     //     .set_bandwidth(BLADERF_MODULE_TX, bandwidth_range.min)
-    //     .await?;
+    //     ?;
     //
-    let bandwidth_rx = bladerf.get_bandwidth(BLADERF_MODULE_RX).await?;
-    let bandwidth_tx = bladerf.get_bandwidth(BLADERF_MODULE_TX).await?;
+    let bandwidth_rx = bladerf.get_bandwidth(BLADERF_MODULE_RX)?;
+    let bandwidth_tx = bladerf.get_bandwidth(BLADERF_MODULE_TX)?;
     log::debug!("Bandwidth RX: {}", bandwidth_rx);
     log::debug!("Bandwidth TX: {}", bandwidth_tx);
 
@@ -99,17 +94,17 @@ async fn main() -> Result<()> {
     // // Set Sample Rate to minimum Sample Rate
     // bladerf
     //     .set_gain(BLADERF_MODULE_RX, gain_range_rx.min)
-    //     .await?;
+    //     ?;
     // bladerf
     //     .set_gain(BLADERF_MODULE_TX, gain_range_tx.min)
-    //     .await?;
+    //     ?;
 
-    let gain_rx = bladerf.get_gain(BLADERF_MODULE_RX).await?;
-    let gain_tx = bladerf.get_gain(BLADERF_MODULE_TX).await?;
+    let gain_rx = bladerf.get_gain(BLADERF_MODULE_RX)?;
+    let gain_tx = bladerf.get_gain(BLADERF_MODULE_TX)?;
     log::debug!("Gain RX: {}", gain_rx);
     log::debug!("Gain TX: {}", gain_tx);
 
-    // bladerf.reset().await?;
+    // bladerf.reset()?;
 
     // Contains mostly setup of buffers and FW version checks...
     // bladerf1_sync_config(
@@ -118,19 +113,19 @@ async fn main() -> Result<()> {
     //          int sync_worker_init(struct bladerf_sync *s)
     //              int async_init_stream(
     //                  dev->backend->init_stream(lstream, num_transfers); -> static int lusb_init_stream( in /home/user/sdr/bladeRF/host/libraries/libbladeRF/src/backend/usb/libusb.c
-    // tokio::time::sleep(Duration::from_secs(1)).await;
-    bladerf.perform_format_config(Rx, Sc16Q11).await?;
-    // tokio::time::sleep(Duration::from_secs(1)).await;
-    bladerf.enable_module(BLADERF_MODULE_RX, true).await?;
-    // tokio::time::sleep(Duration::from_secs(1)).await;
+    // tokio::time::sleep(Duration::from_secs(1));
+    bladerf.perform_format_config(Rx, Sc16Q11)?;
+    // tokio::time::sleep(Duration::from_secs(1));
+    bladerf.enable_module(BLADERF_MODULE_RX, true)?;
+    // tokio::time::sleep(Duration::from_secs(1));
 
-    bladerf.experimental_control_urb().await?;
+    bladerf.experimental_control_urb()?;
 
-    // bladerf.async_run_stream().await?;
+    // bladerf.async_run_stream()?;
 
     bladerf.perform_format_deconfig(Rx)?;
-    // tokio::time::sleep(Duration::from_secs(1)).await;
-    bladerf.enable_module(BLADERF_MODULE_RX, false).await?;
+    // tokio::time::sleep(Duration::from_secs(1));
+    bladerf.enable_module(BLADERF_MODULE_RX, false)?;
 
     Ok(())
 }

@@ -13,7 +13,7 @@ use bladerf_globals::{SdrRange, TuningMode, bladerf_channel_rx};
 use bladerf_nios::packet_retune::{Band, NiosPktRetuneRequest};
 
 impl BladeRf1 {
-    pub async fn set_frequency(&mut self, channel: u8, mut frequency: u64) -> Result<()> {
+    pub fn set_frequency(&mut self, channel: u8, mut frequency: u64) -> Result<()> {
         //let dc_cal = if channel == bladerf_channel_rx!(0) { cal_dc.rx } else { cal.dc_tx };
 
         log::debug!("Setting Frequency on channel {channel} to {frequency}Hz");
@@ -21,47 +21,43 @@ impl BladeRf1 {
         if self.xb200.is_some() {
             if frequency < BLADERF_FREQUENCY_MIN as u64 {
                 log::debug!("Setting path to Mix");
-                self.xb200_set_path(channel, &BladerfXb200Path::Mix).await?;
+                self.xb200_set_path(channel, &BladerfXb200Path::Mix)?;
 
-                self.xb200_auto_filter_selection(channel, frequency as u32)
-                    .await?;
+                self.xb200_auto_filter_selection(channel, frequency as u32)?;
 
                 frequency = 1248000000 - frequency;
             } else {
                 log::debug!("Setting path to Bypass");
-                self.xb200_set_path(channel, &BladerfXb200Path::Bypass)
-                    .await?;
+                self.xb200_set_path(channel, &BladerfXb200Path::Bypass)?;
             }
         }
 
         // For tuning HOST Tuning Mode:
         match &self.board_data.tuning_mode {
             TuningMode::Host => {
-                self.lms.set_frequency(channel, frequency as u32).await?;
+                self.lms.set_frequency(channel, frequency as u32)?;
                 let band = if frequency < BLADERF1_BAND_HIGH as u64 {
                     Band::Low
                 } else {
                     Band::High
                 };
-                self.band_select(channel, band).await?;
+                self.band_select(channel, band)?;
             }
             TuningMode::Fpga => {
-                self.lms
-                    .schedule_retune(
-                        channel,
-                        NiosPktRetuneRequest::RETUNE_NOW,
-                        frequency as u32,
-                        None,
-                    )
-                    .await?;
+                self.lms.schedule_retune(
+                    channel,
+                    NiosPktRetuneRequest::RETUNE_NOW,
+                    frequency as u32,
+                    None,
+                )?;
             }
         }
 
         Ok(())
     }
 
-    pub async fn get_frequency(&self, channel: u8) -> Result<u32> {
-        let f = self.lms.get_frequency(channel).await?;
+    pub fn get_frequency(&self, channel: u8) -> Result<u32> {
+        let f = self.lms.get_frequency(channel)?;
         if f.x == 0 {
             /* If we see this, it's most often an indication that communication
              * with the LMS6002D is not occuring correctly */
@@ -71,7 +67,7 @@ impl BladeRf1 {
         log::debug!("Frequency Hz: {frequency_hz}");
 
         if self.xb200.is_some() {
-            let path = self.xb200_get_path(channel).await?;
+            let path = self.xb200_get_path(channel)?;
 
             if path == BladerfXb200Path::Mix {
                 log::debug!("Bypass Frequency Hz: 1248000000 - {frequency_hz}");
@@ -100,7 +96,7 @@ impl BladeRf1 {
         }
     }
 
-    pub async fn select_band(&self, channel: u8, frequency: u32) -> Result<()> {
+    pub fn select_band(&self, channel: u8, frequency: u32) -> Result<()> {
         // CHECK_BOARD_STATE(STATE_INITIALIZED);
 
         let band = if frequency < BLADERF1_BAND_HIGH {
@@ -109,11 +105,11 @@ impl BladeRf1 {
             Band::High
         };
 
-        self.band_select(channel, band).await
+        self.band_select(channel, band)
     }
 
-    pub async fn lms_get_quick_tune(&self, module: u8) -> Result<BladeRf1QuickTune> {
-        let f = self.lms.get_frequency(module).await?;
+    pub fn lms_get_quick_tune(&self, module: u8) -> Result<BladeRf1QuickTune> {
+        let f = self.lms.get_frequency(module)?;
 
         let mut quick_tune = BladeRf1QuickTune {
             freqsel: f.freqsel,
@@ -124,7 +120,7 @@ impl BladeRf1 {
             xb_gpio: 0,
         };
 
-        let val = self.interface.nios_expansion_gpio_read().await?;
+        let val = self.interface.nios_expansion_gpio_read()?;
 
         if self.xb200.is_some() {
             quick_tune.xb_gpio |= LMS_FREQ_XB_200_ENABLE;

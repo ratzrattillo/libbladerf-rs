@@ -48,19 +48,16 @@ pub enum BladeRfXb300Amplifier {
 pub struct Xb300 {}
 
 impl BladeRf1 {
-    pub async fn xb300_attach(&mut self) -> Result<()> {
+    pub fn xb300_attach(&mut self) -> Result<()> {
         let mut val = BLADERF_XB_TX_LED | BLADERF_XB_RX_LED | BLADERF_XB_TRX_MASK;
         val |= BLADERF_XB_PA_EN | BLADERF_XB_LNA_ENN;
         val |= BLADERF_XB_CSEL | BLADERF_XB_SCLK | BLADERF_XB_CS;
 
         self.interface
-            .nios_expansion_gpio_dir_write(0xffffffff, val)
-            .await?;
+            .nios_expansion_gpio_dir_write(0xffffffff, val)?;
 
         val = BLADERF_XB_CS | BLADERF_XB_LNA_ENN;
-        self.interface
-            .nios_expansion_gpio_write(0xffffffff, val)
-            .await?;
+        self.interface.nios_expansion_gpio_write(0xffffffff, val)?;
 
         self.xb300 = Some(Xb300 {});
         Ok(())
@@ -71,24 +68,22 @@ impl BladeRf1 {
         Ok(())
     }
 
-    pub async fn xb300_enable(&self, _enable: bool) -> Result<()> {
+    pub fn xb300_enable(&self, _enable: bool) -> Result<()> {
         let val = BLADERF_XB_CS | BLADERF_XB_CSEL | BLADERF_XB_LNA_ENN;
-        self.interface
-            .nios_expansion_gpio_write(0xffffffff, val)
-            .await?;
+        self.interface.nios_expansion_gpio_write(0xffffffff, val)?;
 
-        let _pwr = self.xb300_get_output_power().await?;
+        let _pwr = self.xb300_get_output_power()?;
 
         Ok(())
     }
 
-    pub async fn xb300_init(&self) -> Result<()> {
+    pub fn xb300_init(&self) -> Result<()> {
         log::debug!("Setting TRX path to TX\n");
-        self.xb300_set_trx(BladeRfXb300Trx::Tx).await
+        self.xb300_set_trx(BladeRfXb300Trx::Tx)
     }
 
-    pub async fn xb300_set_trx(&self, trx: BladeRfXb300Trx) -> Result<()> {
-        let mut val = self.interface.nios_expansion_gpio_read().await?;
+    pub fn xb300_set_trx(&self, trx: BladeRfXb300Trx) -> Result<()> {
+        let mut val = self.interface.nios_expansion_gpio_read()?;
         val &= !BLADERF_XB_TRX_MASK;
 
         match trx {
@@ -104,23 +99,19 @@ impl BladeRf1 {
             }
         }
 
-        self.interface
-            .nios_expansion_gpio_write(0xffffffff, val)
-            .await
+        self.interface.nios_expansion_gpio_write(0xffffffff, val)
     }
 
-    pub async fn xb300_get_trx(&self) -> Result<BladeRfXb300Trx> {
-        let mut val = self.interface.nios_expansion_gpio_read().await?;
+    pub fn xb300_get_trx(&self) -> Result<BladeRfXb300Trx> {
+        let mut val = self.interface.nios_expansion_gpio_read()?;
         val &= BLADERF_XB_TRX_MASK;
 
         let trx = if val == 0 {
             BladeRfXb300Trx::Unset
+        } else if val & BLADERF_XB_TRX_RXN != 0 {
+            BladeRfXb300Trx::Rx
         } else {
-            if val & BLADERF_XB_TRX_RXN != 0 {
-                BladeRfXb300Trx::Rx
-            } else {
-                BladeRfXb300Trx::Tx
-            }
+            BladeRfXb300Trx::Tx
         };
 
         /* Sanity check */
@@ -138,12 +129,12 @@ impl BladeRf1 {
         Ok(trx)
     }
 
-    pub async fn xb300_set_amplifier_enable(
+    pub fn xb300_set_amplifier_enable(
         &self,
         amp: BladeRfXb300Amplifier,
         enable: bool,
     ) -> Result<()> {
-        let mut val = self.interface.nios_expansion_gpio_read().await?;
+        let mut val = self.interface.nios_expansion_gpio_read()?;
 
         match amp {
             BladeRfXb300Amplifier::Pa => {
@@ -177,13 +168,11 @@ impl BladeRf1 {
             }
         }
 
-        self.interface
-            .nios_expansion_gpio_write(0xffffffff, val)
-            .await
+        self.interface.nios_expansion_gpio_write(0xffffffff, val)
     }
 
-    pub async fn xb300_get_amplifier_enable(&self, amp: BladeRfXb300Amplifier) -> Result<bool> {
-        let val = self.interface.nios_expansion_gpio_read().await?;
+    pub fn xb300_get_amplifier_enable(&self, amp: BladeRfXb300Amplifier) -> Result<bool> {
+        let val = self.interface.nios_expansion_gpio_read()?;
 
         match amp {
             BladeRfXb300Amplifier::Pa => Ok(val & BLADERF_XB_PA_EN != 0),
@@ -196,29 +185,24 @@ impl BladeRf1 {
         }
     }
 
-    pub async fn xb300_get_output_power(&self) -> Result<f32> {
+    pub fn xb300_get_output_power(&self) -> Result<f32> {
         let mut ret = 0;
 
-        let mut val = self.interface.nios_expansion_gpio_read().await?;
+        let mut val = self.interface.nios_expansion_gpio_read()?;
 
         val &= !(BLADERF_XB_CS | BLADERF_XB_SCLK | BLADERF_XB_CSEL);
 
         self.interface
-            .nios_expansion_gpio_write(0xffffffff, BLADERF_XB_SCLK | val)
-            .await?;
+            .nios_expansion_gpio_write(0xffffffff, BLADERF_XB_SCLK | val)?;
         self.interface
-            .nios_expansion_gpio_write(0xffffffff, BLADERF_XB_CS | BLADERF_XB_SCLK | val)
-            .await?;
+            .nios_expansion_gpio_write(0xffffffff, BLADERF_XB_CS | BLADERF_XB_SCLK | val)?;
 
         for i in 1u32..=14u32 {
+            self.interface.nios_expansion_gpio_write(0xffffffff, val)?;
             self.interface
-                .nios_expansion_gpio_write(0xffffffff, val)
-                .await?;
-            self.interface
-                .nios_expansion_gpio_write(0xffffffff, BLADERF_XB_SCLK | val)
-                .await?;
+                .nios_expansion_gpio_write(0xffffffff, BLADERF_XB_SCLK | val)?;
 
-            let rval = self.interface.nios_expansion_gpio_read().await?;
+            let rval = self.interface.nios_expansion_gpio_read()?;
 
             if (2..=11).contains(&i) {
                 ret |= (!!(rval & BLADERF_XB_DOUT)) << (11 - i);

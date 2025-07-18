@@ -5,6 +5,7 @@ use bladerf_globals::bladerf1::{
 };
 use bladerf_globals::{BLADERF_MODULE_RX, BLADERF_MODULE_TX, BladeRfDirection, BladerfFormat};
 use num_complex::Complex32;
+use nusb::MaybeFuture;
 use nusb::transfer::{Bulk, ControlIn, ControlType, In, Out, Recipient};
 use std::io::{BufRead, Write};
 use std::sync::{Arc, Mutex};
@@ -34,18 +35,17 @@ impl BladeRf1RxStreamer {
         Ok(self.mtu)
     }
 
-    pub async fn activate(&mut self) -> Result<()> {
+    pub fn activate(&mut self) -> Result<()> {
         let dev = self.dev.lock().unwrap();
-        dev.perform_format_config(BladeRfDirection::Rx, BladerfFormat::Sc16Q11)
-            .await?;
-        dev.enable_module(BLADERF_MODULE_RX, true).await?;
-        dev.experimental_control_urb().await
+        dev.perform_format_config(BladeRfDirection::Rx, BladerfFormat::Sc16Q11)?;
+        dev.enable_module(BLADERF_MODULE_RX, true)?;
+        dev.experimental_control_urb()
     }
 
-    pub async fn deactivate(&mut self) -> Result<()> {
+    pub fn deactivate(&mut self) -> Result<()> {
         let dev = self.dev.lock().unwrap();
         dev.perform_format_deconfig(BladeRfDirection::Rx)?;
-        dev.enable_module(BLADERF_MODULE_RX, false).await
+        dev.enable_module(BLADERF_MODULE_RX, false)
     }
 
     pub fn read_sync(
@@ -123,18 +123,18 @@ impl BladeRf1TxStreamer {
         Ok(self.mtu)
     }
 
-    pub async fn activate(&mut self) -> Result<()> {
+    pub fn activate(&mut self) -> Result<()> {
         let dev = self.dev.lock().unwrap();
         //dev.perform_format_config(BladeRfDirection::Rx, BladerfFormat::Sc16Q11)
-        //    .await?;
-        dev.enable_module(BLADERF_MODULE_TX, true).await
-        // dev.experimental_control_urb().await
+        //    ?;
+        dev.enable_module(BLADERF_MODULE_TX, true)
+        // dev.experimental_control_urb()
     }
 
-    pub async fn deactivate(&mut self) -> Result<()> {
+    pub fn deactivate(&mut self) -> Result<()> {
         let dev = self.dev.lock().unwrap();
         // dev.perform_format_deconfig(BladeRfDirection::Rx)?;
-        dev.enable_module(BLADERF_MODULE_TX, false).await
+        dev.enable_module(BLADERF_MODULE_TX, false)
     }
 
     pub fn write(
@@ -184,7 +184,7 @@ impl BladeRf1 {
     ///      format  Format the channel is being configured for
     ///
     /// @return 0 on success, BLADERF_ERR_* on failure
-    pub async fn perform_format_config(
+    pub fn perform_format_config(
         &self,
         dir: BladeRfDirection,
         format: BladerfFormat,
@@ -215,7 +215,7 @@ impl BladeRf1 {
         //     return BLADERF_ERR_INVAL;
         // }
 
-        let mut gpio_val = self.config_gpio_read().await?;
+        let mut gpio_val = self.config_gpio_read()?;
 
         log::debug!("gpio_val {gpio_val:#08x}");
         if format == BladerfFormat::PacketMeta {
@@ -238,7 +238,7 @@ impl BladeRf1 {
 
         log::debug!("gpio_val {gpio_val:#08x}");
 
-        self.config_gpio_write(gpio_val).await?;
+        self.config_gpio_write(gpio_val)?;
         // if (status == 0) {
         //     board_data->module_format[dir] = format;
         // }
@@ -270,7 +270,7 @@ impl BladeRf1 {
         Ok(())
     }
 
-    pub async fn experimental_control_urb(&self) -> Result<()> {
+    pub fn experimental_control_urb(&self) -> Result<()> {
         // TODO: Dont know what this is doing
         let pkt = ControlIn {
             control_type: ControlType::Vendor,
@@ -283,7 +283,7 @@ impl BladeRf1 {
         let vec = self
             .interface
             .control_in(pkt, Duration::from_secs(5))
-            .await?;
+            .wait()?;
         log::debug!("Control Response Data: {vec:?}");
         Ok(())
     }
@@ -312,45 +312,45 @@ impl BladeRf1 {
     //     Ok(())
     // }
 
-    pub async fn async_run_stream(&self) -> Result<()> {
-        // TODO: In_ENDPOINT is 0x81 here, not 0x82
-        let mut ep_bulk_in = self.interface.endpoint::<Bulk, In>(0x81)?;
+    // pub  fn _run_stream(&self) -> Result<()> {
+    //     // TODO: In_ENDPOINT is 0x81 here, not 0x82
+    //     let mut ep_bulk_in = self.interface.endpoint::<Bulk, In>(0x81)?;
+    //
+    //     let n_transfers = 8;
+    //     let factor = 32;
+    //     // let factor = match self.device.speed().unwrap_or(Speed::Low) {
+    //     //     // TODO: These numbers are completely made up.
+    //     //     // TODO: They should be based on real USB Frame sizes depending on the given Speed
+    //     //     Speed::Low => 8,
+    //     //     Speed::Full => 16,
+    //     //     Speed::High => 32,
+    //     //     Speed::Super => 32, // This factor is used by the original libusb libbladerf implementation.
+    //     //     Speed::SuperPlus => 96,
+    //     //     _ => 8,
+    //     // };
+    //
+    //     let max_packet_size = ep_bulk_in.max_packet_size();
+    //     let max_frame_size = max_packet_size * factor;
+    //     log::debug!("Max Packet Size: {max_packet_size}");
+    //
+    //     for _i in 0..n_transfers {
+    //         let buffer = ep_bulk_in.allocate(max_frame_size);
+    //         ep_bulk_in.submit(buffer);
+    //         // log::debug!("submitted_transfers: {i}");
+    //     }
+    //
+    //     loop {
+    //         let result = ep_bulk_in.next_complete();
+    //         log::debug!("{result:?}");
+    //         if result.status.is_err() {
+    //             break;
+    //         }
+    //         ep_bulk_in.submit(result.buffer);
+    //     }
+    //     Ok(())
+    // }
 
-        let n_transfers = 8;
-        let factor = 32;
-        // let factor = match self.device.speed().unwrap_or(Speed::Low) {
-        //     // TODO: These numbers are completely made up.
-        //     // TODO: They should be based on real USB Frame sizes depending on the given Speed
-        //     Speed::Low => 8,
-        //     Speed::Full => 16,
-        //     Speed::High => 32,
-        //     Speed::Super => 32, // This factor is used by the original libusb libbladerf implementation.
-        //     Speed::SuperPlus => 96,
-        //     _ => 8,
-        // };
-
-        let max_packet_size = ep_bulk_in.max_packet_size();
-        let max_frame_size = max_packet_size * factor;
-        log::debug!("Max Packet Size: {max_packet_size}");
-
-        for _i in 0..n_transfers {
-            let buffer = ep_bulk_in.allocate(max_frame_size);
-            ep_bulk_in.submit(buffer);
-            // log::debug!("submitted_transfers: {i}");
-        }
-
-        loop {
-            let result = ep_bulk_in.next_complete().await;
-            log::debug!("{result:?}");
-            if result.status.is_err() {
-                break;
-            }
-            ep_bulk_in.submit(result.buffer);
-        }
-        Ok(())
-    }
-
-    // pub async fn bladerf1_stream(&self, stream: &bladerf_stream, layout: BladeRfChannelLayout) -> Result<()> {
+    // pub  fn bladerf1_stream(&self, stream: &bladerf_stream, layout: BladeRfChannelLayout) -> Result<()> {
     //     let dir: BladeRfDirection = layout & BLADERF_DIRECTION_MASK;
     //     let stream_status: i32;
     //
@@ -360,7 +360,7 @@ impl BladeRf1 {
     //
     //     self.perform_format_config(dir, stream->format)?;
     //
-    //     stream_status = self.async_run_stream(stream, layout).await;
+    //     stream_status = self._run_stream(stream, layout);
     //     // TODO: static void LIBUSB_CALL lusb_stream_cb
     //
     //     self.perform_format_deconfig(dir)?;

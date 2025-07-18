@@ -6,17 +6,13 @@ use bladerf_globals::{BLADERF_MODULE_RX, BLADERF_MODULE_TX, ENDPOINT_IN, ENDPOIN
 use bladerf_nios::packet_generic::{NiosPkt, NumToByte};
 use bladerf_nios::packet_retune::{Band, NiosPktRetuneRequest, NiosPktRetuneResponse, Tune};
 use bladerf_nios::*;
+use futures_lite::future::block_on;
 use nusb::Interface;
 use nusb::transfer::{Buffer, Bulk, In, Out};
 use std::fmt::{Debug, Display, LowerHex};
 
 pub trait Nios {
-    fn nios_send(
-        &self,
-        ep_bulk_out_id: u8,
-        ep_bulk_in_id: u8,
-        pkt: Vec<u8>,
-    ) -> impl Future<Output = Result<Vec<u8>>>;
+    fn nios_send(&self, ep_bulk_out_id: u8, ep_bulk_in_id: u8, pkt: Vec<u8>) -> Result<Vec<u8>>;
     fn nios_retune(
         &self,
         module: u8,
@@ -28,8 +24,7 @@ pub trait Nios {
         band: Band,
         tune: Tune,
         xb_gpio: u8,
-    ) -> impl Future<Output = Result<()>> + Send;
-
+    ) -> Result<()>;
     fn nios_read<
         A: NumToByte + Debug + Display + LowerHex + Send,
         D: NumToByte + Debug + Display + LowerHex + Send,
@@ -37,7 +32,7 @@ pub trait Nios {
         &self,
         id: u8,
         addr: A,
-    ) -> impl Future<Output = Result<D>> + Send;
+    ) -> Result<D>;
 
     fn nios_write<
         A: NumToByte + Debug + Display + LowerHex + Send,
@@ -47,48 +42,23 @@ pub trait Nios {
         id: u8,
         addr: A,
         data: D,
-    ) -> impl Future<Output = Result<()>> + Send;
-
-    // fn nios_32x32_masked_read(&self, id: u8, mask: u32)
-    // -> impl Future<Output = Result<u32>> + Send;
-    // fn nios_32x32_masked_write(
-    //     &self,
-    //     id: u8,
-    //     mask: u32,
-    //     val: u32,
-    // ) -> impl Future<Output = Result<()>> + Send;
-    fn nios_config_read(&self) -> impl Future<Output = Result<u32>> + Send;
-    fn nios_config_write(&self, value: u32) -> impl Future<Output = Result<()>> + Send;
-    fn nios_xb200_synth_write(&self, value: u32) -> impl Future<Output = Result<()>> + Send;
-    fn nios_expansion_gpio_read(&self) -> impl Future<Output = Result<u32>> + Send;
-    fn nios_expansion_gpio_write(
-        &self,
-        mask: u32,
-        val: u32,
-    ) -> impl Future<Output = Result<()>> + Send;
-    fn nios_expansion_gpio_dir_read(&self) -> impl Future<Output = Result<u32>> + Send;
-    fn nios_expansion_gpio_dir_write(
-        &self,
-        mask: u32,
-        val: u32,
-    ) -> impl Future<Output = Result<()>> + Send;
-    fn nios_get_fpga_version(&self) -> impl Future<Output = Result<BladeRfVersion>> + Send;
-    fn nios_get_iq_gain_correction(&self, ch: u8) -> impl Future<Output = Result<i16>> + Send;
-    fn nios_get_iq_phase_correction(&self, ch: u8) -> impl Future<Output = Result<i16>> + Send;
-    fn nios_set_iq_gain_correction(
-        &self,
-        ch: u8,
-        value: i16,
-    ) -> impl Future<Output = Result<()>> + Send;
-    fn nios_set_iq_phase_correction(
-        &self,
-        ch: u8,
-        value: i16,
-    ) -> impl Future<Output = Result<()>> + Send;
+    ) -> Result<()>;
+    fn nios_config_read(&self) -> Result<u32>;
+    fn nios_config_write(&self, value: u32) -> Result<()>;
+    fn nios_xb200_synth_write(&self, value: u32) -> Result<()>;
+    fn nios_expansion_gpio_read(&self) -> Result<u32>;
+    fn nios_expansion_gpio_write(&self, mask: u32, val: u32) -> Result<()>;
+    fn nios_expansion_gpio_dir_read(&self) -> Result<u32>;
+    fn nios_expansion_gpio_dir_write(&self, mask: u32, val: u32) -> Result<()>;
+    fn nios_get_fpga_version(&self) -> Result<BladeRfVersion>;
+    fn nios_get_iq_gain_correction(&self, ch: u8) -> Result<i16>;
+    fn nios_get_iq_phase_correction(&self, ch: u8) -> Result<i16>;
+    fn nios_set_iq_gain_correction(&self, ch: u8, value: i16) -> Result<()>;
+    fn nios_set_iq_phase_correction(&self, ch: u8, value: i16) -> Result<()>;
 }
 
 impl Nios for Interface {
-    async fn nios_send(
+    fn nios_send(
         &self,
         ep_bulk_out_id: u8,
         ep_bulk_in_id: u8,
@@ -110,7 +80,7 @@ impl Nios for Interface {
         pkt.reserve(additional);
 
         ep_bulk_out.submit(Buffer::from(pkt));
-        let mut response = ep_bulk_out.next_complete().await;
+        let mut response = block_on(ep_bulk_out.next_complete());
         response.status?;
 
         // Nusb requires the buffer for an IN transfer to be at least ep_bulk_in.max_packet_size() big
@@ -118,7 +88,7 @@ impl Nios for Interface {
             .buffer
             .set_requested_len(ep_bulk_in.max_packet_size());
         ep_bulk_in.submit(response.buffer);
-        response = ep_bulk_in.next_complete().await;
+        response = block_on(ep_bulk_in.next_complete());
         response.status?;
 
         // Todo: This should be a generic NIOS packet type, or just a plain Vec,
@@ -136,7 +106,7 @@ impl Nios for Interface {
         Ok(response.buffer.into_vec())
     }
 
-    async fn nios_retune(
+    fn nios_retune(
         &self,
         module: u8,
         timestamp: u64,
@@ -158,9 +128,7 @@ impl Nios for Interface {
             module, timestamp, nint, nfrac, freqsel, vcocap, band, tune, xb_gpio,
         );
 
-        let response_vec = self
-            .nios_send(ENDPOINT_OUT, ENDPOINT_IN, pkt.into())
-            .await?;
+        let response_vec = self.nios_send(ENDPOINT_OUT, ENDPOINT_IN, pkt.into())?;
         let resp_pkt = NiosPktRetuneResponse::from(response_vec);
 
         if resp_pkt.duration_and_vcocap_valid() {
@@ -187,7 +155,7 @@ impl Nios for Interface {
         Ok(())
     }
 
-    async fn nios_read<A, D>(&self, id: u8, addr: A) -> Result<D>
+    fn nios_read<A, D>(&self, id: u8, addr: A) -> Result<D>
     where
         A: NumToByte + Debug + Display + LowerHex + Send,
         D: NumToByte + Debug + Display + LowerHex + Send,
@@ -201,13 +169,11 @@ impl Nios for Interface {
 
         // let pkt = NiosPkt::<A, D>::new(id, NiosPkt::<A, D>::FLAG_WRITE, addr, data);
 
-        let response_vec = self
-            .nios_send(ENDPOINT_OUT, ENDPOINT_IN, pkt.into())
-            .await?;
+        let response_vec = self.nios_send(ENDPOINT_OUT, ENDPOINT_IN, pkt.into())?;
         Ok(NiosPkt::<A, D>::from(response_vec).data())
     }
 
-    async fn nios_write<A, D>(&self, id: u8, addr: A, data: D) -> Result<()>
+    fn nios_write<A, D>(&self, id: u8, addr: A, data: D) -> Result<()>
     where
         A: NumToByte + Debug + Display + LowerHex + Send,
         D: NumToByte + Debug + Display + LowerHex + Send,
@@ -221,60 +187,49 @@ impl Nios for Interface {
         pkt.set_data(data);
 
         // let pkt = PktType::new(id, PktType::FLAG_WRITE, addr, data);
-        let resp = self
-            .nios_send(ENDPOINT_OUT, ENDPOINT_IN, pkt.into())
-            .await?;
+        let resp = self.nios_send(ENDPOINT_OUT, ENDPOINT_IN, pkt.into())?;
         let resp_pkt: NiosPkt<A, D> = resp.into();
         resp_pkt.is_success()
     }
 
-    // async fn nios_32x32_masked_read(&self, id: u8, mask: u32) -> Result<u32> {
-    //     self.nios_read::<u32, u32>(id, mask).await
+    // fn nios_32x32_masked_read(&self, id: u8, mask: u32) -> Result<u32> {
+    //     self.nios_read::<u32, u32>(id, mask)
     // }
     //
-    // async fn nios_32x32_masked_write(&self, id: u8, mask: u32, val: u32) -> Result<()> {
-    //     self.nios_write::<u32, u32>(id, mask, val).await
+    // fn nios_32x32_masked_write(&self, id: u8, mask: u32, val: u32) -> Result<()> {
+    //     self.nios_write::<u32, u32>(id, mask, val)
     // }
 
-    async fn nios_config_read(&self) -> Result<u32> {
+    fn nios_config_read(&self) -> Result<u32> {
         self.nios_read::<u8, u32>(NIOS_PKT_8X32_TARGET_CONTROL, 0)
-            .await
     }
 
-    async fn nios_config_write(&self, value: u32) -> Result<()> {
+    fn nios_config_write(&self, value: u32) -> Result<()> {
         self.nios_write::<u8, u32>(NIOS_PKT_8X32_TARGET_CONTROL, 0, value)
-            .await
     }
 
-    async fn nios_xb200_synth_write(&self, value: u32) -> Result<()> {
+    fn nios_xb200_synth_write(&self, value: u32) -> Result<()> {
         self.nios_write::<u8, u32>(NIOS_PKT_8X32_TARGET_ADF4351, 0, value)
-            .await
     }
 
-    async fn nios_expansion_gpio_read(&self) -> Result<u32> {
+    fn nios_expansion_gpio_read(&self) -> Result<u32> {
         self.nios_read::<u32, u32>(NIOS_PKT_32X32_TARGET_EXP, 0xffffffff)
-            .await
     }
 
-    async fn nios_expansion_gpio_write(&self, mask: u32, val: u32) -> Result<()> {
+    fn nios_expansion_gpio_write(&self, mask: u32, val: u32) -> Result<()> {
         self.nios_write::<u32, u32>(NIOS_PKT_32X32_TARGET_EXP, mask, val)
-            .await
     }
 
-    async fn nios_expansion_gpio_dir_read(&self) -> Result<u32> {
+    fn nios_expansion_gpio_dir_read(&self) -> Result<u32> {
         self.nios_read::<u32, u32>(NIOS_PKT_32X32_TARGET_EXP_DIR, 0xffffffff)
-            .await
     }
 
-    async fn nios_expansion_gpio_dir_write(&self, mask: u32, val: u32) -> Result<()> {
+    fn nios_expansion_gpio_dir_write(&self, mask: u32, val: u32) -> Result<()> {
         self.nios_write::<u32, u32>(NIOS_PKT_32X32_TARGET_EXP_DIR, mask, val)
-            .await
     }
 
-    async fn nios_get_fpga_version(&self) -> Result<BladeRfVersion> {
-        let regval = self
-            .nios_read::<u8, u32>(NIOS_PKT_8X32_TARGET_VERSION, 0)
-            .await?;
+    fn nios_get_fpga_version(&self) -> Result<BladeRfVersion> {
+        let regval = self.nios_read::<u8, u32>(NIOS_PKT_8X32_TARGET_VERSION, 0)?;
         log::debug!("Read FPGA version word: {regval:#010x}");
 
         let version = BladeRfVersion {
@@ -288,45 +243,39 @@ impl Nios for Interface {
         Ok(version)
     }
 
-    async fn nios_get_iq_gain_correction(&self, ch: u8) -> Result<i16> {
+    fn nios_get_iq_gain_correction(&self, ch: u8) -> Result<i16> {
         let addr = match ch {
             BLADERF_MODULE_RX => NIOS_PKT_8X16_ADDR_IQ_CORR_RX_GAIN,
             BLADERF_MODULE_TX => NIOS_PKT_8X16_ADDR_IQ_CORR_TX_GAIN,
             _ => return Err(anyhow!("Invalid channel: {ch}")),
         };
-        Ok(self
-            .nios_read::<u8, u16>(NIOS_PKT_8X16_TARGET_IQ_CORR, addr)
-            .await? as i16)
+        Ok(self.nios_read::<u8, u16>(NIOS_PKT_8X16_TARGET_IQ_CORR, addr)? as i16)
     }
 
-    async fn nios_get_iq_phase_correction(&self, ch: u8) -> Result<i16> {
+    fn nios_get_iq_phase_correction(&self, ch: u8) -> Result<i16> {
         let addr = match ch {
             BLADERF_MODULE_RX => NIOS_PKT_8X16_ADDR_IQ_CORR_RX_PHASE,
             BLADERF_MODULE_TX => NIOS_PKT_8X16_ADDR_IQ_CORR_TX_PHASE,
             _ => return Err(anyhow!("Invalid channel: {ch}")),
         };
-        Ok(self
-            .nios_read::<u8, u16>(NIOS_PKT_8X16_TARGET_IQ_CORR, addr)
-            .await? as i16)
+        Ok(self.nios_read::<u8, u16>(NIOS_PKT_8X16_TARGET_IQ_CORR, addr)? as i16)
     }
 
-    async fn nios_set_iq_gain_correction(&self, ch: u8, value: i16) -> Result<()> {
+    fn nios_set_iq_gain_correction(&self, ch: u8, value: i16) -> Result<()> {
         let addr = match ch {
             BLADERF_MODULE_RX => NIOS_PKT_8X16_ADDR_IQ_CORR_RX_GAIN,
             BLADERF_MODULE_TX => NIOS_PKT_8X16_ADDR_IQ_CORR_TX_GAIN,
             _ => return Err(anyhow!("Invalid channel: {ch}")),
         };
         self.nios_write::<u8, u16>(NIOS_PKT_8X16_TARGET_IQ_CORR, addr, value as u16)
-            .await
     }
 
-    async fn nios_set_iq_phase_correction(&self, ch: u8, value: i16) -> Result<()> {
+    fn nios_set_iq_phase_correction(&self, ch: u8, value: i16) -> Result<()> {
         let addr = match ch {
             BLADERF_MODULE_RX => NIOS_PKT_8X16_ADDR_IQ_CORR_RX_PHASE,
             BLADERF_MODULE_TX => NIOS_PKT_8X16_ADDR_IQ_CORR_TX_PHASE,
             _ => return Err(anyhow!("Invalid channel: {ch}")),
         };
         self.nios_write::<u8, u16>(NIOS_PKT_8X16_TARGET_IQ_CORR, addr, value as u16)
-            .await
     }
 }

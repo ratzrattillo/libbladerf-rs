@@ -606,50 +606,48 @@ impl LMS6002D {
         Self { interface }
     }
 
-    pub async fn read(&self, addr: u8) -> Result<u8> {
+    pub fn read(&self, addr: u8) -> Result<u8> {
         self.interface
             .nios_read::<u8, u8>(NIOS_PKT_8X8_TARGET_LMS6, addr)
-            .await
     }
 
-    pub async fn write(&self, addr: u8, data: u8) -> Result<()> {
+    pub fn write(&self, addr: u8, data: u8) -> Result<()> {
         self.interface
             .nios_write::<u8, u8>(NIOS_PKT_8X8_TARGET_LMS6, addr, data)
-            .await
     }
 
-    pub async fn set(&self, addr: u8, mask: u8) -> Result<()> {
-        let data = self.read(addr).await?;
-        self.write(addr, data | mask).await
+    pub fn set(&self, addr: u8, mask: u8) -> Result<()> {
+        let data = self.read(addr)?;
+        self.write(addr, data | mask)
     }
 
-    pub async fn get_vtune(&self, base: u8, _delay: u8) -> Result<u8> {
+    pub fn get_vtune(&self, base: u8, _delay: u8) -> Result<u8> {
         // if (delay != 0) {
         //     VTUNE_BUSY_WAIT(delay);
         // }
 
-        let mut vtune = self.read(base + 10).await?;
+        let mut vtune = self.read(base + 10)?;
         vtune >>= 6;
         Ok(vtune)
     }
 
-    pub async fn enable_rffe(&self, module: u8, enable: bool) -> Result<()> {
+    pub fn enable_rffe(&self, module: u8, enable: bool) -> Result<()> {
         let (addr, shift) = if module == BLADERF_MODULE_TX {
             (0x40u8, 1u8)
         } else {
             (0x70u8, 0u8)
         };
-        let mut data = self.read(addr).await?;
+        let mut data = self.read(addr)?;
 
         if enable {
             data |= 1 << shift;
         } else {
             data &= !(1 << shift);
         }
-        self.write(addr, data).await
+        self.write(addr, data)
     }
 
-    pub async fn config_charge_pumps(&self, module: u8) -> Result<()> {
+    pub fn config_charge_pumps(&self, module: u8) -> Result<()> {
         let base: u8 = if module == BLADERF_MODULE_RX {
             0x20
         } else {
@@ -657,22 +655,22 @@ impl LMS6002D {
         };
 
         // Set PLL Ichp current
-        let mut data = self.read(base + 6).await?;
+        let mut data = self.read(base + 6)?;
         data &= !0x1f;
         data |= 0x0c;
-        self.write(base + 6, data).await?;
+        self.write(base + 6, data)?;
 
         // Set Iup current
-        data = self.read(base + 7).await?;
+        data = self.read(base + 7)?;
         data &= !0x1f;
         data |= 0x03;
-        self.write(base + 7, data).await?;
+        self.write(base + 7, data)?;
 
         // Set Idn current
-        data = self.read(base + 8).await?;
+        data = self.read(base + 8)?;
         data &= !0x1f;
         data |= 0x03;
-        self.write(base + 8, data).await
+        self.write(base + 8, data)
     }
 
     /* This is a linear interpolation of our experimentally identified
@@ -761,11 +759,11 @@ impl LMS6002D {
         Ok(f)
     }
 
-    pub async fn write_vcocap(&self, base: u8, vcocap: u8, vcocap_reg_state: u8) -> Result<()> {
+    pub fn write_vcocap(&self, base: u8, vcocap: u8, vcocap_reg_state: u8) -> Result<()> {
         assert!(vcocap <= VCOCAP_MAX_VALUE);
         // println!("Writing VCOCAP=%u\n", vcocap);
 
-        self.write(base + 9, vcocap | vcocap_reg_state).await
+        self.write(base + 9, vcocap | vcocap_reg_state)
 
         // if (status != 0) {
         // log_debug("VCOCAP write failed: %d\n", status);
@@ -774,9 +772,9 @@ impl LMS6002D {
         // return status;
     }
 
-    pub async fn loopback_path(&self, mode: &BladerfLoopback) -> Result<()> {
-        let mut loopbben = self.read(0x46).await?;
-        let mut lben_lbrf = self.read(0x08).await?;
+    pub fn loopback_path(&self, mode: &BladerfLoopback) -> Result<()> {
+        let mut loopbben = self.read(0x46)?;
+        let mut lben_lbrf = self.read(0x08)?;
 
         /* Default to baseband loopback being disabled  */
         loopbben &= !LOOBBBEN_MASK;
@@ -814,19 +812,19 @@ impl LMS6002D {
             _ => Err(anyhow!("Loopback mode not supported"))?,
         }
 
-        self.write(0x46, loopbben).await?;
-        self.write(0x08, lben_lbrf).await
+        self.write(0x46, loopbben)?;
+        self.write(0x08, lben_lbrf)
     }
 
-    pub async fn lpf_get_mode(&self, channel: u8) -> Result<BladerfLpfMode> {
+    pub fn lpf_get_mode(&self, channel: u8) -> Result<BladerfLpfMode> {
         let reg: u8 = if channel == BLADERF_MODULE_RX {
             0x54
         } else {
             0x34
         };
 
-        let data_l = self.read(reg).await?;
-        let data_h = self.read(reg + 1).await?;
+        let data_l = self.read(reg)?;
+        let data_h = self.read(reg + 1)?;
 
         let lpf_enabled = (data_l & (1 << 1)) != 0;
         let lpf_bypassed = (data_h & (1 << 6)) != 0;
@@ -848,15 +846,15 @@ impl LMS6002D {
         }
     }
 
-    pub async fn lpf_set_mode(&self, channel: u8, mode: BladerfLpfMode) -> Result<()> {
+    pub fn lpf_set_mode(&self, channel: u8, mode: BladerfLpfMode) -> Result<()> {
         let reg: u8 = if channel == BLADERF_MODULE_RX {
             0x54
         } else {
             0x34
         };
 
-        let mut data_l = self.read(reg).await?;
-        let mut data_h = self.read(reg + 1).await?;
+        let mut data_l = self.read(reg)?;
+        let mut data_h = self.read(reg + 1)?;
 
         match mode {
             BladerfLpfMode::Normal => {
@@ -873,13 +871,13 @@ impl LMS6002D {
             } //_ => Err(anyhow!("Invalid LPF mode: {}\n", mode)),
         }
 
-        self.write(reg, data_l).await?;
-        self.write(reg + 1, data_h).await
+        self.write(reg, data_l)?;
+        self.write(reg + 1, data_h)
     }
 
     /* Power up/down RF loopback switch */
-    pub async fn enable_rf_loopback_switch(&self, enable: bool) -> Result<()> {
-        let mut regval = self.read(0x0b).await?;
+    pub fn enable_rf_loopback_switch(&self, enable: bool) -> Result<()> {
+        let mut regval = self.read(0x0b)?;
 
         if enable {
             regval |= 1;
@@ -887,60 +885,56 @@ impl LMS6002D {
             regval &= !1;
         }
 
-        self.write(0x0b, regval).await
+        self.write(0x0b, regval)
     }
 
     /* Configure RX-side of loopback */
-    pub async fn loopback_rx(&self, mode: &BladerfLoopback) -> Result<()> {
-        let lpf_mode = self.lpf_get_mode(BLADERF_MODULE_RX).await?;
+    pub fn loopback_rx(&self, mode: &BladerfLoopback) -> Result<()> {
+        let lpf_mode = self.lpf_get_mode(BLADERF_MODULE_RX)?;
         match mode {
             BladerfLoopback::None => {
                 /* Ensure all RX blocks are enabled */
-                self.rxvga1_enable(true).await?;
+                self.rxvga1_enable(true)?;
 
                 if lpf_mode == BladerfLpfMode::Disabled {
-                    self.lpf_set_mode(BLADERF_MODULE_RX, BladerfLpfMode::Disabled)
-                        .await?;
+                    self.lpf_set_mode(BLADERF_MODULE_RX, BladerfLpfMode::Disabled)?;
                 }
 
-                self.rxvga2_enable(true).await?;
+                self.rxvga2_enable(true)?;
 
                 /* Disable RF loopback switch */
-                self.enable_rf_loopback_switch(false).await?;
+                self.enable_rf_loopback_switch(false)?;
 
                 /* Power up LNAs */
-                self.enable_lna_power(true).await?;
+                self.enable_lna_power(true)?;
 
                 /* Restore proper settings (LNA, RX PLL) for this frequency */
-                let f = self.get_frequency(BLADERF_MODULE_RX).await?;
-                self.set_frequency(BLADERF_MODULE_RX, LMS6002D::frequency_to_hz(&f))
-                    .await?;
+                let f = self.get_frequency(BLADERF_MODULE_RX)?;
+                self.set_frequency(BLADERF_MODULE_RX, LMS6002D::frequency_to_hz(&f))?;
                 let band = if LMS6002D::frequency_to_hz(&f) < BLADERF1_BAND_HIGH {
                     Band::Low
                 } else {
                     Band::High
                 };
-                self.select_band(BLADERF_MODULE_RX, band).await?;
+                self.select_band(BLADERF_MODULE_RX, band)?;
             }
             BladerfLoopback::BbTxvga1Rxvga2 | BladerfLoopback::BbTxlpfRxvga2 => {
                 /* Ensure RXVGA2 is enabled */
-                self.rxvga2_enable(true).await?;
+                self.rxvga2_enable(true)?;
                 /* RXLPF must be disabled */
-                self.lpf_set_mode(BLADERF_MODULE_RX, BladerfLpfMode::Disabled)
-                    .await?;
+                self.lpf_set_mode(BLADERF_MODULE_RX, BladerfLpfMode::Disabled)?;
             }
             BladerfLoopback::BbTxlpfRxlpf | BladerfLoopback::BbTxvga1Rxlpf => {
                 /* RXVGA1 must be disabled */
-                self.rxvga1_enable(false).await?;
+                self.rxvga1_enable(false)?;
 
                 /* Enable the RXLPF if needed */
                 if lpf_mode == BladerfLpfMode::Disabled {
-                    self.lpf_set_mode(BLADERF_MODULE_RX, BladerfLpfMode::Disabled)
-                        .await?;
+                    self.lpf_set_mode(BLADERF_MODULE_RX, BladerfLpfMode::Disabled)?;
                 }
 
                 /* Ensure RXVGA2 is enabled */
-                self.rxvga2_enable(true).await?;
+                self.rxvga2_enable(true)?;
             }
 
             BladerfLoopback::Lna1 | BladerfLoopback::Lna2 | BladerfLoopback::Lna3 => {
@@ -955,52 +949,50 @@ impl LMS6002D {
                 };
 
                 /* Power down LNAs */
-                self.enable_lna_power(false).await?;
+                self.enable_lna_power(false)?;
 
                 /* Ensure RXVGA1 is enabled */
-                self.rxvga1_enable(true).await?;
+                self.rxvga1_enable(true)?;
 
                 /* Enable the RXLPF if needed */
                 if lpf_mode == BladerfLpfMode::Disabled {
-                    self.lpf_set_mode(BLADERF_MODULE_RX, BladerfLpfMode::Disabled)
-                        .await?;
+                    self.lpf_set_mode(BLADERF_MODULE_RX, BladerfLpfMode::Disabled)?;
                 }
 
                 /* Ensure RXVGA2 is enabled */
-                self.rxvga2_enable(true).await?;
+                self.rxvga2_enable(true)?;
 
                 /* Select output buffer in RX PLL and select the desired LNA */
-                let mut regval = self.read(0x25).await?;
+                let mut regval = self.read(0x25)?;
                 regval &= !0x03;
                 // regval |= lna;
                 regval |= u8::from(lms_lna.clone());
 
-                self.write(0x25, regval).await?;
+                self.write(0x25, regval)?;
 
-                self.select_lna(lms_lna).await?;
+                self.select_lna(lms_lna)?;
 
                 /* Enable RF loopback switch */
-                self.enable_rf_loopback_switch(true).await?;
+                self.enable_rf_loopback_switch(true)?;
             }
             _ => Err(anyhow!("Invalid loopback mode encountered"))?,
         }
         Ok(())
     }
 
-    pub async fn loopback_tx(&self, mode: &BladerfLoopback) -> Result<()> {
+    pub fn loopback_tx(&self, mode: &BladerfLoopback) -> Result<()> {
         match mode {
             BladerfLoopback::None => {
                 /* Restore proper settings (PA) for this frequency */
-                let f = self.get_frequency(BLADERF_MODULE_TX).await?;
-                self.set_frequency(BLADERF_MODULE_TX, LMS6002D::frequency_to_hz(&f))
-                    .await?;
+                let f = self.get_frequency(BLADERF_MODULE_TX)?;
+                self.set_frequency(BLADERF_MODULE_TX, LMS6002D::frequency_to_hz(&f))?;
 
                 let band = if LMS6002D::frequency_to_hz(&f) < BLADERF1_BAND_HIGH {
                     Band::Low
                 } else {
                     Band::High
                 };
-                self.select_band(BLADERF_MODULE_TX, band).await?;
+                self.select_band(BLADERF_MODULE_TX, band)?;
                 Ok(())
             }
             BladerfLoopback::BbTxlpfRxvga2
@@ -1008,14 +1000,14 @@ impl LMS6002D {
             | BladerfLoopback::BbTxlpfRxlpf
             | BladerfLoopback::BbTxvga1Rxlpf => Ok(()),
             BladerfLoopback::Lna1 | BladerfLoopback::Lna2 | BladerfLoopback::Lna3 => {
-                self.select_pa(LmsPa::PaAux).await?;
+                self.select_pa(LmsPa::PaAux)?;
                 Ok(())
             }
             _ => Err(anyhow!("Invalid loopback mode encountered"))?,
         }
     }
 
-    pub async fn set_loopback_mode(&self, mode: BladerfLoopback) -> Result<()> {
+    pub fn set_loopback_mode(&self, mode: BladerfLoopback) -> Result<()> {
         /* Verify a valid mode is provided before shutting anything down */
         match mode {
             BladerfLoopback::None => {}
@@ -1030,28 +1022,28 @@ impl LMS6002D {
         }
 
         /* Disable all PA/LNAs while entering loopback mode or making changes */
-        self.select_pa(LmsPa::PaNone).await?;
-        self.select_lna(LmsLna::LnaNone).await?;
+        self.select_pa(LmsPa::PaNone)?;
+        self.select_lna(LmsLna::LnaNone)?;
 
         /* Disconnect loopback paths while we re-configure blocks */
 
-        self.loopback_path(&BladerfLoopback::None).await?;
+        self.loopback_path(&BladerfLoopback::None)?;
 
         /* Configure the RX side of the loopback path */
-        self.loopback_rx(&mode).await?;
+        self.loopback_rx(&mode)?;
 
         /* Configure the TX side of the path */
-        self.loopback_tx(&mode).await?;
+        self.loopback_tx(&mode)?;
 
         /* Configure "switches" along the loopback path */
-        self.loopback_path(&mode).await
+        self.loopback_path(&mode)
     }
 
-    pub async fn get_loopback_mode(&self) -> Result<BladerfLoopback> {
+    pub fn get_loopback_mode(&self) -> Result<BladerfLoopback> {
         let mut loopback = BladerfLoopback::None;
 
-        let lben_lbrfen = self.read(0x08).await?;
-        let loopbben = self.read(0x46).await?;
+        let lben_lbrfen = self.read(0x08)?;
+        let loopbben = self.read(0x46)?;
 
         match lben_lbrfen & 0x7 {
             LBRFEN_LNA1 => {
@@ -1087,22 +1079,22 @@ impl LMS6002D {
         Ok(loopback)
     }
 
-    pub async fn is_loopback_enabled(&self) -> Result<bool> {
-        let loopback = self.get_loopback_mode().await?;
+    pub fn is_loopback_enabled(&self) -> Result<bool> {
+        let loopback = self.get_loopback_mode()?;
 
         Ok(loopback != BladerfLoopback::None)
     }
 
-    pub async fn write_pll_config(&self, module: u8, freqsel: u8, low_band: bool) -> Result<()> {
+    pub fn write_pll_config(&self, module: u8, freqsel: u8, low_band: bool) -> Result<()> {
         let addr = if module == BLADERF_MODULE_TX {
             0x15
         } else {
             0x25
         };
 
-        let mut regval = self.read(addr).await?;
+        let mut regval = self.read(addr)?;
 
-        let lb_enabled: bool = self.is_loopback_enabled().await?;
+        let lb_enabled: bool = self.is_loopback_enabled()?;
 
         if !lb_enabled {
             /* Loopback not enabled - update the PLL output buffer. */
@@ -1113,15 +1105,10 @@ impl LMS6002D {
             regval = (regval & !0xfc) | (freqsel << 2);
         }
 
-        self.write(addr, regval).await
+        self.write(addr, regval)
     }
 
-    pub async fn vtune_high_to_norm(
-        &self,
-        base: u8,
-        mut vcocap: u8,
-        vcocap_reg_state: u8,
-    ) -> Result<u8> {
+    pub fn vtune_high_to_norm(&self, base: u8, mut vcocap: u8, vcocap_reg_state: u8) -> Result<u8> {
         for _ in 0..VTUNE_MAX_ITERATIONS {
             if vcocap >= VCOCAP_MAX_VALUE {
                 log::debug!("vtune_high_to_norm: VCOCAP hit max value.");
@@ -1130,9 +1117,9 @@ impl LMS6002D {
 
             vcocap += 1;
 
-            self.write_vcocap(base, vcocap, vcocap_reg_state).await?;
+            self.write_vcocap(base, vcocap, vcocap_reg_state)?;
 
-            let vtune = self.get_vtune(base, VTUNE_DELAY_SMALL).await?;
+            let vtune = self.get_vtune(base, VTUNE_DELAY_SMALL)?;
 
             if vtune == VCO_NORM {
                 log::debug!("VTUNE NORM @ VCOCAP={vcocap}");
@@ -1148,12 +1135,7 @@ impl LMS6002D {
         // Ok(vcocap)
     }
 
-    pub async fn vtune_norm_to_high(
-        &self,
-        base: u8,
-        mut vcocap: u8,
-        vcocap_reg_state: u8,
-    ) -> Result<u8> {
+    pub fn vtune_norm_to_high(&self, base: u8, mut vcocap: u8, vcocap_reg_state: u8) -> Result<u8> {
         for _ in 0..VTUNE_MAX_ITERATIONS {
             log::debug!("base: {base}, vcocap: {vcocap}, vcocap_reg_state: {vcocap_reg_state}");
 
@@ -1164,9 +1146,9 @@ impl LMS6002D {
 
             vcocap -= 1;
 
-            self.write_vcocap(base, vcocap, vcocap_reg_state).await?;
+            self.write_vcocap(base, vcocap, vcocap_reg_state)?;
 
-            let vtune = self.get_vtune(base, VTUNE_DELAY_SMALL).await?;
+            let vtune = self.get_vtune(base, VTUNE_DELAY_SMALL)?;
             log::debug!("vtune: {vtune}");
 
             if vtune == VCO_HIGH {
@@ -1183,12 +1165,7 @@ impl LMS6002D {
         //Ok(vcocap)
     }
 
-    pub async fn vtune_low_to_norm(
-        &self,
-        base: u8,
-        mut vcocap: u8,
-        vcocap_reg_state: u8,
-    ) -> Result<u8> {
+    pub fn vtune_low_to_norm(&self, base: u8, mut vcocap: u8, vcocap_reg_state: u8) -> Result<u8> {
         for _ in 0..VTUNE_MAX_ITERATIONS {
             if vcocap == 0 {
                 log::debug!("vtune_low_to_norm: VCOCAP hit min value.");
@@ -1197,9 +1174,9 @@ impl LMS6002D {
 
             vcocap -= 1;
 
-            self.write_vcocap(base, vcocap, vcocap_reg_state).await?;
+            self.write_vcocap(base, vcocap, vcocap_reg_state)?;
 
-            let vtune = self.get_vtune(base, VTUNE_DELAY_SMALL).await?;
+            let vtune = self.get_vtune(base, VTUNE_DELAY_SMALL)?;
 
             if vtune == VCO_NORM {
                 log::debug!("VTUNE NORM @ VCOCAP={vcocap}");
@@ -1215,7 +1192,7 @@ impl LMS6002D {
     }
 
     /* Wait for VTUNE to reach HIGH or LOW. NORM is not a valid option here */
-    pub async fn wait_for_vtune_value(
+    pub fn wait_for_vtune_value(
         &self,
         base: u8,
         target_value: u8,
@@ -1234,7 +1211,7 @@ impl LMS6002D {
         assert!(target_value == VCO_HIGH || target_value == VCO_LOW);
 
         for i in 0..MAX_RETRIES {
-            let vtune = self.get_vtune(base, 0).await?;
+            let vtune = self.get_vtune(base, 0)?;
 
             if vtune == target_value {
                 log::debug!("VTUNE reached {target_value} at iteration {i}");
@@ -1251,9 +1228,9 @@ impl LMS6002D {
         while *vcocap != limit {
             *vcocap = (*vcocap as i8 + inc) as u8;
 
-            self.write_vcocap(base, *vcocap, vcocap_reg_state).await?;
+            self.write_vcocap(base, *vcocap, vcocap_reg_state)?;
 
-            let vtune = self.get_vtune(base, VTUNE_DELAY_SMALL).await?;
+            let vtune = self.get_vtune(base, VTUNE_DELAY_SMALL)?;
             if vtune == target_value {
                 log::debug!("VTUNE={vtune} reached with VCOCAP={vcocap}");
                 return Ok(());
@@ -1286,7 +1263,7 @@ impl LMS6002D {
      * you should be able to see the relationship between VCOCAP changes and
      * the voltage changes.
      */
-    pub async fn tune_vcocap(&self, vcocap_est: u8, base: u8, vcocap_reg_state: u8) -> Result<u8> {
+    pub fn tune_vcocap(&self, vcocap_est: u8, base: u8, vcocap_reg_state: u8) -> Result<u8> {
         // let mut status: i32 = 0;
         let mut vcocap: u8 = vcocap_est;
         // let mut vtune: u8 = 0;
@@ -1295,26 +1272,20 @@ impl LMS6002D {
 
         //RESET_BUSY_WAIT_COUNT();
 
-        let mut vtune = self.get_vtune(base, VTUNE_DELAY_LARGE).await?;
+        let mut vtune = self.get_vtune(base, VTUNE_DELAY_LARGE)?;
 
         match vtune {
             VCO_HIGH => {
                 log::debug!("Estimate HIGH: Walking down to NORM.");
-                vtune_high_limit = self
-                    .vtune_high_to_norm(base, vcocap, vcocap_reg_state)
-                    .await?;
+                vtune_high_limit = self.vtune_high_to_norm(base, vcocap, vcocap_reg_state)?;
             }
             VCO_NORM => {
                 log::debug!("Estimate NORM: Walking up to HIGH.");
-                vtune_high_limit = self
-                    .vtune_norm_to_high(base, vcocap, vcocap_reg_state)
-                    .await?;
+                vtune_high_limit = self.vtune_norm_to_high(base, vcocap, vcocap_reg_state)?;
             }
             VCO_LOW => {
                 log::debug!("Estimate LOW: Walking down to NORM.");
-                vtune_low_limit = self
-                    .vtune_low_to_norm(base, vcocap, vcocap_reg_state)
-                    .await?;
+                vtune_low_limit = self.vtune_low_to_norm(base, vcocap, vcocap_reg_state)?;
             }
             _ => {}
         }
@@ -1341,16 +1312,13 @@ impl LMS6002D {
                 }
             }
 
-            self.write_vcocap(base, vcocap, vcocap_reg_state).await?;
+            self.write_vcocap(base, vcocap, vcocap_reg_state)?;
 
             log::debug!("Waiting for VTUNE LOW @ VCOCAP={vcocap}");
-            self.wait_for_vtune_value(base, VCO_LOW, &mut vcocap, vcocap_reg_state)
-                .await?;
+            self.wait_for_vtune_value(base, VCO_LOW, &mut vcocap, vcocap_reg_state)?;
 
             log::debug!("Walking VTUNE LOW to NORM from VCOCAP={vcocap}");
-            vtune_low_limit = self
-                .vtune_low_to_norm(base, vcocap, vcocap_reg_state)
-                .await?;
+            vtune_low_limit = self.vtune_low_to_norm(base, vcocap, vcocap_reg_state)?;
         } else {
             /* We determined our VTUNE LOW limit. Try to force ourselves up to
              * the HIGH limit and then walk down to NORM from there
@@ -1373,16 +1341,13 @@ impl LMS6002D {
                 }
             }
 
-            self.write_vcocap(base, vcocap, vcocap_reg_state).await?;
+            self.write_vcocap(base, vcocap, vcocap_reg_state)?;
 
             log::debug!("Waiting for VTUNE HIGH @ VCOCAP={vcocap}");
-            self.wait_for_vtune_value(base, VCO_HIGH, &mut vcocap, vcocap_reg_state)
-                .await?;
+            self.wait_for_vtune_value(base, VCO_HIGH, &mut vcocap, vcocap_reg_state)?;
 
             log::debug!("Walking VTUNE HIGH to NORM from VCOCAP={vcocap}");
-            vtune_high_limit = self
-                .vtune_high_to_norm(base, vcocap, vcocap_reg_state)
-                .await?;
+            vtune_high_limit = self.vtune_high_to_norm(base, vcocap, vcocap_reg_state)?;
         }
 
         vcocap = vtune_high_limit + (vtune_low_limit - vtune_high_limit) / 2;
@@ -1397,12 +1362,12 @@ impl LMS6002D {
         //     println!("Busy us:     %u\n", busy_wait_duration);
         // #       endif
 
-        self.write_vcocap(base, vcocap, vcocap_reg_state).await?;
+        self.write_vcocap(base, vcocap, vcocap_reg_state)?;
 
         /* Inform the caller of what we converged to */
         // *vcocap_result = vcocap;
 
-        vtune = self.get_vtune(base, VTUNE_DELAY_SMALL).await?;
+        vtune = self.get_vtune(base, VTUNE_DELAY_SMALL)?;
 
         // PRINT_BUSY_WAIT_INFO();
 
@@ -1417,7 +1382,7 @@ impl LMS6002D {
         Ok(vcocap)
     }
 
-    pub async fn set_precalculated_frequency(&self, module: u8, f: &mut LmsFreq) -> Result<()> {
+    pub fn set_precalculated_frequency(&self, module: u8, f: &mut LmsFreq) -> Result<()> {
         /* Select the base address based on which PLL we are configuring */
         let base: u8 = if module == BLADERF_MODULE_RX {
             0x20
@@ -1443,34 +1408,32 @@ impl LMS6002D {
         f.vcocap_result = 0xff;
 
         /* Turn on the DSMs */
-        let mut data = self.read(0x09).await?;
+        let mut data = self.read(0x09)?;
         data |= 0x05;
-        self.write(0x09, data)
-            .await
-            .expect("Failed to turn on DSMs\n");
+        self.write(0x09, data).expect("Failed to turn on DSMs\n");
 
         /* Write the initial vcocap estimate first to allow for adequate time for
          * VTUNE to stabilize. We need to be sure to keep the upper bits of
          * this register and perform a RMW, as bit 7 is VOVCOREG[0]. */
-        let result = self.read(base + 9).await;
+        let result = self.read(base + 9);
         if result.is_err() {
-            self.turn_off_dsms().await?;
+            self.turn_off_dsms()?;
             return Err(anyhow!("Failed to read vcocap regstate!"));
         }
         let mut vcocap_reg_state = result?;
 
         vcocap_reg_state &= !0x3f;
 
-        let result = self.write_vcocap(base, f.vcocap, vcocap_reg_state).await;
+        let result = self.write_vcocap(base, f.vcocap, vcocap_reg_state);
         if result.is_err() {
-            self.turn_off_dsms().await?;
+            self.turn_off_dsms()?;
             return Err(anyhow!("Failed to write vcocap_reg_state!"));
         }
 
         let low_band = (f.flags & LMS_FREQ_FLAGS_LOW_BAND) != 0;
-        let result = self.write_pll_config(module, f.freqsel, low_band).await;
+        let result = self.write_pll_config(module, f.freqsel, low_band);
         if result.is_err() {
-            self.turn_off_dsms().await?;
+            self.turn_off_dsms()?;
             return Err(anyhow!("Failed to write pll_config!"));
         }
 
@@ -1481,9 +1444,9 @@ impl LMS6002D {
         freq_data[3] = (f.nfrac & 0xff) as u8;
 
         for (idx, value) in freq_data.iter().enumerate() {
-            let result = self.write(pll_base + idx as u8, *value).await;
+            let result = self.write(pll_base + idx as u8, *value);
             if result.is_err() {
-                self.turn_off_dsms().await?;
+                self.turn_off_dsms()?;
                 return Err(anyhow!("Failed to write pll {}!", pll_base + idx as u8));
             }
         }
@@ -1523,21 +1486,21 @@ impl LMS6002D {
         } else {
             /* Walk down VCOCAP values find an optimal values */
             log::debug!("Tuning VCOCAP...");
-            f.vcocap_result = self.tune_vcocap(f.vcocap, base, vcocap_reg_state).await?;
+            f.vcocap_result = self.tune_vcocap(f.vcocap, base, vcocap_reg_state)?;
         }
 
         Ok(())
     }
 
-    pub async fn turn_off_dsms(&self) -> Result<()> {
-        let mut data = self.read(0x09).await?;
+    pub fn turn_off_dsms(&self) -> Result<()> {
+        let mut data = self.read(0x09)?;
         data &= !0x05;
-        self.write(0x09, data).await
+        self.write(0x09, data)
     }
 
-    pub async fn enable_lna_power(&self, enable: bool) -> Result<()> {
+    pub fn enable_lna_power(&self, enable: bool) -> Result<()> {
         /* Magic test register to power down LNAs */
-        let mut regval = self.read(0x7d).await?;
+        let mut regval = self.read(0x7d)?;
 
         if enable {
             regval &= !(1 << 0);
@@ -1545,10 +1508,10 @@ impl LMS6002D {
             regval |= 1 << 0;
         }
 
-        self.write(0x7d, regval).await?;
+        self.write(0x7d, regval)?;
 
         /* Decode test registers */
-        regval = self.read(0x70).await?;
+        regval = self.read(0x70)?;
 
         if enable {
             regval &= !(1 << 1);
@@ -1556,13 +1519,13 @@ impl LMS6002D {
             regval |= 1 << 1;
         }
 
-        self.write(0x70, regval).await?;
+        self.write(0x70, regval)?;
         Ok(())
     }
 
-    pub async fn select_pa(&self, pa: LmsPa) -> Result<()> {
+    pub fn select_pa(&self, pa: LmsPa) -> Result<()> {
         // status = LMS_READ(dev, 0x44, &data);
-        let mut data = self.read(0x44).await?;
+        let mut data = self.read(0x44)?;
 
         /* Disable PA1, PA2, and AUX PA - we'll enable as requested below. */
         data &= !0x1C;
@@ -1607,20 +1570,20 @@ impl LMS6002D {
         // if (status == 0) {
         // status = LMS_WRITE(dev, 0x44, data);
         // }
-        self.write(0x44, data).await
+        self.write(0x44, data)
     }
 
     /* Select which LNA to enable */
-    pub async fn select_lna(&self, lna: LmsLna) -> Result<()> {
-        let mut data = self.read(0x75).await?;
+    pub fn select_lna(&self, lna: LmsLna) -> Result<()> {
+        let mut data = self.read(0x75)?;
 
         data &= !(3 << 4);
         data |= (u8::from(lna) & 3) << 4;
 
-        self.write(0x75, data).await
+        self.write(0x75, data)
     }
 
-    pub async fn select_band(&self, module: u8, band: Band) -> Result<()> {
+    pub fn select_band(&self, module: u8, band: Band) -> Result<()> {
         /* If loopback mode disabled, avoid changing the PA or LNA selection,
          * as these need to remain are powered down or disabled */
         // status = is_loopback_enabled(dev);
@@ -1629,7 +1592,7 @@ impl LMS6002D {
         // } else if (status > 0) {
         //     return 0;
         // }
-        if self.is_loopback_enabled().await? {
+        if self.is_loopback_enabled()? {
             log::debug!("Loopback enabled!");
             return Ok(());
         }
@@ -1647,26 +1610,26 @@ impl LMS6002D {
             } else {
                 LmsPa::Pa2
             };
-            self.select_pa(lms_pa).await
+            self.select_pa(lms_pa)
         } else {
             let lms_lna = if band == Band::Low {
                 LmsLna::Lna1
             } else {
                 LmsLna::Lna2
             };
-            self.select_lna(lms_lna).await
+            self.select_lna(lms_lna)
         }
     }
 
-    pub async fn set_frequency(&self, channel: u8, frequency: u32) -> Result<LmsFreq> {
+    pub fn set_frequency(&self, channel: u8, frequency: u32) -> Result<LmsFreq> {
         let mut f = Self::calculate_tuning_params(frequency)?;
         log::debug!("{f:?}");
 
-        self.set_precalculated_frequency(channel, &mut f).await?;
+        self.set_precalculated_frequency(channel, &mut f)?;
         Ok(f)
     }
 
-    pub async fn get_frequency(&self, module: u8) -> Result<LmsFreq> {
+    pub fn get_frequency(&self, module: u8) -> Result<LmsFreq> {
         let mut f = LmsFreq::default();
         let base: u8 = if module == BLADERF_MODULE_RX {
             0x20
@@ -1674,24 +1637,24 @@ impl LMS6002D {
             0x10
         };
 
-        let mut data = self.read(base).await?;
+        let mut data = self.read(base)?;
         f.nint = (data as u16) << 1;
 
-        data = self.read(base + 1).await?;
+        data = self.read(base + 1)?;
         f.nint |= ((data & 0x80) >> 7) as u16;
         f.nfrac = (data as u32 & 0x7f) << 16;
 
-        data = self.read(base + 2).await?;
+        data = self.read(base + 2)?;
         f.nfrac |= (data as u32) << 8;
 
-        data = self.read(base + 3).await?;
+        data = self.read(base + 3)?;
         f.nfrac |= data as u32;
 
-        data = self.read(base + 5).await?;
+        data = self.read(base + 5)?;
         f.freqsel = data >> 2;
         f.x = 1 << ((f.freqsel & 7) - 3);
 
-        data = self.read(base + 9).await?;
+        data = self.read(base + 9)?;
         f.vcocap = data & 0x3f;
 
         Ok(f)
@@ -1704,28 +1667,28 @@ impl LMS6002D {
         (((LMS_REFERENCE_HZ as u64 * pll_coeff) + (div >> 1)) / div) as u32
     }
 
-    pub async fn lms_soft_reset(&self) -> Result<()> {
+    pub fn lms_soft_reset(&self) -> Result<()> {
         /* Soft reset of the LMS */
-        self.write(0x05, 0x12).await?;
-        self.write(0x05, 0x32).await?;
+        self.write(0x05, 0x12)?;
+        self.write(0x05, 0x32)?;
         Ok(())
     }
 
-    pub async fn lna_set_gain(&self, gain: BladerfLnaGain) -> Result<()> {
+    pub fn lna_set_gain(&self, gain: BladerfLnaGain) -> Result<()> {
         /* Set the gain on the LNA */
         if gain != BladerfLnaGain::Unknown {
-            let mut data = self.read(0x75).await?;
+            let mut data = self.read(0x75)?;
             data &= !(3 << 6); /* Clear out previous gain setting */
             data |= (gain as u8 & 3) << 6; /* Update gain value */
-            self.write(0x75, data).await?;
+            self.write(0x75, data)?;
             Ok(())
         } else {
             Err(anyhow!("Invalid Gain value"))
         }
     }
 
-    pub async fn lna_get_gain(&self) -> Result<BladerfLnaGain> {
-        let mut data = self.read(0x75).await?;
+    pub fn lna_get_gain(&self) -> Result<BladerfLnaGain> {
+        let mut data = self.read(0x75)?;
         data >>= 6;
         data &= 3;
 
@@ -1736,34 +1699,34 @@ impl LMS6002D {
         }
     }
 
-    pub async fn get_lna(&self) -> Result<LmsLna> {
-        let data = self.read(0x75).await?;
+    pub fn get_lna(&self) -> Result<LmsLna> {
+        let data = self.read(0x75)?;
         //((data >> 4) & 0x3).try_into()?
         LmsLna::try_from((data >> 4) & 0x3)
     }
 
-    pub async fn rxvga1_enable(&self, enable: bool) -> Result<()> {
+    pub fn rxvga1_enable(&self, enable: bool) -> Result<()> {
         /* Enable bit is in reserved register documented in this thread:
          *  https://groups.google.com/forum/#!topic/limemicro-opensource/8iTannzlfzg
          */
-        let mut data = self.read(0x7d).await?;
+        let mut data = self.read(0x7d)?;
         if enable {
             data &= !(1 << 3);
         } else {
             data |= 1 << 3;
         }
-        self.write(0x7d, data).await?;
+        self.write(0x7d, data)?;
         Ok(())
     }
 
-    pub async fn rxvga1_set_gain(&self, gain: i8) -> Result<()> {
+    pub fn rxvga1_set_gain(&self, gain: i8) -> Result<()> {
         /* Set the RFB_TIA_RXFE mixer gain */
         let idx = gain.clamp(BLADERF_RXVGA1_GAIN_MIN, BLADERF_RXVGA1_GAIN_MAX);
-        self.write(0x76, RXVGA1_LUT_VAL2CODE[idx as usize]).await?;
+        self.write(0x76, RXVGA1_LUT_VAL2CODE[idx as usize])?;
         Ok(())
     }
-    pub async fn rxvga1_get_gain(&self) -> Result<i8> {
-        let mut data = self.read(0x76).await?;
+    pub fn rxvga1_get_gain(&self) -> Result<i8> {
+        let mut data = self.read(0x76)?;
 
         data &= 0x7f;
         let idx = data.clamp(0, 120) as usize;
@@ -1771,32 +1734,32 @@ impl LMS6002D {
         Ok(RXVGA1_LUT_CODE2VAL[idx] as i8)
     }
 
-    pub async fn rxvga2_enable(&self, enable: bool) -> Result<()> {
+    pub fn rxvga2_enable(&self, enable: bool) -> Result<()> {
         /* Enable RXVGA2 */
-        let mut data = self.read(0x64).await?;
+        let mut data = self.read(0x64)?;
         if enable {
             data |= 1 << 1;
         } else {
             data &= !(1 << 1);
         }
-        self.write(0x64, data).await?;
+        self.write(0x64, data)?;
         Ok(())
     }
 
-    pub async fn rxvga2_set_gain(&self, gain: i8) -> Result<()> {
+    pub fn rxvga2_set_gain(&self, gain: i8) -> Result<()> {
         /* Set the gain on RXVGA2 */
         let gain = gain.clamp(BLADERF_RXVGA2_GAIN_MIN, BLADERF_RXVGA2_GAIN_MAX);
-        self.write(0x65, (gain / 3) as u8).await?;
+        self.write(0x65, (gain / 3) as u8)?;
         Ok(())
     }
-    pub async fn rxvga2_get_gain(&self) -> Result<i8> {
-        let data = self.read(0x65).await?;
+    pub fn rxvga2_get_gain(&self) -> Result<i8> {
+        let data = self.read(0x65)?;
 
         Ok((data * 3) as i8)
     }
 
-    pub async fn txvga1_get_gain(&self) -> Result<i8> {
-        let mut data = self.read(0x41).await?;
+    pub fn txvga1_get_gain(&self) -> Result<i8> {
+        let mut data = self.read(0x41)?;
         /* Clamp to max value */
         data &= 0x1f;
 
@@ -1804,8 +1767,8 @@ impl LMS6002D {
         Ok(data as i8 - 35)
     }
 
-    pub async fn txvga2_get_gain(&self) -> Result<i8> {
-        let mut data = self.read(0x45).await?;
+    pub fn txvga2_get_gain(&self) -> Result<i8> {
+        let mut data = self.read(0x45)?;
         /* Clamp to max value */
         data = (data >> 3) & 0x1f;
 
@@ -1813,39 +1776,39 @@ impl LMS6002D {
         Ok(data.min(25) as i8)
     }
 
-    pub async fn txvga1_set_gain(&self, gain: i8) -> Result<()> {
+    pub fn txvga1_set_gain(&self, gain: i8) -> Result<()> {
         let mut gain = gain.clamp(BLADERF_TXVGA1_GAIN_MIN, BLADERF_TXVGA1_GAIN_MAX);
 
         /* Apply offset to convert gain to register table index */
         gain += 35;
 
         /* Since 0x41 is only VGA1GAIN, we don't need to RMW */
-        self.write(0x41, gain as u8).await?;
+        self.write(0x41, gain as u8)?;
         Ok(())
     }
 
-    pub async fn txvga2_set_gain(&self, gain: i8) -> Result<()> {
+    pub fn txvga2_set_gain(&self, gain: i8) -> Result<()> {
         let gain = gain.clamp(BLADERF_TXVGA2_GAIN_MIN, BLADERF_TXVGA2_GAIN_MAX);
 
-        let mut data = self.read(0x45).await? as i8;
+        let mut data = self.read(0x45)? as i8;
         data &= !(0x1f << 3);
         data |= (gain & 0x1f) << 3;
-        self.write(0x45, data as u8).await?;
+        self.write(0x45, data as u8)?;
         Ok(())
     }
 
-    pub async fn peakdetect_enable(&self, enable: bool) -> Result<()> {
-        let mut data = self.read(0x44).await?;
+    pub fn peakdetect_enable(&self, enable: bool) -> Result<()> {
+        let mut data = self.read(0x44)?;
         if enable {
             data &= !(1 << 0);
         } else {
             data |= 1;
         }
-        self.write(0x44, data).await?;
+        self.write(0x44, data)?;
         Ok(())
     }
 
-    pub async fn schedule_retune(
+    pub fn schedule_retune(
         &self,
         channel: u8,
         timestamp: u64,
@@ -1875,38 +1838,34 @@ impl LMS6002D {
             Tune::Normal
         };
 
-        self.interface
-            .nios_retune(
-                channel, timestamp, f.nint, f.nfrac, f.freqsel, f.vcocap, band, tune, f.xb_gpio,
-            )
-            .await?;
+        self.interface.nios_retune(
+            channel, timestamp, f.nint, f.nfrac, f.freqsel, f.vcocap, band, tune, f.xb_gpio,
+        )?;
         Ok(f)
     }
 
-    pub async fn cancel_scheduled_retunes(&self, channel: u8) -> Result<()> {
-        self.interface
-            .nios_retune(
-                channel,
-                NiosPktRetuneRequest::CLEAR_QUEUE,
-                0,
-                0,
-                0,
-                0,
-                Band::Low,
-                Tune::Normal,
-                0,
-            )
-            .await
+    pub fn cancel_scheduled_retunes(&self, channel: u8) -> Result<()> {
+        self.interface.nios_retune(
+            channel,
+            NiosPktRetuneRequest::CLEAR_QUEUE,
+            0,
+            0,
+            0,
+            0,
+            Band::Low,
+            Tune::Normal,
+            0,
+        )
     }
 
-    pub async fn lpf_enable(&self, channel: u8, enable: bool) -> Result<()> {
+    pub fn lpf_enable(&self, channel: u8, enable: bool) -> Result<()> {
         let addr = if channel == BLADERF_MODULE_RX {
             0x54
         } else {
             0x34
         };
 
-        let mut data = self.read(addr).await?;
+        let mut data = self.read(addr)?;
 
         if enable {
             data |= 1 << 1;
@@ -1914,43 +1873,43 @@ impl LMS6002D {
             data &= !(1 << 1);
         }
 
-        self.write(addr, data).await?;
+        self.write(addr, data)?;
 
         /* Check to see if we are bypassed */
-        data = self.read(addr + 1).await?;
+        data = self.read(addr + 1)?;
         if data & (1 << 6) != 0 {
             /* Bypass is enabled; switch back to normal operation */
             data &= !(1 << 6);
-            self.write(addr + 1, data).await?;
+            self.write(addr + 1, data)?;
         }
 
         Ok(())
     }
 
-    pub async fn set_bandwidth(&self, channel: u8, bw: LmsBw) -> Result<()> {
+    pub fn set_bandwidth(&self, channel: u8, bw: LmsBw) -> Result<()> {
         let addr = if channel == BLADERF_MODULE_RX {
             0x54
         } else {
             0x34
         };
 
-        let mut data = self.read(addr).await?;
+        let mut data = self.read(addr)?;
 
         data &= !0x3c; /* Clear out previous bandwidth setting */
         data |= bw.to_index() << 2; /* Apply new bandwidth setting */
 
-        self.write(addr, data).await?;
+        self.write(addr, data)?;
         Ok(())
     }
 
-    pub async fn get_bandwidth(&self, channel: u8) -> Result<LmsBw> {
+    pub fn get_bandwidth(&self, channel: u8) -> Result<LmsBw> {
         let addr = if channel == BLADERF_MODULE_RX {
             0x54
         } else {
             0x34
         };
 
-        let mut data = self.read(addr).await?;
+        let mut data = self.read(addr)?;
 
         /* Fetch bandwidth table index from reg[5:2] */
         data >>= 2;
@@ -1977,13 +1936,11 @@ impl LMS6002D {
 
                     /* This register uses bit 6 to denote a negative value */
                     value |= 1 << 6;
+                } else if value >= 64 {
+                    /* Clamp */
+                    value = 0x3f;
                 } else {
-                    if value >= 64 {
-                        /* Clamp */
-                        value = 0x3f;
-                    } else {
-                        value &= 0x3f;
-                    }
+                    value &= 0x3f;
                 }
 
                 Ok(value as u8)
@@ -2006,10 +1963,10 @@ impl LMS6002D {
         }
     }
 
-    async fn set_dc_offset(&self, module: u8, addr: u8, value: i16) -> Result<()> {
+    fn set_dc_offset(&self, module: u8, addr: u8, value: i16) -> Result<()> {
         let regval = match module {
             BLADERF_MODULE_RX => {
-                let mut tmp = self.read(addr).await?;
+                let mut tmp = self.read(addr)?;
                 /* Bit 7 is unrelated to lms dc correction, save its state */
                 tmp &= 1 << 7;
                 Self::scale_dc_offset(module, value)? | tmp
@@ -2018,29 +1975,29 @@ impl LMS6002D {
             _ => return Err(anyhow!("Invalid module selected!")),
         };
 
-        self.write(addr, regval).await
+        self.write(addr, regval)
     }
 
-    pub async fn set_dc_offset_i(&self, module: u8, value: i16) -> Result<()> {
+    pub fn set_dc_offset_i(&self, module: u8, value: i16) -> Result<()> {
         let addr = if module == BLADERF_MODULE_TX {
             0x42
         } else {
             0x71
         };
-        self.set_dc_offset(module, addr, value).await
+        self.set_dc_offset(module, addr, value)
     }
 
-    pub async fn set_dc_offset_q(&self, module: u8, value: i16) -> Result<()> {
+    pub fn set_dc_offset_q(&self, module: u8, value: i16) -> Result<()> {
         let addr = if module == BLADERF_MODULE_TX {
             0x43
         } else {
             0x72
         };
-        self.set_dc_offset(module, addr, value).await
+        self.set_dc_offset(module, addr, value)
     }
 
-    async fn get_dc_offset(&self, module: u8, addr: u8) -> Result<i16> {
-        let mut tmp = self.read(addr).await?;
+    fn get_dc_offset(&self, module: u8, addr: u8) -> Result<i16> {
+        let mut tmp = self.read(addr)?;
 
         match module {
             BLADERF_MODULE_RX => {
@@ -2065,21 +2022,21 @@ impl LMS6002D {
         }
     }
 
-    pub async fn get_dc_offset_i(&self, module: u8) -> Result<i16> {
+    pub fn get_dc_offset_i(&self, module: u8) -> Result<i16> {
         let addr = if module == BLADERF_MODULE_TX {
             0x42
         } else {
             0x71
         };
-        self.get_dc_offset(module, addr).await
+        self.get_dc_offset(module, addr)
     }
 
-    pub async fn get_dc_offset_q(&self, module: u8) -> Result<i16> {
+    pub fn get_dc_offset_q(&self, module: u8) -> Result<i16> {
         let addr = if module == BLADERF_MODULE_TX {
             0x43
         } else {
             0x72
         };
-        self.get_dc_offset(module, addr).await
+        self.get_dc_offset(module, addr)
     }
 }

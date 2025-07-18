@@ -20,7 +20,7 @@ impl BladeRf1 {
         Ok(())
     }
 
-    pub async fn xb100_enable(&self, enable: bool) -> Result<()> {
+    pub fn xb100_enable(&self, enable: bool) -> Result<()> {
         let mask: u32 = (BLADERF_XB100_LED_D1
             | BLADERF_XB100_LED_D2
             | BLADERF_XB100_LED_D3
@@ -37,12 +37,9 @@ impl BladeRf1 {
         let default_values: u32 = mask;
 
         if enable {
+            self.interface.nios_expansion_gpio_write(mask, outputs)?;
             self.interface
-                .nios_expansion_gpio_write(mask, outputs)
-                .await?;
-            self.interface
-                .nios_expansion_gpio_write(mask, default_values)
-                .await?;
+                .nios_expansion_gpio_write(mask, default_values)?;
         }
 
         Ok(())
@@ -52,29 +49,27 @@ impl BladeRf1 {
         Ok(())
     }
 
-    pub async fn xb100_gpio_read(&self) -> Result<u32> {
-        self.interface.nios_expansion_gpio_read().await
+    pub fn xb100_gpio_read(&self) -> Result<u32> {
+        self.interface.nios_expansion_gpio_read()
     }
 
-    pub async fn xb100_gpio_write(&self, val: u32) -> Result<()> {
-        self.xb100_gpio_masked_write(0xffffffff, val).await
+    pub fn xb100_gpio_write(&self, val: u32) -> Result<()> {
+        self.xb100_gpio_masked_write(0xffffffff, val)
     }
 
-    pub async fn xb100_gpio_masked_write(&self, mask: u32, val: u32) -> Result<()> {
-        self.interface.nios_expansion_gpio_write(mask, val).await
+    pub fn xb100_gpio_masked_write(&self, mask: u32, val: u32) -> Result<()> {
+        self.interface.nios_expansion_gpio_write(mask, val)
     }
 
-    pub async fn xb100_gpio_dir_read(&self) -> Result<u32> {
-        self.interface.nios_expansion_gpio_dir_read().await
+    pub fn xb100_gpio_dir_read(&self) -> Result<u32> {
+        self.interface.nios_expansion_gpio_dir_read()
     }
 
-    pub async fn xb100_gpio_dir_write(&self, val: u32) -> Result<()> {
-        self.xb100_gpio_dir_masked_write(0xffffffff, val).await
+    pub fn xb100_gpio_dir_write(&self, val: u32) -> Result<()> {
+        self.xb100_gpio_dir_masked_write(0xffffffff, val)
     }
 
-    pub async fn xb100_gpio_dir_masked_write(&self, mask: u32, val: u32) -> Result<()> {
-        self.interface
-            .nios_expansion_gpio_dir_write(mask, val)
-            .await
+    pub fn xb100_gpio_dir_masked_write(&self, mask: u32, val: u32) -> Result<()> {
+        self.interface.nios_expansion_gpio_dir_write(mask, val)
     }
 }
