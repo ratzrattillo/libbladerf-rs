@@ -69,7 +69,12 @@ impl BladeRf1 {
     ///
     /// ```no_run
     /// use libbladerf_rs::BladeRf1;
-    /// let dev = BladeRf1::from_first()?;
+    /// use anyhow::Result;
+    ///
+    /// fn main() -> Result<()> {
+    ///     let dev = BladeRf1::from_first()?;
+    ///     Ok(())
+    /// }
     /// ```
     pub fn from_first() -> Result<Box<Self>> {
         let device = Self::list_bladerf1()?
@@ -86,7 +91,12 @@ impl BladeRf1 {
     ///
     /// ```no_run
     /// use libbladerf_rs::BladeRf1;
-    /// let dev = BladeRf1::from_serial("0123456789abcdef")?;
+    /// use anyhow::Result;
+    ///
+    /// fn main() -> Result<()> {
+    ///     let dev = BladeRf1::from_serial("0123456789abcdef")?;
+    ///     Ok(())
+    /// }
     /// ```
     pub fn from_serial(serial: &str) -> Result<Box<Self>> {
         let device = Self::list_bladerf1()?

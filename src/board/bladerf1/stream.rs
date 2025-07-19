@@ -15,24 +15,29 @@ use std::time::Duration;
 impl BladeRf1RxStreamer {
     pub fn new(
         dev: Arc<Mutex<BladeRf1>>,
+        buffer_size: usize,
         num_transfers: Option<usize>,
         timeout: Option<Duration>,
     ) -> Result<Self> {
         let endpoint = dev.lock().unwrap().interface.endpoint::<Bulk, In>(0x81)?;
-        let mtu = endpoint.max_packet_size();
+        // let mtu = endpoint.max_packet_size();
         // println!("Using mtu: {}", mtu);
-        let mut reader = endpoint.reader(mtu);
+        let mut reader = endpoint.reader(buffer_size);
         if let Some(t) = timeout {
             reader.set_read_timeout(t)
         }
         if let Some(n) = num_transfers {
             reader.set_num_transfers(n)
         }
-        Ok(Self { dev, reader, mtu })
+        Ok(Self {
+            dev,
+            reader,
+            buffer_size,
+        })
     }
 
     pub fn mtu(&self) -> Result<usize> {
-        Ok(self.mtu)
+        Ok(self.buffer_size)
     }
 
     pub fn activate(&mut self) -> Result<()> {
@@ -103,24 +108,29 @@ impl BladeRf1RxStreamer {
 impl BladeRf1TxStreamer {
     pub fn new(
         dev: Arc<Mutex<BladeRf1>>,
+        buffer_size: usize,
         num_transfers: Option<usize>,
         timeout: Option<Duration>,
     ) -> Result<Self> {
         let endpoint = dev.lock().unwrap().interface.endpoint::<Bulk, Out>(0x01)?;
-        let mtu = endpoint.max_packet_size();
+        // let mtu = endpoint.max_packet_size();
         // println!("Using mtu: {}", mtu);
-        let mut writer = endpoint.writer(mtu);
+        let mut writer = endpoint.writer(buffer_size);
         if let Some(t) = timeout {
             writer.set_write_timeout(t)
         }
         if let Some(n) = num_transfers {
             writer.set_num_transfers(n)
         }
-        Ok(Self { dev, writer, mtu })
+        Ok(Self {
+            dev,
+            writer,
+            buffer_size,
+        })
     }
 
     pub fn mtu(&self) -> Result<usize> {
-        Ok(self.mtu)
+        Ok(self.buffer_size)
     }
 
     pub fn activate(&mut self) -> Result<()> {
@@ -175,15 +185,15 @@ impl BladeRf1TxStreamer {
 }
 
 impl BladeRf1 {
-    /// Perform the neccessary device configuration for the specified format
-    /// (e.g., enabling/disabling timestamp support), first checking that the
-    /// requested format would not conflict with the other stream direction.
-    ///
-    ///      dev     Device handle
-    ///      dir     Direction that is currently being configured
-    ///      format  Format the channel is being configured for
-    ///
-    /// @return 0 on success, BLADERF_ERR_* on failure
+    // Perform the neccessary device configuration for the specified format
+    // (e.g., enabling/disabling timestamp support), first checking that the
+    // requested format would not conflict with the other stream direction.
+    //
+    //      dev     Device handle
+    //      dir     Direction that is currently being configured
+    //      format  Format the channel is being configured for
+    //
+    // @return 0 on success, BLADERF_ERR_* on failure
     pub fn perform_format_config(
         &self,
         dir: BladeRfDirection,

@@ -250,10 +250,6 @@ impl BladeRf1 {
 
     /**
      * Validate XB-200 path selection
-     *
-     * @param[in]   p   Path supplied by API user.
-     *
-     * @return 0 for a valid enumeration value, BLADERF_ERR_INVAL otherwise.
      */
     pub fn xb200_get_filterbank(&self, ch: u8) -> Result<BladerfXb200Filter> {
         if ch != bladerf_channel_rx!(0) && ch != bladerf_channel_tx!(0) {

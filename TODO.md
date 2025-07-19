@@ -5,3 +5,4 @@
 - NIOS packet dont claim endoint on every call to nios_send
 - maybe have one hardcoded prereserved Vector that is reused by every call to nios_send.
 - Async in all methods might not be required. Drop async support!
+- Get rid of experimental_control_urb method.

@@ -56,9 +56,11 @@
 //! If possible, method names should adhere to the documented methods in [libbladeRF-doc]
 //!
 //! [libbladeRF-doc]: https://www.nuand.com/libbladeRF-doc/v2.5.0/modules.html
+//! [libbladeRF]: https://github.com/Nuand/bladeRF
+//! [Wireshark]: https://www.wireshark.org/download.html
 //!
 //! For debugging purposes, it is useful to compare the communication between the SDR and
-//! the original [`libbladeRF`] with the communication of [libbladerf-rs].
+//! the original [libbladeRF] with the communication of [libbladerf-rs].
 //! Hand tooling for this purpose is [Wireshark]. Allow wireshark to monitor USB traffic:
 //!
 //! ```bash

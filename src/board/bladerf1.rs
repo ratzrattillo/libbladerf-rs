@@ -51,13 +51,13 @@ struct BoardData {
 pub struct BladeRf1RxStreamer {
     dev: Arc<Mutex<BladeRf1>>,
     reader: EndpointRead<Bulk>,
-    mtu: usize,
+    buffer_size: usize,
 }
 
 pub struct BladeRf1TxStreamer {
     dev: Arc<Mutex<BladeRf1>>,
     writer: EndpointWrite<Bulk>,
-    mtu: usize,
+    buffer_size: usize,
 }
 
 /// Representation of a BladeRF1 device.
