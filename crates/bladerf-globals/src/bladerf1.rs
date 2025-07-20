@@ -1,5 +1,5 @@
-use std::fmt::{Display, Formatter};
 use crate::Error;
+use std::fmt::{Display, Formatter};
 
 /// BladeRF1 USB vendor ID.
 pub const BLADERF1_USB_VID: u16 = 0x2CF0;

@@ -216,8 +216,7 @@ pub const LMS_REG_DUMPSET: [u8; 107] = [
     // RX LPF, ADC, and DAC Modules Configuration
     0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58, 0x59, 0x5A, 0x5B, 0x5C, 0x5D, 0x5E, 0x5F,
     // RX VGA2 Configuration
-    0x60, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67, 0x68,
-    // RX FE Modules Configuration
+    0x60, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67, 0x68, // RX FE Modules Configuration
     0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76, 0x77, 0x78, 0x79, 0x7A, 0x7B, 0x7C,
 ];
 
@@ -620,14 +619,15 @@ impl LMS6002D {
     /// # Examples
     ///
     /// ```
-    /// use libbladerf_rs::{BladeRf1, Error};
+    /// use libbladerf_rs::{BladeRf1, Result, Error};
     /// use libbladerf_rs::hardware::lms6002d::LMS6002D;
     /// use nusb::MaybeFuture;
     ///
-    /// fn main() {
+    /// fn main() -> Result<()> {
     ///     let device = BladeRf1::list_bladerf1()?.next().ok_or(Error::NotFound)?.open().wait()?;
     ///     let interface = device.detach_and_claim_interface(0).wait()?;
     ///     let lms = LMS6002D::new(interface);
+    /// Ok(())
     /// }
     /// ```
     pub fn new(interface: Interface) -> Self {

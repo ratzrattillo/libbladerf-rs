@@ -94,7 +94,6 @@ pub mod nios;
 
 pub use board::bladerf1::*;
 
-
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     /// I/O error occurred.
@@ -139,7 +138,7 @@ pub enum Error {
     Invalid,
     /// Device not found
     #[error("not found")]
-    NotFound
+    NotFound,
 }
 /// Result type for operations that may return an `Error`.
 pub type Result<T> = std::result::Result<T, Error>;

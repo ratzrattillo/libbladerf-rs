@@ -1,4 +1,3 @@
-use nusb::Interface;
 use crate::BladeRf1;
 use crate::Result;
 use crate::board::bladerf1::expansion_boards::{
@@ -7,6 +6,7 @@ use crate::board::bladerf1::expansion_boards::{
     BLADERF_XB100_TLED_BLUE, BLADERF_XB100_TLED_GREEN, BLADERF_XB100_TLED_RED,
 };
 use crate::nios::Nios;
+use nusb::Interface;
 
 pub struct Xb100 {}
 
@@ -54,8 +54,7 @@ impl BladeRf1 {
 
         if enable {
             self.interface.nios_expansion_gpio_dir_write(mask, mask)?;
-            self.interface
-                .nios_expansion_gpio_write(mask, mask)?;
+            self.interface.nios_expansion_gpio_write(mask, mask)?;
         }
 
         Ok(())

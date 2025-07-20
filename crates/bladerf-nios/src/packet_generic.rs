@@ -1,7 +1,7 @@
 use crate::NiosPktMagic;
 use crate::packet_base::GenericNiosPkt;
-use std::fmt::{Debug, Display, Formatter, LowerHex};
 use bladerf_globals::{Error, Result};
+use std::fmt::{Debug, Display, Formatter, LowerHex};
 // pub const NIOS_PKT_8X8_MAGIC: u8 = 0x41; // 'A'
 // pub const NIOS_PKT_8X16_MAGIC: u8 = 0x42; // 'B'
 // pub const NIOS_PKT_8X32_MAGIC: u8 = 0x43; // 'C'
@@ -146,9 +146,8 @@ where
     }
     pub fn is_success(&self) -> Result<()> {
         if self.buf[Self::IDX_FLAGS] & Self::FLAG_SUCCESS == 0 {
-                log::error!("response packet reported failure.");
-                return Err(Error::Invalid);
-
+            log::error!("response packet reported failure.");
+            return Err(Error::Invalid);
         }
         Ok(())
     }

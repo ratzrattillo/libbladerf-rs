@@ -606,27 +606,28 @@ impl Debug for NiosPktRetuneRequest {
 ///
 /// (Note 3) Description of Status Flags:
 ///
-///      flags\[0\]: 1 = Timestamp and VCOCAP are valid. This is only the case for
-///                    "Tune NOW" requests. It is not possible to return this
-///                    information for scheduled retunes, as the event generally
-///                    does not occur before the response is set.
+///  flags\[0\]:
+///   1 = Timestamp and VCOCAP are valid. This is only the case for
+///   "Tune NOW" requests. It is not possible to return this
+///   information for scheduled retunes, as the event generally
+///   does not occur before the response is set.
 ///
-///                0 = This was a scheduled retune. Timestamp and VCOCAP Fields
-///                    should be ignored.
+///   0 = This was a scheduled retune. Timestamp and VCOCAP Fields
+///   should be ignored.
 ///
 ///
-///      flags\[1\]: 1 = Operation completed successfully.
-///                0 = Operation failed.
+///  flags\[1\]:
+///   1 = Operation completed successfully.
+///   0 = Operation failed.
 ///
-///                For "Tune NOW" requests, a failure may occur as the result
-///                of the tuning algorithm failing to occur, and such other
-///                unexpected failurs.
+///   For "Tune NOW" requests, a failure may occur as the result
+///   of the tuning algorithm failing to occur, and such other
+///   unexpected failurs.
 ///
-///                The scheduled tune request will failure if the retune queue
-///                is full.
+///   The scheduled tune request will failure if the retune queue
+///   is full.
 ///
-///      flags\[7:2\]    Reserved. Set to 0.
-
+///  flags\[7:2\]    Reserved. Set to 0.
 
 pub struct NiosPktRetuneResponse {
     pkt: NiosPktRetune,

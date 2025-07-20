@@ -1,7 +1,7 @@
-use nusb::Interface;
 use crate::BladeRf1;
 use crate::nios::Nios;
 use crate::{Error, Result};
+use nusb::Interface;
 
 pub const BLADERF_XB_AUX_EN: u32 = 0x000002;
 pub const BLADERF_XB_TX_LED: u32 = 0x000010;
@@ -48,7 +48,9 @@ impl BladeRf1 {
     /// Trying to detect if XB300 is enabled by reading the LNA enablement status Flag,
     /// which is set in xb300_enable(). Might be not the best, or correct way.
     pub fn xb300_is_enabled(interface: &Interface) -> Result<bool> {
-        Ok(interface.nios_expansion_gpio_dir_read()? & (BLADERF_XB_CS | BLADERF_XB_CSEL | BLADERF_XB_LNA_ENN) != 0)
+        Ok(interface.nios_expansion_gpio_dir_read()?
+            & (BLADERF_XB_CS | BLADERF_XB_CSEL | BLADERF_XB_LNA_ENN)
+            != 0)
     }
 
     pub fn xb300_attach(&mut self) -> Result<()> {
