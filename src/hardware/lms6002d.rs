@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use crate::nios::Nios;
-use crate::{Error, Result};
+use crate::{BladeRf1, Error, Result};
 use bladerf_globals::bladerf1::{
     BLADERF_FREQUENCY_MAX, BLADERF_FREQUENCY_MIN, BLADERF_RXVGA1_GAIN_MAX, BLADERF_RXVGA1_GAIN_MIN,
     BLADERF_RXVGA2_GAIN_MAX, BLADERF_RXVGA2_GAIN_MIN, BLADERF_TXVGA1_GAIN_MAX,
@@ -1739,7 +1739,9 @@ impl LMS6002D {
 
         let val = self.interface.nios_expansion_gpio_read()?;
 
-        if self.xb200.is_some() {
+        // TODO: Test if the enablement check really works...
+        // if self.xb200.is_some() {
+        if BladeRf1::xb200_is_enabled(&self.interface)? {
             quick_tune.xb_gpio |= LMS_FREQ_XB_200_ENABLE;
             if module == bladerf_channel_rx!(0) {
                 quick_tune.xb_gpio |= LMS_FREQ_XB_200_MODULE_RX;

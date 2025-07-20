@@ -2,6 +2,7 @@ use crate::BladeRf1;
 use crate::nios::Nios;
 use crate::{Error, Result};
 use bladerf_globals::{bladerf_channel_rx, bladerf_channel_tx};
+use nusb::Interface;
 
 pub const BLADERF_XB_CONFIG_TX_PATH_MIX: u32 = 0x04;
 pub const BLADERF_XB_CONFIG_TX_PATH_BYPASS: u32 = 0x08;
@@ -122,6 +123,11 @@ impl Xb200 {
 }
 
 impl BladeRf1 {
+    /// Trying to detect if XB200 is enabled by reading the BLADERF_XB_RF_ON gpio Flag,
+    /// which is set in xb200_enable(). Might be not the best, or correct way.
+    pub fn xb200_is_enabled(interface: &Interface) -> Result<bool> {
+        Ok((interface.nios_expansion_gpio_read()? & BLADERF_XB_RF_ON) != 0)
+    }
     pub fn xb200_attach(&mut self) -> Result<()> {
         let muxout: usize = 6;
 
@@ -136,7 +142,7 @@ impl BladeRf1 {
             "RESERVED",
         ];
 
-        log::debug!("Attaching XB200 transverter board");
+        log::trace!("Attaching XB200 transverter board");
         // Out: 41010000270000000000000000000000
         let mut val8 = self.si5338.read(39)?;
         log::trace!("[xb200_attach] si5338_read: {val8}");
@@ -150,13 +156,11 @@ impl BladeRf1 {
 
         // Out: 43010000000000000000000000000000
         let mut val = self.config_gpio_read()?;
-        log::trace!("[xb200_attach] config_gpio_read: {val}");
 
         val |= 0x80000000;
 
         // Out: 43010100002f00000000000000000000 in this library
         // Out: 43010100002f00008000000000000000 in original library!
-        log::trace!("[xb200_attach] config_gpio_write: {val}");
         self.config_gpio_write(val)?;
 
         self.interface
@@ -176,7 +180,6 @@ impl BladeRf1 {
         log::trace!("MUXOUT: {}", mux_lut[muxout]);
 
         let value = 0x60008E42 | (1 << 8) | ((muxout as u32) << 26);
-        log::trace!("[xb200_attach] value: {value}");
         self.interface.nios_xb200_synth_write(value)?;
 
         self.interface.nios_xb200_synth_write(0x08008011)?;

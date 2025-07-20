@@ -1,3 +1,4 @@
+use nusb::Interface;
 use crate::BladeRf1;
 use crate::nios::Nios;
 use crate::{Error, Result};
@@ -44,6 +45,12 @@ pub enum BladeRfXb300Amplifier {
 pub struct Xb300 {}
 
 impl BladeRf1 {
+    /// Trying to detect if XB300 is enabled by reading the LNA enablement status Flag,
+    /// which is set in xb300_enable(). Might be not the best, or correct way.
+    pub fn xb300_is_enabled(interface: &Interface) -> Result<bool> {
+        Ok(interface.nios_expansion_gpio_dir_read()? & (BLADERF_XB_CS | BLADERF_XB_CSEL | BLADERF_XB_LNA_ENN) != 0)
+    }
+
     pub fn xb300_attach(&mut self) -> Result<()> {
         let mut val = BLADERF_XB_TX_LED | BLADERF_XB_RX_LED | BLADERF_XB_TRX_MASK;
         val |= BLADERF_XB_PA_EN | BLADERF_XB_LNA_ENN;
@@ -65,6 +72,7 @@ impl BladeRf1 {
     }
 
     pub fn xb300_enable(&self, _enable: bool) -> Result<()> {
+        // TODO: Why? These values are already being set in xb300_attach()
         let val = BLADERF_XB_CS | BLADERF_XB_CSEL | BLADERF_XB_LNA_ENN;
         self.interface.nios_expansion_gpio_write(0xffffffff, val)?;
 
