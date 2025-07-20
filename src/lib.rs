@@ -94,6 +94,8 @@ pub mod nios;
 
 pub use board::bladerf1::*;
 
+pub use bladerf_globals::*;
+
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     /// I/O error occurred.
