@@ -3,8 +3,7 @@ use crate::hardware::dac161s055::DAC161S055;
 use crate::hardware::lms6002d::LMS6002D;
 use crate::hardware::si5338::SI5338;
 use crate::nios::Nios;
-use crate::{BladeRf1, BladeRfError};
-use anyhow::{Result, anyhow};
+use crate::{BladeRf1, Error, Result};
 use bladerf_globals::bladerf1::{
     BLADERF_GPIO_FEATURE_SMALL_DMA_XFER, BLADERF1_USB_PID, BLADERF1_USB_VID,
 };
@@ -43,7 +42,8 @@ impl BladeRf1 {
         };
 
         if board_data.speed < Speed::High {
-            return Err(anyhow!("BladeRF requires High/Super/SuperPlus speeds"));
+            log::error!("BladeRF requires High/Super/SuperPlus speeds");
+            return Err(Error::Invalid);
         }
 
         let lms = LMS6002D::new(interface.clone());
@@ -68,8 +68,7 @@ impl BladeRf1 {
     /// # Examples
     ///
     /// ```no_run
-    /// use libbladerf_rs::BladeRf1;
-    /// use anyhow::Result;
+    /// use libbladerf_rs::{BladeRf1, Result};
     ///
     /// fn main() -> Result<()> {
     ///     let dev = BladeRf1::from_first()?;
@@ -79,7 +78,7 @@ impl BladeRf1 {
     pub fn from_first() -> Result<Box<Self>> {
         let device = Self::list_bladerf1()?
             .next()
-            .ok_or(BladeRfError::NotFound)?
+            .ok_or(Error::NotFound)?
             .open()
             .wait()?;
         Self::build(device)
@@ -90,8 +89,7 @@ impl BladeRf1 {
     /// # Examples
     ///
     /// ```no_run
-    /// use libbladerf_rs::BladeRf1;
-    /// use anyhow::Result;
+    /// use libbladerf_rs::{BladeRf1, Result};
     ///
     /// fn main() -> Result<()> {
     ///     let dev = BladeRf1::from_serial("0123456789abcdef")?;
@@ -101,7 +99,7 @@ impl BladeRf1 {
     pub fn from_serial(serial: &str) -> Result<Box<Self>> {
         let device = Self::list_bladerf1()?
             .find(|dev| dev.serial_number() == Some(serial))
-            .ok_or(BladeRfError::NotFound)?
+            .ok_or(Error::NotFound)?
             .open()
             .wait()?;
         Self::build(device)
@@ -111,7 +109,7 @@ impl BladeRf1 {
     pub fn from_bus_addr(bus_number: u8, bus_addr: u8) -> Result<Box<Self>> {
         let device = Self::list_bladerf1()?
             .find(|dev| dev.busnum() == bus_number && dev.device_address() == bus_addr)
-            .ok_or(BladeRfError::NotFound)?
+            .ok_or(Error::NotFound)?
             .open()
             .wait()?;
         Self::build(device)
@@ -134,19 +132,26 @@ impl BladeRf1 {
 
     /// Return the devices' serial number
     pub fn serial(&self) -> Result<String> {
-        self.get_string_descriptor(NonZero::try_from(StringDescriptors::Serial as u8)?)
+        self.get_string_descriptor(
+            NonZero::try_from(StringDescriptors::Serial as u8).map_err(|_| Error::Invalid)?,
+        )
 
+        // TODO: Prettify output by stripping
         // ?.strip_prefix('"').unwrap().strip_suffix('"').unwrap().to_owned()
     }
 
     /// Return the devices' manufacturer (Nuand)
     pub fn manufacturer(&self) -> Result<String> {
-        self.get_string_descriptor(NonZero::try_from(StringDescriptors::Manufacturer as u8)?)
+        self.get_string_descriptor(
+            NonZero::try_from(StringDescriptors::Manufacturer as u8).map_err(|_| Error::Invalid)?,
+        )
     }
 
     /// Return the devices' FX3 firmware version
     pub fn fx3_firmware(&self) -> Result<String> {
-        self.get_string_descriptor(NonZero::try_from(StringDescriptors::Fx3Firmware as u8)?)
+        self.get_string_descriptor(
+            NonZero::try_from(StringDescriptors::Fx3Firmware as u8).map_err(|_| Error::Invalid)?,
+        )
     }
 
     pub fn fpga_version(&self) -> Result<String> {
@@ -156,7 +161,9 @@ impl BladeRf1 {
 
     /// Return the devices' product name (BladeRf1)
     pub fn product(&self) -> Result<String> {
-        self.get_string_descriptor(NonZero::try_from(StringDescriptors::Product as u8)?)
+        self.get_string_descriptor(
+            NonZero::try_from(StringDescriptors::Product as u8).map_err(|_| Error::Invalid)?,
+        )
     }
 
     /// Read from the configuration GPIO register.
@@ -168,9 +175,9 @@ impl BladeRf1 {
     /// Callers should be sure to perform a read-modify-write sequence to avoid accidentally
     /// clearing other GPIO bits that may be set by the library internally.
     pub(crate) fn config_gpio_write(&self, mut data: u32) -> Result<()> {
-        log::debug!("[config_gpio_write] data: {data}");
-        log::debug!("[config_gpio_write] speed: {:?}", self.board_data.speed);
-        /* If we're connected at HS, we need to use smaller DMA transfers */
+        log::trace!("[config_gpio_write] data: {data}");
+        log::trace!("[config_gpio_write] speed: {:?}", self.board_data.speed);
+        // If we're connected at HS, we need to use smaller DMA transfers
         match self.board_data.speed {
             Speed::High => {
                 data |= BLADERF_GPIO_FEATURE_SMALL_DMA_XFER as u32;
@@ -178,9 +185,12 @@ impl BladeRf1 {
             Speed::Super => {
                 data &= !(BLADERF_GPIO_FEATURE_SMALL_DMA_XFER as u32);
             }
-            _ => return Err(anyhow!("speed {:?} not supported", self.board_data.speed)),
+            _ => {
+                log::error!("speed {:?} not supported", self.board_data.speed);
+                return Err(Error::Invalid);
+            }
         }
-        log::debug!("[config_gpio_write] data after speedcheck: {data}");
+        log::trace!("[config_gpio_write] data after speedcheck: {data}");
 
         self.interface.nios_config_write(data)
     }
@@ -189,91 +199,90 @@ impl BladeRf1 {
     /// to call multiple times after power-up (e.g., multiple close and reopens)
     pub fn initialize(&mut self) -> Result<()> {
         self.interface.set_alt_setting(0x01).wait()?;
-        log::debug!("[*] Init - Set Alt Setting to 0x01");
+        log::trace!("[*] Init - Set Alt Setting to 0x01");
 
         // Out: 43010000000000000000000000000000
         // In:  43010200000000000000000000000000
         let cfg = self.config_gpio_read()?;
         if (cfg & 0x7f) == 0 {
-            log::debug!("[*] Init - Default GPIO value \"{cfg}\" found - initializing device");
-            /* Set the GPIO pins to enable the LMS and select the low band */
+            log::trace!("[*] Init - Default GPIO value \"{cfg}\" found - initializing device");
+            // Set the GPIO pins to enable the LMS and select the low band
             // Out: 43010100005700000000000000000000
             // In:  43010300005700000000000000000000
             self.config_gpio_write(0x57)?;
 
-            /* Disable the front ends */
-            log::debug!("[*] Init - Disabling RX and TX Frontend");
+            // Disable the front ends
+            log::trace!("[*] Init - Disabling RX and TX Frontend");
             // Out: 41000000400000000000000000000000
             // In:  41000200400200000000000000000000
             // Out: 41000100400000000000000000000000
             // In:  41000300400000000000000000000000
             self.lms.enable_rffe(BLADERF_MODULE_TX, false)?;
-            log::debug!("{BLADERF_MODULE_TX}");
+            log::trace!("{BLADERF_MODULE_TX}");
 
             // Out: 41000000700000000000000000000000
             // In:  41000200700200000000000000000000
             // Out: 41000100700000000000000000000000
             // In:  41000300700000000000000000000000
             self.lms.enable_rffe(BLADERF_MODULE_RX, false)?;
-            log::debug!("{BLADERF_MODULE_RX}");
+            log::trace!("{BLADERF_MODULE_RX}");
 
-            /* Set the internal LMS register to enable RX and TX */
-            log::debug!("[*] Init - Set LMS register to enable RX and TX");
+            // Set the internal LMS register to enable RX and TX
+            log::trace!("[*] Init - Set LMS register to enable RX and TX");
             // Out: 41000100053e00000000000000000000
             // In:  41000300053e00000000000000000000
             self.lms.write(0x05, 0x3e)?;
 
-            /* LMS FAQ: Improve TX spurious emission performance */
-            log::debug!("[*] Init - Set LMS register to enable RX and TX");
+            // LMS FAQ: Improve TX spurious emission performance
+            log::trace!("[*] Init - Set LMS register to enable RX and TX");
             // Out: 41000100474000000000000000000000
             // In:  41000300474000000000000000000000
             self.lms.write(0x47, 0x40)?;
 
-            /* LMS FAQ: Improve ADC performance */
-            log::debug!("[*] Init - Set register to improve ADC performance");
+            // LMS FAQ: Improve ADC performance
+            log::trace!("[*] Init - Set register to improve ADC performance");
             // Out: 41000100592900000000000000000000
             // In:  41000300592900000000000000000000
             self.lms.write(0x59, 0x29)?;
 
-            /* LMS FAQ: Common mode voltage for ADC */
-            log::debug!("[*] Init - Set Common mode voltage for ADC");
+            // LMS FAQ: Common mode voltage for ADC
+            log::trace!("[*] Init - Set Common mode voltage for ADC");
             // Out: 41000100643600000000000000000000
             // In:  41000300643600000000000000000000
             self.lms.write(0x64, 0x36)?;
 
-            /* LMS FAQ: Higher LNA Gain */
-            log::debug!("[*] Init - Set Higher LNA Gain");
+            // LMS FAQ: Higher LNA Gain
+            log::trace!("[*] Init - Set Higher LNA Gain");
             // Out: 41000100793700000000000000000000
             // In:  41000300793700000000000000000000
             self.lms.write(0x79, 0x37)?;
 
-            /* Power down DC calibration comparators until they are need, as they
-             * have been shown to introduce undesirable artifacts into our signals.
-             * (This is documented in the LMS6 FAQ). */
-
-            log::debug!("[*] Init - Power down TX LPF DC cal comparator");
+            // Power down DC calibration comparators until they are need, as they
+            // have been shown to introduce undesirable artifacts into our signals.
+            // (This is documented in the LMS6 FAQ).
+            log::trace!("[*] Init - Power down TX LPF DC cal comparator");
             // Out: 410000003f0000000000000000000000
             // In:  410002003f0000000000000000000000
             // Out: 410001003f8000000000000000000000
             // In:  410003003f8000000000000000000000
-            self.lms.set(0x3f, 0x80)?; /* TX LPF DC cal comparator */
+            self.lms.set(0x3f, 0x80)?; // TX LPF DC cal comparator
 
             log::debug!("[*] Init - Power down RX LPF DC cal comparator");
             // Out: 410000005f0000000000000000000000
             // In:  410002005f1f00000000000000000000
             // Out: 410001005f9f00000000000000000000
             // In:  410003005f9f00000000000000000000
-            self.lms.set(0x5f, 0x80)?; /* RX LPF DC cal comparator */
+            self.lms.set(0x5f, 0x80)?; // RX LPF DC cal comparator
 
-            log::debug!("[*] Init - Power down RXVGA2A/B DC cal comparators");
+            log::trace!("[*] Init - Power down RXVGA2A/B DC cal comparators");
             // Out: 410000006e0000000000000000000000
             // In:  410002006e0000000000000000000000
             // Out: 410001006ec000000000000000000000
             // In:  410003006ec000000000000000000000
-            self.lms.set(0x6e, 0xc0)?; /* RXVGA2A/B DC cal comparators */
+            self.lms.set(0x6e, 0xc0)?; // RXVGA2A/B DC cal comparators
 
-            /* Configure charge pump current offsets */
-            log::debug!("[*] Init - Configure TX charge pump current offsets");
+            // Configure charge pump current offsets
+            log::trace!("[*] Init - Configure TX charge pump current offsets");
             // Out: 41000000160000000000000000000000
             // In:  41000200168c00000000000000000000
             // Out: 41000100160000000000000000000000
@@ -287,7 +296,7 @@ impl BladeRf1 {
             // Out: 41000100184300000000000000000000
             // In:  41000300184300000000000000000000
             self.lms.config_charge_pumps(BLADERF_MODULE_TX)?;
-            log::debug!("[*] Init - Configure RX charge pump current offsets");
+            log::trace!("[*] Init - Configure RX charge pump current offsets");
 
             // Out: 41000000260000000000000000000000
             // In:  41000200268c00000000000000000000
@@ -303,7 +312,7 @@ impl BladeRf1 {
             // In:  41000300284300000000000000000000
             self.lms.config_charge_pumps(BLADERF_MODULE_RX)?;
 
-            log::debug!("[*] Init - Set TX Samplerate");
+            log::trace!("[*] Init - Set TX Samplerate");
             // Out: 41010000260000000000000000000000
             // In:  41010200260000000000000000000000
             // Out: 41010100260300000000000000000000
@@ -334,7 +343,7 @@ impl BladeRf1 {
                 .si5338
                 .set_sample_rate(bladerf_channel_tx!(0), 1000000)?;
 
-            log::debug!("[*] Init - Set RX Samplerate");
+            log::trace!("[*] Init - Set RX Samplerate");
             // Out: As above but slightly different (Matches original packets)
             // In:  As above but slightly different (Matches original packets)
             let _actual_rx = self
@@ -348,17 +357,17 @@ impl BladeRf1 {
 
             // board_data->tuning_mode = tuning_get_default_mode(dev);
 
-            log::debug!("self.set_frequency(bladerf_channel_tx!(0), 2447000000)?;");
+            log::trace!("self.set_frequency(bladerf_channel_tx!(0), 2447000000)?;");
             // Out: 5400000000000000003fb95555ac1f00
             // In:  5400000000000000001e030000000000
             self.set_frequency(bladerf_channel_tx!(0), 2447000000)?;
 
-            log::debug!("self.set_frequency(bladerf_channel_rx!(0), 2484000000)?;");
+            log::trace!("self.set_frequency(bladerf_channel_rx!(0), 2484000000)?;");
             // Out: 54000000000000000040b000006c2300
             // In:  54000000000000000021030000000000
             self.set_frequency(bladerf_channel_rx!(0), 2484000000)?;
 
-            // /* Set the calibrated VCTCXO DAC value */
+            // // Set the calibrated VCTCXO DAC value
             // TODO: board_data.dac_trim instead of 0
             // Out: 42000100280000000000000000000000
             // In:  42000300280000000000000000000000
@@ -369,7 +378,7 @@ impl BladeRf1 {
             //     return status;
             // }
 
-            // /* Set the default gain mode */
+            // // Set the default gain mode
             // Out expected: 4200010008d1ab000000000000000000
             // Out actual:   42000100080000000000000000000000
             // In: expected: 4200030008d1ab000000000000000000
@@ -377,23 +386,23 @@ impl BladeRf1 {
             // Todo: Implement AGC table and set mode to BladerfGainDefault
             self.set_gain_mode(bladerf_channel_rx!(0), BladerfGainMode::Mgc)?;
         } else {
-            log::debug!("[*] Init - Device already initialized: {cfg:#04x}");
-            //board_data->tuning_mode = tuning_get_default_mode(dev);
+            log::trace!("[*] Init - Device already initialized: {cfg:#04x}");
+            // board_data->tuning_mode = tuning_get_default_mode(dev);
         }
 
-        /* Check if we have an expansion board attached */
-        //let xb = self.expansion_get_attached();
+        // Check if we have an expansion board attached
+        // let xb = self.expansion_get_attached();
 
-        // /* Update device state */
+        // // Update device state
         // board_data->state = STATE_INITIALIZED;
         //
-        // /* Set up LMS DC offset register calibration and initial IQ settings,
-        //  * if any tables have been loaded already.
-        //  *
-        //  * This is done every time the device is opened (with an FPGA loaded),
-        //  * as the user may change/update DC calibration tables without reloading the
-        //  * FPGA.
-        //  */
+        // // Set up LMS DC offset register calibration and initial IQ settings,
+        // // if any tables have been loaded already.
+        //
+        // // This is done every time the device is opened (with an FPGA loaded),
+        // // as the user may change/update DC calibration tables without reloading the
+        // // FPGA.
+        //
         // status = bladerf1_apply_lms_dc_cals(dev);
         // if (status != 0) {
         //     return status;
@@ -402,7 +411,7 @@ impl BladeRf1 {
         Ok(())
     }
 
-    /* Vendor command that sets a 32-bit integer value */
+    // Vendor command that sets a 32-bit integer value
     // fn set_vendor_cmd_int(&self, cmd: u8, val: u32) -> Result<()> {
     //     let pkt = ControlOut {
     //         control_type: ControlType::Vendor,
@@ -418,7 +427,7 @@ impl BladeRf1 {
     //         ?)
     // }
 
-    /* Vendor command that gets a 32-bit integer value */
+    // Vendor command that gets a 32-bit integer value
     fn get_vendor_cmd_int(&self, cmd: u8) -> Result<u32> {
         let pkt = ControlIn {
             control_type: ControlType::Vendor,
@@ -435,9 +444,13 @@ impl BladeRf1 {
 
         // TODO: Examine return value and return it
         log::debug!("get_vendor_cmd_int response data: {vec:?}");
-        Ok(u32::from_le_bytes(vec.as_slice()[0..4].try_into()?))
+        Ok(u32::from_le_bytes(
+            vec.as_slice()[0..4]
+                .try_into()
+                .map_err(|_| Error::Invalid)?,
+        ))
     }
-    /// Vendor command wrapper to get a 32-bit integer and supplies wValue */
+    /// Vendor command wrapper to get a 32-bit integer and supplies wValue
     /// TODO: Return u32 value
     fn vendor_cmd_int_wvalue(&self, cmd: u8, wvalue: u16) -> Result<u32> {
         // struct bladerf_usb *usb = dev->backend_data;
@@ -464,8 +477,12 @@ impl BladeRf1 {
             .control_in(pkt, Duration::from_secs(5))
             .wait()?;
         // TODO: Examine return value and return it
-        log::debug!("vendor_cmd_int_wvalue response data: {vec:?}");
-        Ok(u32::from_le_bytes(vec.as_slice()[0..4].try_into()?))
+        log::trace!("vendor_cmd_int_wvalue response data: {vec:?}");
+        Ok(u32::from_le_bytes(
+            vec.as_slice()[0..4]
+                .try_into()
+                .map_err(|_| Error::Invalid)?,
+        ))
     }
 
     /// Enable/Disable RF Module via the USB backend.
@@ -481,17 +498,17 @@ impl BladeRf1 {
 
         let _fx3_ret = self.vendor_cmd_int_wvalue(cmd, val)?;
         // if fx3_ret {
-        //     log::debug!("FX3 reported error={fx3_ret:?} when {} RF {direction:?}", if enable {"enabling"} else { "disabling"});
+        //     log::trace!("FX3 reported error={fx3_ret:?} when {} RF {direction:?}", if enable {"enabling"} else { "disabling"});
         //
-        //         /* FIXME: Work around what seems to be a harmless failure.
-        //      *        It appears that in firmware or in the lib, we may be
-        //      *        attempting to disable an already disabled channel, or
-        //      *        enabling an already enabled channel.
-        //      *
-        //      *        Further investigation required
-        //      *
-        //      *        0x44 corresponds to CY_U3P_ERROR_ALREADY_STARTED
-        //      */
+        //      // FIXME: Work around what seems to be a harmless failure.
+        //      //        It appears that in firmware or in the lib, we may be
+        //      //        attempting to disable an already disabled channel, or
+        //      //        enabling an already enabled channel.
+        //      //
+        //      //        Further investigation required
+        //      //
+        //      //        0x44 corresponds to CY_U3P_ERROR_ALREADY_STARTED
+        //
         //         if fx3_ret != 0x44 {
         //                Err(BladeRfError::Unexpected)
         //         }
@@ -552,7 +569,7 @@ impl BladeRf1 {
             Band::High => 1,
         };
 
-        log::debug!("Selecting %s band. {band:?}");
+        log::trace!("Selecting %s band. {band:?}");
 
         self.lms.select_band(module, band)?;
 
@@ -581,7 +598,8 @@ impl BladeRf1 {
         let descriptor = self
             .device
             .get_string_descriptor(descriptor_index, 0x409, Duration::from_secs(1))
-            .wait()?;
+            .wait()
+            .map_err(|_| Error::Invalid)?;
         Ok(descriptor)
     }
 
@@ -596,7 +614,8 @@ impl BladeRf1 {
                 0x00,
                 Duration::from_secs(1),
             )
-            .wait()?;
+            .wait()
+            .map_err(|_| Error::Invalid)?;
         Ok(descriptor)
     }
 
@@ -606,7 +625,8 @@ impl BladeRf1 {
         let languages = self
             .device
             .get_string_descriptor_supported_languages(Duration::from_secs(1))
-            .wait()?
+            .wait()
+            .map_err(|_| Error::Invalid)?
             .collect();
 
         Ok(languages)
@@ -618,7 +638,7 @@ impl BladeRf1 {
 
     /// TODO: set which configuration???
     pub fn set_configuration(&self, configuration: u16) -> Result<()> {
-        //self.device.set_configuration(configuration)?;
+        // self.device.set_configuration(configuration)?;
         Ok(self
             .interface
             .control_out(
@@ -638,8 +658,8 @@ impl BladeRf1 {
     /// Reset the BladeRF1
     /// TODO Find out if this is soft reset or hard reset?
     pub fn reset(&self) -> Result<()> {
-        //self.check_api_version(UsbVersion::from_bcd(0x0102))?;
-        //self.write_control(Request::Reset, 0, 0, &[])?;
+        // self.check_api_version(UsbVersion::from_bcd(0x0102))?;
+        // self.write_control(Request::Reset, 0, 0, &[])?;
         self.device.set_configuration(0).wait()?;
 
         Ok(())

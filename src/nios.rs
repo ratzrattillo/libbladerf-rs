@@ -1,18 +1,24 @@
 #![allow(clippy::too_many_arguments)]
 
-use anyhow::{Result, anyhow};
+use crate::{Error, Result};
 use bladerf_globals::bladerf1::BladeRfVersion;
 use bladerf_globals::{BLADERF_MODULE_RX, BLADERF_MODULE_TX, ENDPOINT_IN, ENDPOINT_OUT};
 use bladerf_nios::packet_generic::{NiosPkt, NumToByte};
 use bladerf_nios::packet_retune::{Band, NiosPktRetuneRequest, NiosPktRetuneResponse, Tune};
 use bladerf_nios::*;
-use futures_lite::future::block_on;
 use nusb::Interface;
 use nusb::transfer::{Buffer, Bulk, In, Out};
 use std::fmt::{Debug, Display, LowerHex};
+use std::time::Duration;
 
 pub trait Nios {
-    fn nios_send(&self, ep_bulk_out_id: u8, ep_bulk_in_id: u8, pkt: Vec<u8>) -> Result<Vec<u8>>;
+    fn nios_send(
+        &self,
+        ep_bulk_out_id: u8,
+        ep_bulk_in_id: u8,
+        pkt: Vec<u8>,
+        timeout: Option<Duration>,
+    ) -> Result<Vec<u8>>;
     fn nios_retune(
         &self,
         module: u8,
@@ -63,6 +69,7 @@ impl Nios for Interface {
         ep_bulk_out_id: u8,
         ep_bulk_in_id: u8,
         mut pkt: Vec<u8>,
+        timeout: Option<Duration>,
     ) -> Result<Vec<u8>> {
         // TODO: An endpoint handle should probably not be acquired on every call to nios_send!!
         let mut ep_bulk_out = self.endpoint::<Bulk, Out>(ep_bulk_out_id)?;
@@ -79,8 +86,9 @@ impl Nios for Interface {
         // reserve does nothing, if capacity is already sufficient
         pkt.reserve(additional);
 
+        let t = timeout.unwrap_or(Duration::from_millis(100));
         ep_bulk_out.submit(Buffer::from(pkt));
-        let mut response = block_on(ep_bulk_out.next_complete());
+        let mut response = ep_bulk_out.wait_next_complete(t).unwrap();
         response.status?;
 
         // Nusb requires the buffer for an IN transfer to be at least ep_bulk_in.max_packet_size() big
@@ -88,7 +96,7 @@ impl Nios for Interface {
             .buffer
             .set_requested_len(ep_bulk_in.max_packet_size());
         ep_bulk_in.submit(response.buffer);
-        response = block_on(ep_bulk_in.next_complete());
+        response = ep_bulk_in.wait_next_complete(t).unwrap();
         response.status?;
 
         // Todo: This should be a generic NIOS packet type, or just a plain Vec,
@@ -119,36 +127,36 @@ impl Nios for Interface {
         xb_gpio: u8,
     ) -> Result<()> {
         if timestamp == NiosPktRetuneRequest::RETUNE_NOW {
-            log::debug!("Clearing Retune Queue");
+            log::trace!("Clearing Retune Queue");
         } else {
-            log::debug!("Log tuning parameters here...");
+            log::trace!("Log tuning parameters here...");
         }
 
         let pkt = NiosPktRetuneRequest::new(
             module, timestamp, nint, nfrac, freqsel, vcocap, band, tune, xb_gpio,
         );
 
-        let response_vec = self.nios_send(ENDPOINT_OUT, ENDPOINT_IN, pkt.into())?;
+        let response_vec = self.nios_send(ENDPOINT_OUT, ENDPOINT_IN, pkt.into(), None)?;
         let resp_pkt = NiosPktRetuneResponse::from(response_vec);
 
         if resp_pkt.duration_and_vcocap_valid() {
-            log::debug!(
+            log::trace!(
                 "Retune operation: {vcocap}, Duration: {}",
                 resp_pkt.duration()
             );
         } else {
-            log::debug!("Duration: {}", resp_pkt.duration());
+            log::trace!("Duration: {}", resp_pkt.duration());
         }
 
         if !resp_pkt.is_success() {
             return if timestamp == NiosPktRetuneRequest::RETUNE_NOW {
-                log::debug!("FPGA tuning reported failure.");
-                Err(anyhow!("Unexpected error"))
+                log::error!("FPGA tuning reported failure.");
+                Err(Error::Invalid)
             } else {
-                log::debug!(
+                log::error!(
                     "The FPGA's retune queue is full. Try again after a previous request has completed."
                 );
-                Err(anyhow!("Queue full"))
+                Err(Error::Invalid)
             };
         }
 
@@ -160,7 +168,7 @@ impl Nios for Interface {
         A: NumToByte + Debug + Display + LowerHex + Send,
         D: NumToByte + Debug + Display + LowerHex + Send,
     {
-        /* The address is used as a mask of bits to read and return */
+        // The address is used as a mask of bits to read and return
         let mut pkt = NiosPkt::<A, D>::from(vec![0u8; 16]);
         pkt.set_magic(NiosPkt::<A, D>::MAGIC);
         pkt.set_target_id(id);
@@ -169,7 +177,7 @@ impl Nios for Interface {
 
         // let pkt = NiosPkt::<A, D>::new(id, NiosPkt::<A, D>::FLAG_WRITE, addr, data);
 
-        let response_vec = self.nios_send(ENDPOINT_OUT, ENDPOINT_IN, pkt.into())?;
+        let response_vec = self.nios_send(ENDPOINT_OUT, ENDPOINT_IN, pkt.into(), None)?;
         Ok(NiosPkt::<A, D>::from(response_vec).data())
     }
 
@@ -178,7 +186,7 @@ impl Nios for Interface {
         A: NumToByte + Debug + Display + LowerHex + Send,
         D: NumToByte + Debug + Display + LowerHex + Send,
     {
-        /* The address is used as a mask of bits to read and return */
+        // The address is used as a mask of bits to read and return
         let mut pkt = NiosPkt::<A, D>::from(vec![0u8; 16]);
         pkt.set_magic(NiosPkt::<A, D>::MAGIC);
         pkt.set_target_id(id);
@@ -187,9 +195,9 @@ impl Nios for Interface {
         pkt.set_data(data);
 
         // let pkt = PktType::new(id, PktType::FLAG_WRITE, addr, data);
-        let resp = self.nios_send(ENDPOINT_OUT, ENDPOINT_IN, pkt.into())?;
+        let resp = self.nios_send(ENDPOINT_OUT, ENDPOINT_IN, pkt.into(), None)?;
         let resp_pkt: NiosPkt<A, D> = resp.into();
-        resp_pkt.is_success()
+        resp_pkt.is_success().map_err(|_| Error::Invalid)
     }
 
     // fn nios_32x32_masked_read(&self, id: u8, mask: u32) -> Result<u32> {
@@ -230,7 +238,7 @@ impl Nios for Interface {
 
     fn nios_get_fpga_version(&self) -> Result<BladeRfVersion> {
         let regval = self.nios_read::<u8, u32>(NIOS_PKT_8X32_TARGET_VERSION, 0)?;
-        log::debug!("Read FPGA version word: {regval:#010x}");
+        log::trace!("Read FPGA version word: {regval:#010x}");
 
         let version = BladeRfVersion {
             major: ((regval >> 24) & 0xff) as u16,
@@ -247,7 +255,10 @@ impl Nios for Interface {
         let addr = match ch {
             BLADERF_MODULE_RX => NIOS_PKT_8X16_ADDR_IQ_CORR_RX_GAIN,
             BLADERF_MODULE_TX => NIOS_PKT_8X16_ADDR_IQ_CORR_TX_GAIN,
-            _ => return Err(anyhow!("Invalid channel: {ch}")),
+            _ => {
+                log::error!("Invalid channel: {ch}");
+                return Err(Error::Invalid);
+            }
         };
         Ok(self.nios_read::<u8, u16>(NIOS_PKT_8X16_TARGET_IQ_CORR, addr)? as i16)
     }
@@ -256,7 +267,10 @@ impl Nios for Interface {
         let addr = match ch {
             BLADERF_MODULE_RX => NIOS_PKT_8X16_ADDR_IQ_CORR_RX_PHASE,
             BLADERF_MODULE_TX => NIOS_PKT_8X16_ADDR_IQ_CORR_TX_PHASE,
-            _ => return Err(anyhow!("Invalid channel: {ch}")),
+            _ => {
+                log::error!("Invalid channel: {ch}");
+                return Err(Error::Invalid);
+            }
         };
         Ok(self.nios_read::<u8, u16>(NIOS_PKT_8X16_TARGET_IQ_CORR, addr)? as i16)
     }
@@ -265,7 +279,10 @@ impl Nios for Interface {
         let addr = match ch {
             BLADERF_MODULE_RX => NIOS_PKT_8X16_ADDR_IQ_CORR_RX_GAIN,
             BLADERF_MODULE_TX => NIOS_PKT_8X16_ADDR_IQ_CORR_TX_GAIN,
-            _ => return Err(anyhow!("Invalid channel: {ch}")),
+            _ => {
+                log::error!("Invalid channel: {ch}");
+                return Err(Error::Invalid);
+            }
         };
         self.nios_write::<u8, u16>(NIOS_PKT_8X16_TARGET_IQ_CORR, addr, value as u16)
     }
@@ -274,7 +291,10 @@ impl Nios for Interface {
         let addr = match ch {
             BLADERF_MODULE_RX => NIOS_PKT_8X16_ADDR_IQ_CORR_RX_PHASE,
             BLADERF_MODULE_TX => NIOS_PKT_8X16_ADDR_IQ_CORR_TX_PHASE,
-            _ => return Err(anyhow!("Invalid channel: {ch}")),
+            _ => {
+                log::error!("Invalid channel: {ch}");
+                return Err(Error::Invalid);
+            }
         };
         self.nios_write::<u8, u16>(NIOS_PKT_8X16_TARGET_IQ_CORR, addr, value as u16)
     }

@@ -29,11 +29,15 @@ impl NiosPktRetune {
     pub(crate) const FLAG_QUICK_TUNE: u8 = 1 << 6;
     pub(crate) const FLAG_LOW_BAND: u8 = 1 << 7;
 
-    /* Maximum field sizes / masks */
-    // const MASK_NINT: u16 = 0x1ff; // Max 9bit in size
-    const MASK_NFRAC: u32 = 0x7fffff; // Max 23bit in size
-    const MASK_FREQSEL: u8 = 0x3f; // Max 5bit in size
-    const MASK_VCOCAP: u8 = 0x3f; // Max 5bit in size
+    // Maximum field sizes / masks
+    // /// Max 9bit in size
+    // const MASK_NINT: u16 = 0x1ff;
+    /// Max 23bit in size
+    const MASK_NFRAC: u32 = 0x7fffff;
+    /// Max 5bit in size
+    const MASK_FREQSEL: u8 = 0x3f;
+    /// Max 5bit in size
+    const MASK_VCOCAP: u8 = 0x3f;
 
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -98,9 +102,9 @@ impl NiosPktRetune {
         // self.buf[Self::IDX_INTFRAC + 1] &= !((0x1 << 7) as u8); // Clear the first bit of second byte
 
         self.buf[Self::IDX_INTFRAC] = (nint >> 1) as u8; // 1019 >> 1 = 509 = 0x1FD as u8 = 0xFD
-        // println!("Self::IDX_INTFRAC + 0: {:#x}", self.buf[Self::IDX_INTFRAC]);
+        // log::trace!("Self::IDX_INTFRAC + 0: {:#x}", self.buf[Self::IDX_INTFRAC]);
         self.buf[Self::IDX_INTFRAC + 1] |= ((nint & 0x1) << 7) as u8;
-        // println!(
+        // log::trace!(
         //     "Self::IDX_INTFRAC + 1: {:#x}",
         //     self.buf[Self::IDX_INTFRAC + 1]
         // );
@@ -115,17 +119,17 @@ impl NiosPktRetune {
         // self.buf[Self::IDX_INTFRAC + 3] = 0x00; // Clear third byte
 
         self.buf[Self::IDX_INTFRAC + 1] |= ((nfrac >> 16) & 0x7f) as u8; // 4893355 >> 16 = 74(0x4A), 0x4A & 0x7f = 0x4A
-        // println!(
+        // log::trace!(
         //     "Self::IDX_INTFRAC + 1: {:#x}",
         //     self.buf[Self::IDX_INTFRAC + 1]
         // );
         self.buf[Self::IDX_INTFRAC + 2] = (nfrac >> 8) as u8; // 4893355 >> 8 = 19114(0x4AAA), as u8 = 0xAA
-        // println!(
+        // log::trace!(
         //     "Self::IDX_INTFRAC + 2: {:#x}",
         //     self.buf[Self::IDX_INTFRAC + 2]
         // );
         self.buf[Self::IDX_INTFRAC + 3] = nfrac as u8; // 4893355 as u8 = 0xAB
-        // println!(
+        // log::trace!(
         //     "Self::IDX_INTFRAC + 3: {:#x}",
         //     self.buf[Self::IDX_INTFRAC + 3]
         // );
@@ -152,7 +156,8 @@ impl NiosPktRetune {
     }
 
     pub fn set_freqsel(&mut self, freqsel: u8, module: u8) -> &mut Self {
-        assert!(freqsel <= Self::MASK_FREQSEL); // Make sure that freqsel does not consume more than 5 bits.
+        // Make sure that freqsel does not consume more than 5 bits.
+        assert!(freqsel <= Self::MASK_FREQSEL);
         self.buf[Self::IDX_FREQSEL] = freqsel;
         match module {
             BLADERF_MODULE_RX => {
@@ -171,10 +176,12 @@ impl NiosPktRetune {
     pub fn set_band(&mut self, band: Band) -> &mut Self {
         match band {
             Band::Low => {
-                self.buf[Self::IDX_BANDSEL] |= Self::FLAG_LOW_BAND; // Set LowBand Flag
+                // Set LowBand Flag
+                self.buf[Self::IDX_BANDSEL] |= Self::FLAG_LOW_BAND;
             }
             Band::High => {
-                self.buf[Self::IDX_BANDSEL] &= !Self::FLAG_LOW_BAND; // Clear LowBand Flag
+                // Clear LowBand Flag
+                self.buf[Self::IDX_BANDSEL] &= !Self::FLAG_LOW_BAND;
             }
         }
         self
@@ -183,19 +190,24 @@ impl NiosPktRetune {
     pub fn set_tune(&mut self, tune: Tune) -> &mut Self {
         match tune {
             Tune::Quick => {
-                self.buf[Self::IDX_BANDSEL] |= Self::FLAG_QUICK_TUNE; // Set QuickTune Flag
+                // Set QuickTune Flag
+                self.buf[Self::IDX_BANDSEL] |= Self::FLAG_QUICK_TUNE;
             }
             Tune::Normal => {
-                self.buf[Self::IDX_BANDSEL] &= !Self::FLAG_QUICK_TUNE; // Clear QuickTune Flag
+                // Clear QuickTune Flag
+                self.buf[Self::IDX_BANDSEL] &= !Self::FLAG_QUICK_TUNE;
             }
         }
         self
     }
 
     pub fn set_vcocap(&mut self, vcocap: u8) -> &mut Self {
-        assert!(vcocap <= Self::MASK_VCOCAP); // Make sure that vcocap does not consume more than 5 bits.
-        self.buf[Self::IDX_BANDSEL] &= !Self::MASK_VCOCAP; // Clear bits 0:5
-        self.buf[Self::IDX_BANDSEL] |= vcocap & Self::MASK_VCOCAP; // Set vcocap value and limit it to the allowed 5 bits
+        // Make sure that vcocap does not consume more than 5 bits.
+        assert!(vcocap <= Self::MASK_VCOCAP);
+        // Clear bits 0:5
+        self.buf[Self::IDX_BANDSEL] &= !Self::MASK_VCOCAP;
+        // Set vcocap value and limit it to the allowed 5 bits
+        self.buf[Self::IDX_BANDSEL] |= vcocap & Self::MASK_VCOCAP;
         self
     }
 
@@ -219,7 +231,7 @@ impl NiosPktRetune {
     pub fn nint(&self) -> u16 {
         let mut nint = (self.buf[Self::IDX_INTFRAC] as u16) << 1;
         nint |= (self.buf[Self::IDX_INTFRAC + 1] as u16) >> 7;
-        // log::debug!("nint: {nint:#x?}");
+        log::trace!("nint: {nint:#x?}");
         nint
     }
 
@@ -315,79 +327,78 @@ impl From<NiosPktRetune> for Vec<u8> {
     }
 }
 
-/* This file defines the Host <-> FPGA (NIOS II) packet formats for
- * retune messages. This packet is formatted, as follows. All values are
- * little-endian.
- *
- *                              Request
- *                      ----------------------
- *
- * +================+=========================================================+
- * |  Byte offset   |                       Description                       |
- * +================+=========================================================+
- * |        0       | Magic Value                                             |
- * +----------------+---------------------------------------------------------+
- * |        1       | 64-bit timestamp denoting when to retune. (Note 1)      |
- * +----------------+---------------------------------------------------------+
- * |        9       | 32-bit LMS6002D n_int & n_frac register values (Note 2) |
- * +----------------+---------------------------------------------------------+
- * |       13       | RX/TX bit, FREQSEL LMS6002D reg value  (Note 3)         |
- * +----------------+---------------------------------------------------------+
- * |       14       | Bit 7:        Band-selection (Note 4)                   |
- * |                | Bit 6:        1=Quick tune, 0=Normal tune               |
- * |                | Bits [5:0]    VCOCAP[5:0] Hint                          |
- * +----------------+---------------------------------------------------------+
- * |       15       | 8-bit reserved word. Should be set to 0x00.             |
- * +----------------+---------------------------------------------------------+
- *
- * (Note 1) Special Timestamp Values:
- *
- * Tune "Now":          0x0000000000000000
- * Clear Retune Queue:  0xffffffffffffffff
- *
- * When the "Clear Retune Queue" value is used, all of the other tuning
- * parameters are ignored.
- *
- * (Note 2) Packed as follows:
- *
- * +================+=======================+
- * |   Byte offset  | (MSB)   Value    (LSB)|
- * +================+=======================+
- * |       0        |        NINT[8:1]      |
- * +----------------+-----------------------+
- * |       1        | NINT[0], NFRAC[22:16] |
- * +----------------+-----------------------+
- * |       2        |       NFRAC[15:8]     |
- * +----------------+-----------------------+
- * |       3        |       NFRAC[7:0]      |
- * +----------------+-----------------------+
- *
- * (Note 3) Packed as follows:
- *
- * +================+=======================+
- * |      Bit(s)    |         Value         |
- * +================+=======================+
- * |        7       |          TX           |
- * +----------------+-----------------------+
- * |        6       |          RX           |
- * +----------------+-----------------------+
- * |      [5:0]     |        FREQSEL        |
- * +----------------+-----------------------+
- *
- * (Notes 4) Band-selection bit = 1 implies "Low band". 0 = "High band"
- */
+/// This file defines the Host <-> FPGA (NIOS II) packet formats for
+/// retune messages. This packet is formatted, as follows. All values are
+/// little-endian.
+///
+///                              Request
+///                      ----------------------
+///
+/// +================+=========================================================+
+/// |  Byte offset   |                       Description                       |
+/// +================+=========================================================+
+/// |        0       | Magic Value                                             |
+/// +----------------+---------------------------------------------------------+
+/// |        1       | 64-bit timestamp denoting when to retune. (Note 1)      |
+/// +----------------+---------------------------------------------------------+
+/// |        9       | 32-bit LMS6002D n_int & n_frac register values (Note 2) |
+/// +----------------+---------------------------------------------------------+
+/// |       13       | RX/TX bit, FREQSEL LMS6002D reg value  (Note 3)         |
+/// +----------------+---------------------------------------------------------+
+/// |       14       | Bit 7:        Band-selection (Note 4)                   |
+/// |                | Bit 6:        1=Quick tune, 0=Normal tune               |
+/// |                | Bits \[5:0\]    VCOCAP\[5:0\] Hint                          |
+/// +----------------+---------------------------------------------------------+
+/// |       15       | 8-bit reserved word. Should be set to 0x00.             |
+/// +----------------+---------------------------------------------------------+
+///
+/// (Note 1) Special Timestamp Values:
+///
+/// Tune "Now":          0x0000000000000000
+/// Clear Retune Queue:  0xffffffffffffffff
+///
+/// When the "Clear Retune Queue" value is used, all of the other tuning
+/// parameters are ignored.
+///
+/// (Note 2) Packed as follows:
+///
+/// +================+=======================+
+/// |   Byte offset  | (MSB)   Value    (LSB)|
+/// +================+=======================+
+/// |       0        |        NINT\[8:1\]      |
+/// +----------------+-----------------------+
+/// |       1        | NINT\[0\], NFRAC\[22:16\] |
+/// +----------------+-----------------------+
+/// |       2        |       NFRAC\[15:8\]     |
+/// +----------------+-----------------------+
+/// |       3        |       NFRAC\[7:0\]      |
+/// +----------------+-----------------------+
+///
+/// (Note 3) Packed as follows:
+///
+/// +================+=======================+
+/// |      Bit(s)    |         Value         |
+/// +================+=======================+
+/// |        7       |          TX           |
+/// +----------------+-----------------------+
+/// |        6       |          RX           |
+/// +----------------+-----------------------+
+/// |      \[5:0\]     |        FREQSEL        |
+/// +----------------+-----------------------+
+///
+/// (Notes 4) Band-selection bit = 1 implies "Low band". 0 = "High band"
 pub struct NiosPktRetuneRequest {
     pkt: NiosPktRetune,
 }
 
 impl NiosPktRetuneRequest {
-    /* Denotes that the retune should not be scheduled - it should occur "now" */
+    // Denotes that the retune should not be scheduled - it should occur "now"
     pub const RETUNE_NOW: u64 = 0x00;
 
-    /* Specify this value instead of a timestamp to clear the retune queue */
+    // Specify this value instead of a timestamp to clear the retune queue
     pub const CLEAR_QUEUE: u64 = u64::MAX; // -1
 
-    /* Denotes no tune word is supplied. */
+    // Denotes no tune word is supplied.
     // pub const NO_HINT: u8 = 0xff;
 
     #[allow(clippy::too_many_arguments)]
@@ -568,55 +579,54 @@ impl Debug for NiosPktRetuneRequest {
     }
 }
 
-/*
- *                             Response
- *                      ----------------------
- *
- * +================+=========================================================+
- * |  Byte offset   |                       Description                       |
- * +================+=========================================================+
- * |        0       | Magic Value                                             |
- * +----------------+---------------------------------------------------------+
- * |        1       | 64-bit duration denoting how long the operation took to |
- * |                | complete, in units of timestamp ticks. (Note 1)         |
- * +----------------+---------------------------------------------------------+
- * |        9       | Bits [7:6]    Reserved, set to 0.                       |
- * |                | Bits [5:0]    VCOCAP value used. (Note 2)               |
- * +----------------+---------------------------------------------------------+
- * |       10       | Status Flags (Note 3)                                   |
- * +----------------+---------------------------------------------------------+
- * |      11-15     | Reserved. All bits set to 0.                            |
- * +----------------+---------------------------------------------------------+
- *
- * (Note 1) This value will be zero if timestamps are not running for the
- *          associated module.
- *
- * (Note 2) This field's value should be ignored when reading a response for
- *          a request to clear the retune queue.
- *
- * (Note 3) Description of Status Flags:
- *
- *      flags[0]: 1 = Timestamp and VCOCAP are valid. This is only the case for
- *                    "Tune NOW" requests. It is not possible to return this
- *                    information for scheduled retunes, as the event generally
- *                    does not occur before the response is set.
- *
- *                0 = This was a scheduled retune. Timestamp and VCOCAP Fields
- *                    should be ignored.
- *
- *
- *      flags[1]: 1 = Operation completed successfully.
- *                0 = Operation failed.
- *
- *                For "Tune NOW" requests, a failure may occur as the result
- *                of the tuning algorithm failing to occur, and such other
- *                unexpected failurs.
- *
- *                The scheduled tune request will failure if the retune queue
- *                is full.
- *
- *      flags[7:2]    Reserved. Set to 0.
- */
+///                             Response
+///                      ----------------------
+///
+/// +================+=========================================================+
+/// |  Byte offset   |                       Description                       |
+/// +================+=========================================================+
+/// |        0       | Magic Value                                             |
+/// +----------------+---------------------------------------------------------+
+/// |        1       | 64-bit duration denoting how long the operation took to |
+/// |                | complete, in units of timestamp ticks. (Note 1)         |
+/// +----------------+---------------------------------------------------------+
+/// |        9       | Bits \[7:6\]    Reserved, set to 0.                     |
+/// |                | Bits \[5:0\]    VCOCAP value used. (Note 2)             |
+/// +----------------+---------------------------------------------------------+
+/// |       10       | Status Flags (Note 3)                                   |
+/// +----------------+---------------------------------------------------------+
+/// |      11-15     | Reserved. All bits set to 0.                            |
+/// +----------------+---------------------------------------------------------+
+///
+/// (Note 1) This value will be zero if timestamps are not running for the
+///          associated module.
+///
+/// (Note 2) This field's value should be ignored when reading a response for
+///          a request to clear the retune queue.
+///
+/// (Note 3) Description of Status Flags:
+///
+///      flags\[0\]: 1 = Timestamp and VCOCAP are valid. This is only the case for
+///                    "Tune NOW" requests. It is not possible to return this
+///                    information for scheduled retunes, as the event generally
+///                    does not occur before the response is set.
+///
+///                0 = This was a scheduled retune. Timestamp and VCOCAP Fields
+///                    should be ignored.
+///
+///
+///      flags\[1\]: 1 = Operation completed successfully.
+///                0 = Operation failed.
+///
+///                For "Tune NOW" requests, a failure may occur as the result
+///                of the tuning algorithm failing to occur, and such other
+///                unexpected failurs.
+///
+///                The scheduled tune request will failure if the retune queue
+///                is full.
+///
+///      flags\[7:2\]    Reserved. Set to 0.
+
 
 pub struct NiosPktRetuneResponse {
     pkt: NiosPktRetune,
@@ -626,7 +636,8 @@ impl NiosPktRetuneResponse {
     const IDX_FLAGS: usize = 10;
     // const IDX_RESERVED: usize = 11;
 
-    const MASK_VCOCAP: u8 = 0x3f; // Max 5bit in size
+    // Max 5bit in size
+    const MASK_VCOCAP: u8 = 0x3f;
     const FLAG_DURATION_VCOCAP_VALID: u8 = 0x1;
     const FLAG_SUCCESS: u8 = 0x2;
 

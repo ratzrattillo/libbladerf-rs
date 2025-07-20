@@ -1,5 +1,5 @@
+use crate::Result;
 use crate::nios::Nios;
-use anyhow::Result;
 use bladerf_nios::NIOS_PKT_8X16_TARGET_VCTCXO_DAC;
 use nusb::Interface;
 

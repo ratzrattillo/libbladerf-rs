@@ -1,6 +1,6 @@
 use crate::BladeRf1;
 use crate::nios::Nios;
-use anyhow::{Result, anyhow};
+use crate::{Error, Result};
 
 pub const BLADERF_XB_AUX_EN: u32 = 0x000002;
 pub const BLADERF_XB_TX_LED: u32 = 0x000010;
@@ -15,33 +15,29 @@ pub const BLADERF_XB_CSEL: u32 = 0x040000;
 pub const BLADERF_XB_DOUT: u32 = 0x100000;
 pub const BLADERF_XB_SCLK: u32 = 0x400000;
 
-/**
- * XB-300 TRX setting
- */
+/// XB-300 TRX setting
 #[derive(Debug)]
 pub enum BladeRfXb300Trx {
-    /**< Invalid TRX selection */
+    /// Invalid TRX selection
     Inval = -1,
-    /**< TRX antenna operates as TX */
+    /// TRX antenna operates as TX
     Tx = 0,
-    /**< TRX antenna operates as RX */
+    /// TRX antenna operates as RX
     Rx,
-    /**< TRX antenna unset */
+    /// TRX antenna unset
     Unset,
 }
 
-/**
- * XB-300 Amplifier selection
- */
+/// XB-300 Amplifier selection
 #[derive(Debug)]
 pub enum BladeRfXb300Amplifier {
-    /**< Invalid amplifier selection */
+    ///  Invalid amplifier selection
     Inval = -1,
-    /**< TX Power amplifier */
+    ///  TX Power amplifier
     Pa = 0,
-    /**< RX LNA */
+    ///  RX LNA
     Lna,
-    /**< Auxillary Power amplifier */
+    /// Auxillary Power amplifier
     Aux,
 }
 
@@ -94,8 +90,8 @@ impl BladeRf1 {
             BladeRfXb300Trx::Unset => {}
 
             _ => {
-                log::debug!("Invalid TRX option: {trx:?}");
-                return Err(anyhow!("Invalid TRX option: %d"));
+                log::error!("Invalid TRX option: {trx:?}");
+                return Err(Error::Invalid);
             }
         }
 
@@ -114,7 +110,8 @@ impl BladeRf1 {
             BladeRfXb300Trx::Tx
         };
 
-        /* Sanity check */
+        // TODO: Probably not required!
+        // Sanity check
         // match trx {
         //     case BladeRfXb300Trx::TX:
         //     case BladeRfXb300Trx::RX:
@@ -163,8 +160,8 @@ impl BladeRf1 {
                 }
             }
             _ => {
-                log::debug!("Invalid amplifier selection: {amp:?}");
-                return Err(anyhow!("Invalid amplifier selection"));
+                log::error!("Invalid amplifier selection: {amp:?}");
+                return Err(Error::Invalid);
             }
         }
 
@@ -179,8 +176,8 @@ impl BladeRf1 {
             BladeRfXb300Amplifier::Lna => Ok(val & BLADERF_XB_LNA_ENN != 0),
             BladeRfXb300Amplifier::Aux => Ok(val & BLADERF_XB_AUX_EN != 0),
             _ => {
-                log::debug!("Read back invalid amplifier setting: {amp:?}");
-                Err(anyhow!("Read back invalid amplifier setting"))
+                log::error!("Read back invalid amplifier setting: {amp:?}");
+                Err(Error::Invalid)
             }
         }
     }

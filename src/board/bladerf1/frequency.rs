@@ -1,22 +1,19 @@
 use crate::BladeRf1;
 use crate::hardware::lms6002d::{
-    BLADERF1_BAND_HIGH, LMS_FREQ_FLAGS_FORCE_VCOCAP, LMS_FREQ_FLAGS_LOW_BAND,
-    LMS_FREQ_XB_200_ENABLE, LMS_FREQ_XB_200_FILTER_SW_SHIFT, LMS_FREQ_XB_200_MODULE_RX,
-    LMS_FREQ_XB_200_PATH_SHIFT, LMS6002D,
+    BLADERF1_BAND_HIGH, LMS_FREQ_FLAGS_FORCE_VCOCAP, LMS_FREQ_FLAGS_LOW_BAND, LMS6002D, LmsFreq,
 };
 use crate::nios::Nios;
 use crate::xb200::BladerfXb200Path;
-use anyhow::Result;
-use anyhow::anyhow;
-use bladerf_globals::bladerf1::{BLADERF_FREQUENCY_MAX, BLADERF_FREQUENCY_MIN, BladeRf1QuickTune};
-use bladerf_globals::{SdrRange, TuningMode, bladerf_channel_rx};
-use bladerf_nios::packet_retune::{Band, NiosPktRetuneRequest};
+use crate::{Error, Result};
+use bladerf_globals::bladerf1::{BLADERF_FREQUENCY_MAX, BLADERF_FREQUENCY_MIN};
+use bladerf_globals::{SdrRange, TuningMode};
+use bladerf_nios::packet_retune::{Band, NiosPktRetuneRequest, Tune};
 
 impl BladeRf1 {
     pub fn set_frequency(&mut self, channel: u8, mut frequency: u64) -> Result<()> {
-        //let dc_cal = if channel == bladerf_channel_rx!(0) { cal_dc.rx } else { cal.dc_tx };
+        // let dc_cal = if channel == bladerf_channel_rx!(0) { cal_dc.rx } else { cal.dc_tx };
 
-        log::debug!("Setting Frequency on channel {channel} to {frequency}Hz");
+        log::trace!("Setting Frequency on channel {channel} to {frequency}Hz");
 
         if self.xb200.is_some() {
             if frequency < BLADERF_FREQUENCY_MIN as u64 {
@@ -44,7 +41,7 @@ impl BladeRf1 {
                 self.band_select(channel, band)?;
             }
             TuningMode::Fpga => {
-                self.lms.schedule_retune(
+                self.schedule_retune(
                     channel,
                     NiosPktRetuneRequest::RETUNE_NOW,
                     frequency as u32,
@@ -59,12 +56,13 @@ impl BladeRf1 {
     pub fn get_frequency(&self, channel: u8) -> Result<u32> {
         let f = self.lms.get_frequency(channel)?;
         if f.x == 0 {
-            /* If we see this, it's most often an indication that communication
-             * with the LMS6002D is not occuring correctly */
-            return Err(anyhow!("LMSFreq.x was zero!"));
+            // If we see this, it's most often an indication that communication
+            // with the LMS6002D is not occuring correctly
+            log::error!("LMSFreq.x was zero!");
+            return Err(Error::Invalid);
         }
         let mut frequency_hz = LMS6002D::frequency_to_hz(&f);
-        log::debug!("Frequency Hz: {frequency_hz}");
+        log::trace!("Frequency Hz: {frequency_hz}");
 
         if self.xb200.is_some() {
             let path = self.xb200_get_path(channel)?;
@@ -108,44 +106,54 @@ impl BladeRf1 {
         self.band_select(channel, band)
     }
 
-    pub fn lms_get_quick_tune(&self, module: u8) -> Result<BladeRf1QuickTune> {
-        let f = self.lms.get_frequency(module)?;
-
-        let mut quick_tune = BladeRf1QuickTune {
-            freqsel: f.freqsel,
-            vcocap: f.vcocap,
-            nint: f.nint,
-            nfrac: f.nfrac,
-            flags: 0,
-            xb_gpio: 0,
+    pub fn schedule_retune(
+        &self,
+        channel: u8,
+        timestamp: u64,
+        frequency: u32,
+        quick_tune: Option<LmsFreq>,
+    ) -> Result<LmsFreq> {
+        let f = if let Some(qt) = quick_tune {
+            qt
+        } else {
+            // TODO:
+            // if (dev->xb == BLADERF_XB_200) {
+            //     log::info!("Consider supplying the quick_tune parameter to bladerf_schedule_retune() when the XB-200 is enabled.");
+            // }
+            LMS6002D::calculate_tuning_params(frequency)?
         };
 
-        let val = self.interface.nios_expansion_gpio_read()?;
+        log::trace!("{f:?}");
 
-        if self.xb200.is_some() {
-            quick_tune.xb_gpio |= LMS_FREQ_XB_200_ENABLE;
-            if module == bladerf_channel_rx!(0) {
-                quick_tune.xb_gpio |= LMS_FREQ_XB_200_MODULE_RX;
-                /* BLADERF_XB_CONFIG_RX_BYPASS_MASK */
-                quick_tune.xb_gpio |= (((val & 0x30) >> 4) << LMS_FREQ_XB_200_PATH_SHIFT) as u8;
-                /* BLADERF_XB_RX_MASK */
-                quick_tune.xb_gpio |=
-                    (((val & 0x30000000) >> 28) << LMS_FREQ_XB_200_FILTER_SW_SHIFT) as u8;
-            } else {
-                /* BLADERF_XB_CONFIG_TX_BYPASS_MASK */
-                quick_tune.xb_gpio |=
-                    (((val & 0x0C) >> 2) << LMS_FREQ_XB_200_FILTER_SW_SHIFT) as u8;
-                /* BLADERF_XB_TX_MASK */
-                quick_tune.xb_gpio |=
-                    (((val & 0x0C000000) >> 26) << LMS_FREQ_XB_200_PATH_SHIFT) as u8;
-            }
+        let band = if f.flags & LMS_FREQ_FLAGS_LOW_BAND != 0 {
+            Band::Low
+        } else {
+            Band::High
+        };
 
-            quick_tune.flags = LMS_FREQ_FLAGS_FORCE_VCOCAP;
+        let tune = if (f.flags & LMS_FREQ_FLAGS_FORCE_VCOCAP) != 0 {
+            Tune::Quick
+        } else {
+            Tune::Normal
+        };
 
-            if LMS6002D::frequency_to_hz(&f) < BLADERF1_BAND_HIGH {
-                quick_tune.flags |= LMS_FREQ_FLAGS_LOW_BAND;
-            }
-        }
-        Ok(quick_tune)
+        self.interface.nios_retune(
+            channel, timestamp, f.nint, f.nfrac, f.freqsel, f.vcocap, band, tune, f.xb_gpio,
+        )?;
+        Ok(f)
+    }
+
+    pub fn cancel_scheduled_retunes(&self, channel: u8) -> Result<()> {
+        self.interface.nios_retune(
+            channel,
+            NiosPktRetuneRequest::CLEAR_QUEUE,
+            0,
+            0,
+            0,
+            0,
+            Band::Low,
+            Tune::Normal,
+            0,
+        )
     }
 }

@@ -1,5 +1,5 @@
 use crate::BladeRf1;
-use anyhow::{Result, anyhow};
+use crate::{Error, Result};
 use bladerf_globals::BladeRfDirection;
 use bladerf_globals::bladerf1::{
     BLADERF_GPIO_AGC_ENABLE, BLADERF_LNA_GAIN_MAX_DB, BLADERF_LNA_GAIN_MID_DB,
@@ -30,22 +30,20 @@ use bladerf_globals::{
 // }
 
 impl BladeRf1 {
-    /**
-     * @brief      applies overall_gain to stage_gain, within the range max
-     *
-     * "Moves" gain from overall_gain to stage_gain, ensuring that overall_gain
-     * doesn't go negative and stage_gain doesn't exceed range->max.
-     *
-     * @param[in]  range         The range for stage_gain
-     * @param      stage_gain    The stage gain
-     * @param      overall_gain  The overall gain
-     */
+    /// @brief      applies overall_gain to stage_gain, within the range max
+    ///
+    /// "Moves" gain from overall_gain to stage_gain, ensuring that overall_gain
+    /// doesn't go negative and stage_gain doesn't exceed range->max.
+    ///
+    /// @param\[in\]  range         The range for stage_gain
+    /// @param      stage_gain    The stage gain
+    /// @param      overall_gain  The overall gain
     fn _apportion_gain(range: &SdrRange<i8>, stage_gain: i8, overall_gain: i8) -> (i8, i8) {
-        //let headroom = __unscale_int(range, range.max as f32);
+        // let headroom = __unscale_int(range, range.max as f32);
         let headroom = range.scale * range.max;
         let mut allotment = overall_gain.min(headroom);
 
-        /* Enforce step size */
+        // Enforce step size
         while 0 != (allotment % range.step) {
             allotment -= 1;
         }
@@ -74,7 +72,7 @@ impl BladeRf1 {
 
     pub fn get_gain_range(channel: u8) -> SdrRange<i8> {
         if bladerf_channel_is_tx!(channel) {
-            /* Overall TX gain range */
+            // Overall TX gain range
             SdrRange {
                 min: BLADERF_TXVGA1_GAIN_MIN
                     + BLADERF_TXVGA2_GAIN_MIN
@@ -86,7 +84,7 @@ impl BladeRf1 {
                 scale: 1,
             }
         } else {
-            /* Overall RX gain range */
+            // Overall RX gain range
             SdrRange {
                 min: BLADERF_RXVGA1_GAIN_MIN
                     + BLADERF_RXVGA2_GAIN_MIN
@@ -103,7 +101,8 @@ impl BladeRf1 {
 
     pub fn get_gain_modes(&self, channel: u8) -> Result<Vec<BladerfGainMode>> {
         if bladerf_channel_is_tx!(channel) {
-            Err(anyhow!("TX does not support gain modes"))
+            log::error!("TX does not support gain modes");
+            Err(Error::Invalid)
         } else {
             Ok(vec![BladerfGainMode::Mgc, BladerfGainMode::Default])
         }
@@ -111,11 +110,13 @@ impl BladeRf1 {
 
     pub fn set_gain_mode(&self, channel: u8, mode: BladerfGainMode) -> Result<()> {
         if bladerf_channel_is_tx!(channel) {
-            return Err(anyhow!("Setting gain mode for TX is not supported"));
+            log::error!("Setting gain mode for TX is not supported");
+            return Err(Error::Invalid);
         }
 
         let mut config_gpio = self.config_gpio_read()?;
         if mode == BladerfGainMode::Default {
+            // TODO:
             // Default mode is the same as Automatic mode
             // return Err(anyhow!("Todo: Implement AGC Table"));
             // if (!have_cap(board_data->capabilities, BLADERF_CAP_AGC_DC_LUT)) {
@@ -168,7 +169,10 @@ impl BladeRf1 {
             match stage {
                 "txvga1" => self.lms.txvga1_get_gain(),
                 "txvga2" => self.lms.txvga2_get_gain(),
-                _ => Err(anyhow!("invalid stage {stage}")),
+                _ => {
+                    log::error!("invalid stage {stage}");
+                    Err(Error::Invalid)
+                }
             }
         } else if channel == BLADERF_MODULE_RX {
             match stage {
@@ -178,22 +182,29 @@ impl BladeRf1 {
                 }
                 "rxvga1" => self.lms.rxvga1_get_gain(),
                 "rxvga2" => self.lms.rxvga2_get_gain(),
-                _ => Err(anyhow!("invalid stage {stage}")),
+                _ => {
+                    log::error!("invalid stage {stage}");
+                    Err(Error::Invalid)
+                }
             }
         } else {
-            Err(anyhow!("invalid channel {channel}"))
+            log::error!("invalid channel {channel}");
+            Err(Error::Invalid)
         }
     }
 
     pub fn set_gain_stage(&self, channel: u8, stage: &str, gain: i8) -> Result<()> {
         // CHECK_BOARD_STATE(STATE_INITIALIZED);
 
-        /* TODO implement gain clamping */
+        // TODO implement gain clamping
         match channel {
             BLADERF_MODULE_TX => match stage {
                 "txvga1" => Ok(self.lms.txvga1_set_gain(gain)?),
                 "txvga2" => Ok(self.lms.txvga2_set_gain(gain)?),
-                _ => Err(anyhow!("invalid stage {stage}")),
+                _ => {
+                    log::error!("invalid stage {stage}");
+                    Err(Error::Invalid)
+                }
             },
             BLADERF_MODULE_RX => match stage {
                 "rxvga1" => Ok(self.lms.rxvga1_set_gain(gain)?),
@@ -201,9 +212,15 @@ impl BladeRf1 {
                 "lna" => Ok(self
                     .lms
                     .lna_set_gain(Self::_convert_gain_to_lna_gain(gain))?),
-                _ => Err(anyhow!("invalid stage {stage}")),
+                _ => {
+                    log::error!("invalid stage {stage}");
+                    Err(Error::Invalid)
+                }
             },
-            _ => Err(anyhow!("Invalid channel {channel}")),
+            _ => {
+                log::error!("invalid channel {channel}");
+                Err(Error::Invalid)
+            }
         }
     }
 
@@ -219,12 +236,11 @@ impl BladeRf1 {
         }
     }
 
-    /** Use bladerf_get_gain_range(), bladerf_set_gain(), and
-     *             bladerf_get_gain() to control total system gain. For direct
-     *             control of individual gain stages, use bladerf_get_gain_stages(),
-     *             bladerf_get_gain_stage_range(), bladerf_set_gain_stage(), and
-     *             bladerf_get_gain_stage().
-     **/
+    /// Use bladerf_get_gain_range(), bladerf_set_gain(), and
+    /// bladerf_get_gain() to control total system gain. For direct
+    /// control of individual gain stages, use bladerf_get_gain_stages(),
+    /// bladerf_get_gain_stage_range(), bladerf_set_gain_stage(), and
+    /// bladerf_get_gain_stage().
     pub fn get_gain_stage_range(channel: u8, stage: &str) -> Result<SdrRange<i8>> {
         if channel == BLADERF_MODULE_RX {
             match stage {
@@ -246,7 +262,10 @@ impl BladeRf1 {
                     step: 3,
                     scale: 1,
                 }),
-                _ => Err(anyhow!("Invalid stage: {stage}")),
+                _ => {
+                    log::error!("invalid stage {stage}");
+                    Err(Error::Invalid)
+                }
             }
         } else {
             match stage {
@@ -262,7 +281,10 @@ impl BladeRf1 {
                     step: 3,
                     scale: 1,
                 }),
-                _ => Err(anyhow!("Invalid stage: {stage}")),
+                _ => {
+                    log::error!("invalid stage {stage}");
+                    Err(Error::Invalid)
+                }
             }
         }
     }
@@ -280,7 +302,6 @@ impl BladeRf1 {
         let rxvga2_gain = self.lms.rxvga2_get_gain()?;
 
         let lna_gain_db = match lna_gain {
-            // BladerfLnaGain::Bypass => 0,
             BladerfLnaGain::Mid => BLADERF_LNA_GAIN_MID_DB,
             BladerfLnaGain::Max => BLADERF_LNA_GAIN_MAX_DB,
             _ => 0,
@@ -335,8 +356,7 @@ impl BladeRf1 {
         }
 
         self.lms.txvga1_set_gain(txvga1)?;
-        self.lms.txvga2_set_gain(txvga2)?;
-        Ok(())
+        self.lms.txvga2_set_gain(txvga2)
     }
 
     pub fn set_rx_gain(&self, mut gain: i8) -> Result<()> {
@@ -396,8 +416,6 @@ impl BladeRf1 {
         // __scale_int(&rxvga1_range, rxvga1 as f32)
         self.lms.rxvga1_set_gain(rxvga1 / rxvga1_range.scale)?;
         // __scale_int(&rxvga2_range, rxvga2 as f32)
-        self.lms.rxvga2_set_gain(rxvga2 / rxvga2_range.scale)?;
-
-        Ok(())
+        self.lms.rxvga2_set_gain(rxvga2 / rxvga2_range.scale)
     }
 }

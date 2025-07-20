@@ -1,6 +1,6 @@
 use crate::BladeRf1;
+use crate::Result;
 use crate::hardware::lms6002d::LmsBw;
-use anyhow::Result;
 use bladerf_globals::SdrRange;
 use bladerf_globals::bladerf1::{BLADERF_BANDWIDTH_MAX, BLADERF_BANDWIDTH_MIN};
 
@@ -9,7 +9,7 @@ impl BladeRf1 {
         //CHECK_BOARD_STATE(STATE_INITIALIZED);
 
         bandwidth = bandwidth.clamp(BLADERF_BANDWIDTH_MIN, BLADERF_BANDWIDTH_MAX);
-        log::debug!("Clamped bandwidth to {bandwidth}");
+        log::trace!("Clamped bandwidth to {bandwidth}");
 
         let bw: LmsBw = bandwidth.into();
 

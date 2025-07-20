@@ -1,7 +1,7 @@
 use crate::NiosPktMagic;
 use crate::packet_base::GenericNiosPkt;
-use anyhow::{Result, anyhow};
 use std::fmt::{Debug, Display, Formatter, LowerHex};
+use bladerf_globals::{Error, Result};
 // pub const NIOS_PKT_8X8_MAGIC: u8 = 0x41; // 'A'
 // pub const NIOS_PKT_8X16_MAGIC: u8 = 0x42; // 'B'
 // pub const NIOS_PKT_8X32_MAGIC: u8 = 0x43; // 'C'
@@ -106,7 +106,10 @@ where
         (1, 8) => NiosPktMagic::_8X64 as u8,
         (2, 8) => NiosPktMagic::_16X64 as u8,
         (4, 4) => NiosPktMagic::_32X32 as u8,
-        _ => panic!("Wrong type sizes for NIOS packet"),
+        _ => {
+            // log::error!("Wrong type sizes for NIOS packet");
+            panic!("Wrong type sizes for NIOS packet")
+        }
     };
 
     pub fn buf_ptr(&self) -> *const u8 {
@@ -143,7 +146,9 @@ where
     }
     pub fn is_success(&self) -> Result<()> {
         if self.buf[Self::IDX_FLAGS] & Self::FLAG_SUCCESS == 0 {
-            return Err(anyhow!("response packet reported failure."));
+                log::error!("response packet reported failure.");
+                return Err(Error::Invalid);
+
         }
         Ok(())
     }
@@ -152,7 +157,7 @@ where
     }
 
     pub fn set_magic(&mut self, magic: u8) -> &mut Self {
-        //self.buf[Self::IDX_MAGIC] = magic;
+        // self.buf[Self::IDX_MAGIC] = magic;
         self.buf.set_magic(magic);
         self
     }
@@ -168,7 +173,6 @@ where
         self.buf[Self::IDX_FLAGS] = flags;
         self
     }
-
     pub fn set_addr(&mut self, addr: A) -> &mut Self {
         self.buf[Self::IDX_ADDR..(Self::IDX_ADDR + size_of::<A>())]
             .copy_from_slice(addr.to_le_bytes_vec().as_slice());
@@ -187,7 +191,7 @@ where
     //     if self.reserved() != 0x00 {
     //         return Err(ValidationError::InvalidReserved(self.reserved()));
     //     }
-    //     if self.padding().iter().any(|x| *x != 0) {
+    //     if self.padding().iter().any(|x|///x != 0) {
     //         return Err(ValidationError::InvalidPadding(self.padding().to_vec()));
     //     }
     //     if self.buf.len() != 16 {
@@ -273,67 +277,65 @@ where
     }
 }
 
-/*
- * This file defines the Host <-> FPGA (NIOS II) packet formats for accesses
- * to devices/blocks with X-bit addresses and Y-bit data, where X and Y are
- * a multiple of 8.
- *
- *
- *                              Request
- *                      ----------------------
- *
- * +================+=========================================================+
- * |  Byte offset   |                       Description                       |
- * +================+=========================================================+
- * |        0       | Magic Value                                             |
- * +----------------+---------------------------------------------------------+
- * |        1       | Target ID (Note 1)                                      |
- * +----------------+---------------------------------------------------------+
- * |        2       | Flags (Note 2)                                          |
- * +----------------+---------------------------------------------------------+
- * |        3       | Reserved. Set to 0x00.                                  |
- * +----------------+---------------------------------------------------------+
- * |        4       | X-bit address                                           |
- * +----------------+---------------------------------------------------------+
- * |        5       | Y-bit data                                              |
- * +----------------+---------------------------------------------------------+
- * |      15:6      | Reserved. Set to 0.                                     |
- * +----------------+---------------------------------------------------------+
- *
- *
- *                              Response
- *                      ----------------------
- *
- * The response packet contains the same information as the request.
- * A status flag will be set if the operation is completed successfully.
- *
- * In the case of a read request, the data field will contain the read data if
- * the read succeeded.
- *
- * (Note 1)
- *  The "Target ID" refers to the peripheral, device, or block to access.
- *  See the NIOS_PKT_XxY_TARGET_* values.
- *
- * (Note 2)
- *  The flags are defined as follows:
- *
- *    +================+========================+
- *    |      Bit(s)    |         Value          |
- *    +================+========================+
- *    |       7:2      | Reserved. Set to 0.    |
- *    +----------------+------------------------+
- *    |                | Status. Only used in   |
- *    |                | response packet.       |
- *    |                | Ignored in request.    |
- *    |        1       |                        |
- *    |                |   1 = Success          |
- *    |                |   0 = Failure          |
- *    +----------------+------------------------+
- *    |        0       |   0 = Read operation   |
- *    |                |   1 = Write operation  |
- *    +----------------+------------------------+
- *
- */
+/// This file defines the Host <-> FPGA (NIOS II) packet formats for accesses
+/// to devices/blocks with X-bit addresses and Y-bit data, where X and Y are
+/// a multiple of 8.
+///
+///
+///                              Request
+///                      ----------------------
+///
+/// +================+=========================================================+
+/// |  Byte offset   |                       Description                       |
+/// +================+=========================================================+
+/// |        0       | Magic Value                                             |
+/// +----------------+---------------------------------------------------------+
+/// |        1       | Target ID (Note 1)                                      |
+/// +----------------+---------------------------------------------------------+
+/// |        2       | Flags (Note 2)                                          |
+/// +----------------+---------------------------------------------------------+
+/// |        3       | Reserved. Set to 0x00.                                  |
+/// +----------------+---------------------------------------------------------+
+/// |        4       | X-bit address                                           |
+/// +----------------+---------------------------------------------------------+
+/// |        5       | Y-bit data                                              |
+/// +----------------+---------------------------------------------------------+
+/// |      15:6      | Reserved. Set to 0.                                     |
+/// +----------------+---------------------------------------------------------+
+///
+///
+///                              Response
+///                      ----------------------
+///
+/// The response packet contains the same information as the request.
+/// A status flag will be set if the operation is completed successfully.
+///
+/// In the case of a read request, the data field will contain the read data if
+/// the read succeeded.
+///
+/// (Note 1)
+///  The "Target ID" refers to the peripheral, device, or block to access.
+///  See the NIOS_PKT_XxY_TARGET_* values.
+///
+/// (Note 2)
+///  The flags are defined as follows:
+///
+///    +================+========================+
+///    |      Bit(s)    |         Value          |
+///    +================+========================+
+///    |       7:2      | Reserved. Set to 0.    |
+///    +----------------+------------------------+
+///    |                | Status. Only used in   |
+///    |                | response packet.       |
+///    |                | Ignored in request.    |
+///    |        1       |                        |
+///    |                |   1 = Success          |
+///    |                |   0 = Failure          |
+///    +----------------+------------------------+
+///    |        0       |   0 = Read operation   |
+///    |                |   1 = Write operation  |
+///    +----------------+------------------------+
+///
 pub struct NiosPktRequest<A, D>
 where
     A: NumToByte + Debug + Display + LowerHex,

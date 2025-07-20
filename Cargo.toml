@@ -15,10 +15,8 @@ categories = ["api-bindings"]
 members = [".", "crates/bladerf-globals", "crates/bladerf-nios", "examples/info"]
 
 [dependencies]
-anyhow = "1.0"
 thiserror = "2.0"
-futures-lite = "2"
-nusb = { git = "https://github.com/kevinmehall/nusb", branch="main" } # , features = ["tokio"]
+nusb = { git = "https://github.com/kevinmehall/nusb", branch="main" }
 bladerf-nios = { path= "crates/bladerf-nios" }
 bladerf-globals = { path= "crates/bladerf-globals" }
 log = "0.4"

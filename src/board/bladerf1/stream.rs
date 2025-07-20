@@ -1,5 +1,5 @@
-use crate::{BladeRf1, BladeRf1RxStreamer, BladeRf1TxStreamer, BladeRfError};
-use anyhow::Result;
+use crate::Result;
+use crate::{BladeRf1, BladeRf1RxStreamer, BladeRf1TxStreamer, Error};
 use bladerf_globals::bladerf1::{
     BLADERF_GPIO_PACKET, BLADERF_GPIO_TIMESTAMP, BLADERF_GPIO_TIMESTAMP_DIV2,
 };
@@ -19,9 +19,15 @@ impl BladeRf1RxStreamer {
         num_transfers: Option<usize>,
         timeout: Option<Duration>,
     ) -> Result<Self> {
-        let endpoint = dev.lock().unwrap().interface.endpoint::<Bulk, In>(0x81)?;
-        // let mtu = endpoint.max_packet_size();
-        // println!("Using mtu: {}", mtu);
+        let endpoint = dev
+            .lock()
+            .unwrap()
+            .interface
+            .endpoint::<Bulk, In>(0x81)
+            .map_err(|e| Error::Nusb(e))?;
+        log::trace!(
+            "using endpoint 0x81 with buffer_size: {buffer_size}, num_transfers: {num_transfers:?}, timeout: {timeout:?}"
+        );
         let mut reader = endpoint.reader(buffer_size);
         if let Some(t) = timeout {
             reader.set_read_timeout(t)
@@ -59,19 +65,16 @@ impl BladeRf1RxStreamer {
         timeout_us: i64,
     ) -> Result<usize> {
         let num_channels = buffers.len();
-        // log::debug!("num_channels: {num_channels}");
-        // let buffer_size = buffers[0].len();
-        // log::debug!("buffer_size: {buffer_size}");
 
         if buffers.is_empty() || buffers[0].is_empty() {
             log::debug!("no buffers available, or buffers have a length of zero!");
             return Ok(0);
         }
         if num_channels > 1 {
-            log::debug!(
+            log::error!(
                 "bladerf1 only supports reading from one RX channel. Please provide a one dimensional buffer!"
             );
-            return Err(BladeRfError::Unsupported.into());
+            return Err(Error::Invalid);
         }
 
         self.reader
@@ -94,12 +97,12 @@ impl BladeRf1RxStreamer {
                 .map(|(re, im)| Complex32::new(re, im)),
         ) {
             *dst = src;
-            log::debug!("{src}");
+            log::trace!("{src}");
             received += 4;
         }
 
         self.reader.consume(received);
-        // log::debug!("consumed length: {received}");
+        log::trace!("consumed length: {received}");
 
         Ok(received / 4)
     }

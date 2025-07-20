@@ -25,18 +25,18 @@ use nusb::transfer::Bulk;
 use nusb::{Device, Interface, Speed};
 use std::sync::{Arc, Mutex};
 
-#[derive(thiserror::Error, Debug)]
-pub enum BladeRfError {
-    /// Device not found.
-    #[error("NotFound")]
-    NotFound,
-    #[error("Unexpected")]
-    Unexpected,
-    #[error("Unsupported")]
-    Unsupported,
-    #[error("Invalid")]
-    Invalid,
-}
+// #[derive(thiserror::Error, Debug)]
+// pub enum BladeRfError {
+//     /// Device not found.
+//     #[error("NotFound")]
+//     NotFound,
+//     #[error("Unexpected")]
+//     Unexpected,
+//     #[error("Unsupported")]
+//     Unsupported,
+//     #[error("Invalid")]
+//     Invalid,
+// }
 
 // TODO: The tuning mode should be read from the board config
 // In the packet captures, this is where the changes happen:

@@ -19,6 +19,16 @@ macro_rules! bladerf_channel_tx {
     };
 }
 
+#[derive(thiserror::Error, Debug)]
+pub enum Error {
+    /// Invalid value provided
+    #[error("invalid")]
+    Invalid,
+}
+
+/// Result type for operations that may return an `Error`.
+pub type Result<T> = std::result::Result<T, Error>;
+
 pub enum TuningMode {
     Host,
     Fpga,

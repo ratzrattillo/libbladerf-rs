@@ -5,4 +5,3 @@
 - Test boundries of fields in the tests e.g. limit of bits is not exceeded.
 - Fully implement checks in packet validation() methods
 - Use thiserror instead of anyhow (e.g. for success() -> Result<> method on response packet)
-- 

@@ -6,3 +6,7 @@
 - maybe have one hardcoded prereserved Vector that is reused by every call to nios_send.
 - Async in all methods might not be required. Drop async support!
 - Get rid of experimental_control_urb method.
+- Is a separate crate for nios and global variables really required??
+- Clarify, when to use asserts and when not
+- Adjust loglevels according to https://stackoverflow.com/questions/76753965/when-to-choose-the-trace-log-level-over-the-debug-log-level
+- Can dependencies between rates be shared, so they are not compiled twiche into the different crates?

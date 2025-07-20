@@ -35,17 +35,17 @@
 //! - Getting/Setting RX/TX frequency
 //! - Getting/Setting Bandwidth
 //! - Getting/Setting Sample Rate
+//! - Support for BladeRF1 Expansion boards (XB100, XB200, XB300)
+//! - Interface for sending and receiving I/Q samples
 //!
 //! ### Missing Features
 //! - Support for BladeRF2
-//! - Support for BladeRF1 Expansion boards (XB100, XB200, XB300)
 //! - Support for Firmware and FPGA flashing/validation
-//! - Interface for sending and receiving I/Q samples
 //! - Support for different I/Q sample formats and timestamps
 //! - Logging with adjustable levels (e.g. with log crate)
 //! - DC calibration table support
 //! - Board Data structure to retain current configuration and state.
-//! - Usage from both async and blocking contexts (currently async only)
+//! - Usage from both async and blocking contexts (currently sync only)
 //! - Structured and consistent error messages (e.g. with thiserror crate)
 //! - Extensive documentation
 //! - AGC enablement
@@ -56,7 +56,6 @@
 //! If possible, method names should adhere to the documented methods in [libbladeRF-doc]
 //!
 //! [libbladeRF-doc]: https://www.nuand.com/libbladeRF-doc/v2.5.0/modules.html
-//! [libbladeRF]: https://github.com/Nuand/bladeRF
 //! [Wireshark]: https://www.wireshark.org/download.html
 //!
 //! For debugging purposes, it is useful to compare the communication between the SDR and
@@ -94,3 +93,53 @@ pub mod hardware;
 pub mod nios;
 
 pub use board::bladerf1::*;
+
+
+#[derive(thiserror::Error, Debug)]
+pub enum Error {
+    /// I/O error occurred.
+    #[error("io")]
+    Io(#[from] std::io::Error),
+    #[error("nusb")]
+    Nusb(#[from] nusb::Error),
+    /// USB transfer error.
+    #[error("transfer")]
+    Transfer(#[from] nusb::transfer::TransferError),
+    /// Transfer truncated.
+    #[error("transfer truncated")]
+    TransferTruncated {
+        /// Actual amount of bytes transferred.
+        actual: usize,
+        /// Expected number of bytes transferred.
+        expected: usize,
+    },
+    /// An API call is not supported by your hardware.
+    ///
+    /// Try updating the firmware on your device.
+    #[error("no api")]
+    NoApi {
+        /// Current device version.
+        device: String,
+        /// Minimum version required.
+        min: String,
+    },
+    /// Invalid argument provided.
+    #[error("{0}")]
+    Argument(&'static str),
+    /// BladeRF is in an invalid mode.
+    // #[error("BladeRF in invalid mode. Required: {required:?}, actual: {actual:?}")]
+    // WrongMode {
+    //     /// The mode required for this operation.
+    //     required: Mode,
+    //     /// The actual mode of the device which differs from `required`.
+    //     actual: Mode,
+    // },
+    /// Invalid value provided
+    #[error("invalid")]
+    Invalid,
+    /// Device not found
+    #[error("not found")]
+    NotFound
+}
+/// Result type for operations that may return an `Error`.
+pub type Result<T> = std::result::Result<T, Error>;
