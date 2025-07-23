@@ -529,7 +529,7 @@ impl From<LmsLna> for u8 {
 impl TryFrom<u8> for LmsLna {
     type Error = Error;
 
-    fn try_from(value: u8) -> crate::Result<Self> {
+    fn try_from(value: u8) -> Result<Self> {
         match value {
             0 => Ok(LmsLna::LnaNone),
             1 => Ok(LmsLna::Lna1),
@@ -606,6 +606,7 @@ pub struct LmsXcvrConfig {
 ///   - Provision for Full Calibration
 ///   - Power down
 ///   - Serial interface
+#[derive(Clone)]
 pub struct LMS6002D {
     /// The communication with the LMS6002D is done over an NUSB interface
     interface: Interface,
@@ -618,17 +619,15 @@ impl LMS6002D {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```no_run
     /// use libbladerf_rs::{BladeRf1, Result, Error};
     /// use libbladerf_rs::hardware::lms6002d::LMS6002D;
     /// use nusb::MaybeFuture;
     ///
-    /// fn main() -> Result<()> {
-    ///     let device = BladeRf1::list_bladerf1()?.next().ok_or(Error::NotFound)?.open().wait()?;
-    ///     let interface = device.detach_and_claim_interface(0).wait()?;
-    ///     let lms = LMS6002D::new(interface);
-    /// Ok(())
-    /// }
+    /// let device = BladeRf1::list_bladerf1()?.next().ok_or(Error::NotFound)?.open().wait()?;
+    /// let interface = device.detach_and_claim_interface(0).wait()?;
+    /// let lms = LMS6002D::new(interface);
+    /// # Ok::<(), Error>(())
     /// ```
     pub fn new(interface: Interface) -> Self {
         Self { interface }
@@ -656,10 +655,16 @@ impl LMS6002D {
         self.write(addr, data | mask)
     }
 
+    // Soft reset of the LMS
+    pub fn soft_reset(&self) -> Result<()> {
+        self.write(0x05, 0x12)?;
+        self.write(0x05, 0x32)
+    }
+
     /// Get the values of the Voltage Tuning Comparators (VTUNE comparators)
     /// The base parameter defines, which comparator to select.
     /// The state of the comparators can be obtained by powering them up
-    /// (register 0x1B for TXPLL or 0x2B for RXPLL, bit 3) andreading the register
+    /// (register 0x1B for TXPLL or 0x2B for RXPLL, bit 3) and reading the register
     /// 0x1A for TXPPLL or 0x2A for RXPLL, bits 7-6.
     /// Details can be found in the LMS6002 Programming and Calibration Guide.
     pub fn get_vtune(&self, base: u8, _delay: u8) -> Result<u8> {

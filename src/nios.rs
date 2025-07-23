@@ -6,10 +6,14 @@ use bladerf_globals::{BLADERF_MODULE_RX, BLADERF_MODULE_TX, ENDPOINT_IN, ENDPOIN
 use bladerf_nios::packet_generic::{NiosPkt, NumToByte};
 use bladerf_nios::packet_retune::{Band, NiosPktRetuneRequest, NiosPktRetuneResponse, Tune};
 use bladerf_nios::*;
-use nusb::Interface;
 use nusb::transfer::{Buffer, Bulk, In, Out};
+use nusb::{Endpoint, Interface};
 use std::fmt::{Debug, Display, LowerHex};
 use std::time::Duration;
+
+pub trait NiosEP {}
+
+impl NiosEP for Endpoint<Bulk, Out> {}
 
 pub trait Nios {
     fn nios_send(

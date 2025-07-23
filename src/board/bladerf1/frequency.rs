@@ -10,12 +10,13 @@ use bladerf_globals::{SdrRange, TuningMode};
 use bladerf_nios::packet_retune::{Band, NiosPktRetuneRequest, Tune};
 
 impl BladeRf1 {
-    pub fn set_frequency(&mut self, channel: u8, mut frequency: u64) -> Result<()> {
+    pub fn set_frequency(&self, channel: u8, mut frequency: u64) -> Result<()> {
         // let dc_cal = if channel == bladerf_channel_rx!(0) { cal_dc.rx } else { cal.dc_tx };
 
         log::trace!("Setting Frequency on channel {channel} to {frequency}Hz");
 
-        if self.xb200.is_some() {
+        // if self.xb200.is_some() {
+        if BladeRf1::xb200_is_enabled(&self.interface)? {
             if frequency < BLADERF_FREQUENCY_MIN as u64 {
                 log::debug!("Setting path to Mix");
                 self.xb200_set_path(channel, &BladerfXb200Path::Mix)?;
@@ -64,7 +65,8 @@ impl BladeRf1 {
         let mut frequency_hz = LMS6002D::frequency_to_hz(&f);
         log::trace!("Frequency Hz: {frequency_hz}");
 
-        if self.xb200.is_some() {
+        // if self.xb200.is_some() {
+        if BladeRf1::xb200_is_enabled(&self.interface)? {
             let path = self.xb200_get_path(channel)?;
 
             if path == BladerfXb200Path::Mix {
@@ -76,21 +78,21 @@ impl BladeRf1 {
         Ok(frequency_hz)
     }
 
-    pub fn get_frequency_range(&self) -> SdrRange<u32> {
-        if self.xb200.is_some() {
-            SdrRange {
+    pub fn get_frequency_range(&self) -> Result<SdrRange<u32>> {
+        if BladeRf1::xb200_is_enabled(&self.interface)? {
+            Ok(SdrRange {
                 min: 0,
                 max: BLADERF_FREQUENCY_MAX,
                 step: 1,
                 scale: 1,
-            }
+            })
         } else {
-            SdrRange {
+            Ok(SdrRange {
                 min: BLADERF_FREQUENCY_MIN,
                 max: BLADERF_FREQUENCY_MAX,
                 step: 1,
                 scale: 1,
-            }
+            })
         }
     }
 

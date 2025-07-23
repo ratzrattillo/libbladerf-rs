@@ -8,20 +8,17 @@ use num_complex::Complex32;
 use nusb::MaybeFuture;
 use nusb::transfer::{Bulk, ControlIn, ControlType, In, Out, Recipient};
 use std::io::{BufRead, Write};
-use std::sync::{Arc, Mutex};
 use std::thread::sleep;
 use std::time::Duration;
 
 impl BladeRf1RxStreamer {
     pub fn new(
-        dev: Arc<Mutex<BladeRf1>>,
+        dev: BladeRf1,
         buffer_size: usize,
         num_transfers: Option<usize>,
         timeout: Option<Duration>,
     ) -> Result<Self> {
         let endpoint = dev
-            .lock()
-            .unwrap()
             .interface
             .endpoint::<Bulk, In>(0x81)
             .map_err(|e| Error::Nusb(e))?;
@@ -47,16 +44,15 @@ impl BladeRf1RxStreamer {
     }
 
     pub fn activate(&mut self) -> Result<()> {
-        let dev = self.dev.lock().unwrap();
-        dev.perform_format_config(BladeRfDirection::Rx, BladerfFormat::Sc16Q11)?;
-        dev.enable_module(BLADERF_MODULE_RX, true)?;
-        dev.experimental_control_urb()
+        self.dev
+            .perform_format_config(BladeRfDirection::Rx, BladerfFormat::Sc16Q11)?;
+        self.dev.enable_module(BLADERF_MODULE_RX, true)?;
+        self.dev.experimental_control_urb()
     }
 
     pub fn deactivate(&mut self) -> Result<()> {
-        let dev = self.dev.lock().unwrap();
-        dev.perform_format_deconfig(BladeRfDirection::Rx)?;
-        dev.enable_module(BLADERF_MODULE_RX, false)
+        self.dev.perform_format_deconfig(BladeRfDirection::Rx)?;
+        self.dev.enable_module(BLADERF_MODULE_RX, false)
     }
 
     pub fn read_sync(
@@ -110,14 +106,15 @@ impl BladeRf1RxStreamer {
 
 impl BladeRf1TxStreamer {
     pub fn new(
-        dev: Arc<Mutex<BladeRf1>>,
+        dev: BladeRf1,
         buffer_size: usize,
         num_transfers: Option<usize>,
         timeout: Option<Duration>,
     ) -> Result<Self> {
-        let endpoint = dev.lock().unwrap().interface.endpoint::<Bulk, Out>(0x01)?;
-        // let mtu = endpoint.max_packet_size();
-        // println!("Using mtu: {}", mtu);
+        let endpoint = dev.interface.endpoint::<Bulk, Out>(0x01)?;
+        log::trace!(
+            "using endpoint 0x01 with buffer_size: {buffer_size}, num_transfers: {num_transfers:?}, timeout: {timeout:?}"
+        );
         let mut writer = endpoint.writer(buffer_size);
         if let Some(t) = timeout {
             writer.set_write_timeout(t)
@@ -137,17 +134,15 @@ impl BladeRf1TxStreamer {
     }
 
     pub fn activate(&mut self) -> Result<()> {
-        let dev = self.dev.lock().unwrap();
-        //dev.perform_format_config(BladeRfDirection::Rx, BladerfFormat::Sc16Q11)
+        // self.dev.perform_format_config(BladeRfDirection::Rx, BladerfFormat::Sc16Q11)
         //    ?;
-        dev.enable_module(BLADERF_MODULE_TX, true)
+        self.dev.enable_module(BLADERF_MODULE_TX, true)
         // dev.experimental_control_urb()
     }
 
     pub fn deactivate(&mut self) -> Result<()> {
-        let dev = self.dev.lock().unwrap();
-        // dev.perform_format_deconfig(BladeRfDirection::Rx)?;
-        dev.enable_module(BLADERF_MODULE_TX, false)
+        //  self.dev.perform_format_deconfig(BladeRfDirection::Rx)?;
+        self.dev.enable_module(BLADERF_MODULE_TX, false)
     }
 
     pub fn write(
@@ -174,7 +169,7 @@ impl BladeRf1TxStreamer {
         }
         for (re, im) in buffers[0]
             .iter()
-            // .map(|c| ((c.re * 2047.5) as i16, (c.im * 2047.5) as i16))
+            // .map(|c| ((c.re/// 2047.5) as i16, (c.im/// 2047.5) as i16))
             .map(|c| (c.re as i16, c.im as i16))
         {
             let _ = self.writer.write(re.to_le_bytes().as_slice())?;
@@ -203,9 +198,9 @@ impl BladeRf1 {
         format: BladerfFormat,
     ) -> Result<()> {
         // BladerfFormatPacketMeta
-        //struct bladerf1_board_data *board_data = dev->board_data;
+        // struct bladerf1_board_data *board_data = dev->board_data;
 
-        //int status = 0;
+        // int status = 0;
         let mut use_timestamps: bool = false;
         let _other_using_timestamps: bool = false;
 
@@ -256,27 +251,25 @@ impl BladeRf1 {
         //     board_data->module_format[dir] = format;
         // }
 
-        //return status;
+        // return status;
         Ok(())
     }
 
-    /**
-     * Deconfigure and update any state pertaining what a format that a stream
-     * direction is no longer using.
-     *
-     *    dev     Device handle
-     *    dir     Direction that is currently being deconfigured
-     *
-     * @return 0 on success, BLADERF_ERR_* on failure
-     */
+    /// Deconfigure and update any state pertaining what a format that a stream
+    /// direction is no longer using.
+    ///
+    ///    dev     Device handle
+    ///    dir     Direction that is currently being deconfigured
+    ///
+    /// @return 0 on success, BLADERF_ERR_* on failure
     pub fn perform_format_deconfig(&self, direction: BladeRfDirection) -> Result<()> {
-        //struct bladerf1_board_data *board_data = dev->board_data;
+        // struct bladerf1_board_data *board_data = dev->board_data;
 
         match direction {
             BladeRfDirection::Rx | BladeRfDirection::Tx => {
-                /* We'll reconfigure the HW when we call perform_format_config, so
-                 * we just need to update our stored information */
-                //board_data -> module_format[dir] = - 1;
+                // We'll reconfigure the HW when we call perform_format_config, so
+                // we just need to update our stored information
+                // board_data -> module_format[dir] = - 1;
             }
         }
 
@@ -343,7 +336,7 @@ impl BladeRf1 {
     //     // };
     //
     //     let max_packet_size = ep_bulk_in.max_packet_size();
-    //     let max_frame_size = max_packet_size * factor;
+    //     let max_frame_size = max_packet_size/// factor;
     //     log::debug!("Max Packet Size: {max_packet_size}");
     //
     //     for _i in 0..n_transfers {

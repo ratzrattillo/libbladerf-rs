@@ -3,6 +3,7 @@ use crate::nios::Nios;
 use bladerf_nios::NIOS_PKT_8X16_TARGET_VCTCXO_DAC;
 use nusb::Interface;
 
+#[derive(Clone)]
 pub struct DAC161S055 {
     interface: Interface,
 }

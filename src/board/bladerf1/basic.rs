@@ -8,7 +8,7 @@ use bladerf_globals::bladerf1::{
     BLADERF_GPIO_FEATURE_SMALL_DMA_XFER, BLADERF1_USB_PID, BLADERF1_USB_VID,
 };
 use bladerf_globals::{
-    BLADE_USB_CMD_GET_LOOPBACK, BLADE_USB_CMD_RF_RX, BLADE_USB_CMD_RF_TX,
+    BLADE_USB_CMD_GET_LOOPBACK, BLADE_USB_CMD_RESET, BLADE_USB_CMD_RF_RX, BLADE_USB_CMD_RF_TX,
     BLADE_USB_CMD_SET_LOOPBACK, BLADERF_MODULE_RX, BLADERF_MODULE_TX, BladeRfDirection,
     BladerfGainMode, DescriptorTypes, StringDescriptors, TIMEOUT, TuningMode, USB_IF_NULL,
     USB_IF_RF_LINK, bladerf_channel_is_tx, bladerf_channel_rx, bladerf_channel_tx,
@@ -28,7 +28,7 @@ impl BladeRf1 {
         }))
     }
 
-    fn build(device: Device) -> Result<Box<Self>> {
+    fn build(device: Device) -> Result<Self> {
         let interface = device.detach_and_claim_interface(0).wait()?;
         // TODO Have a reference to a backend instance that holds the endpoints needed
         // TODO Give this reference to the individual Hardware...
@@ -37,11 +37,11 @@ impl BladeRf1 {
         // where we need to write data or is it better to have the whole Backend behind a mutex?
 
         let board_data = BoardData {
-            speed: device.speed().expect("Could not determine device speed!"),
+            // speed: device.speed().expect("Could not determine device speed!"),
             tuning_mode: TuningMode::Fpga,
         };
 
-        if board_data.speed < Speed::High {
+        if device.speed().ok_or(Error::Invalid)? < Speed::High {
             log::error!("BladeRF requires High/Super/SuperPlus speeds");
             return Err(Error::Invalid);
         }
@@ -50,17 +50,14 @@ impl BladeRf1 {
         let si5338 = SI5338::new(interface.clone());
         let dac = DAC161S055::new(interface.clone());
 
-        Ok(Box::new(Self {
+        Ok(Self {
             device,
             interface,
             board_data,
             lms,
             si5338,
             dac,
-            xb100: None,
-            xb200: None,
-            xb300: None,
-        }))
+        })
     }
 
     /// Opens the first BladeRf1 it can find
@@ -68,14 +65,12 @@ impl BladeRf1 {
     /// # Examples
     ///
     /// ```no_run
-    /// use libbladerf_rs::{BladeRf1, Result};
+    /// use libbladerf_rs::{BladeRf1,Error};
     ///
-    /// fn main() -> Result<()> {
-    ///     let dev = BladeRf1::from_first()?;
-    ///     Ok(())
-    /// }
+    /// let dev = BladeRf1::from_first()?;
+    /// # Ok::<(), Error>(())
     /// ```
-    pub fn from_first() -> Result<Box<Self>> {
+    pub fn from_first() -> Result<Self> {
         let device = Self::list_bladerf1()?
             .next()
             .ok_or(Error::NotFound)?
@@ -89,14 +84,12 @@ impl BladeRf1 {
     /// # Examples
     ///
     /// ```no_run
-    /// use libbladerf_rs::{BladeRf1, Result};
+    /// use libbladerf_rs::{BladeRf1,Error};
     ///
-    /// fn main() -> Result<()> {
-    ///     let dev = BladeRf1::from_serial("0123456789abcdef")?;
-    ///     Ok(())
-    /// }
+    /// let dev = BladeRf1::from_serial("0123456789abcdef")?;
+    /// # Ok::<(), Error>(())
     /// ```
-    pub fn from_serial(serial: &str) -> Result<Box<Self>> {
+    pub fn from_serial(serial: &str) -> Result<Self> {
         let device = Self::list_bladerf1()?
             .find(|dev| dev.serial_number() == Some(serial))
             .ok_or(Error::NotFound)?
@@ -106,7 +99,7 @@ impl BladeRf1 {
     }
 
     /// Opens a BladeRf1 identified by its USB bus address
-    pub fn from_bus_addr(bus_number: u8, bus_addr: u8) -> Result<Box<Self>> {
+    pub fn from_bus_addr(bus_number: u8, bus_addr: u8) -> Result<Self> {
         let device = Self::list_bladerf1()?
             .find(|dev| dev.busnum() == bus_number && dev.device_address() == bus_addr)
             .ok_or(Error::NotFound)?
@@ -119,15 +112,16 @@ impl BladeRf1 {
     /// on Android devices, as listing USB devices etc. is not possible.
     /// This method does not check, if the file descriptor really belongs to a BladeRf1.
     /// Undefined behaviour is expected, if a file descriptor to a device is given, that is not a BladeRf1.
-    pub fn from_fd(fd: std::os::fd::OwnedFd) -> Result<Box<Self>> {
+    pub fn from_fd(fd: std::os::fd::OwnedFd) -> Result<Self> {
         let device = Device::from_fd(fd).wait()?;
         // TODO: Do check on device, if it really is a bladerf
         Self::build(device)
     }
 
     /// Returns the USB speed which is used by the BladeRf1.
-    pub fn speed(&self) -> Speed {
-        self.board_data.speed
+    pub fn speed(&self) -> Result<Speed> {
+        // self.board_data.speed
+        self.device.speed().ok_or(Error::Invalid)
     }
 
     /// Return the devices' serial number
@@ -176,9 +170,10 @@ impl BladeRf1 {
     /// clearing other GPIO bits that may be set by the library internally.
     pub(crate) fn config_gpio_write(&self, mut data: u32) -> Result<()> {
         log::trace!("[config_gpio_write] data: {data}");
-        log::trace!("[config_gpio_write] speed: {:?}", self.board_data.speed);
+        let speed = self.speed()?;
+        log::trace!("[config_gpio_write] speed: {:?}", speed);
         // If we're connected at HS, we need to use smaller DMA transfers
-        match self.board_data.speed {
+        match speed {
             Speed::High => {
                 data |= BLADERF_GPIO_FEATURE_SMALL_DMA_XFER as u32;
             }
@@ -186,7 +181,7 @@ impl BladeRf1 {
                 data &= !(BLADERF_GPIO_FEATURE_SMALL_DMA_XFER as u32);
             }
             _ => {
-                log::error!("speed {:?} not supported", self.board_data.speed);
+                log::error!("speed {:?} not supported", speed);
                 return Err(Error::Invalid);
             }
         }
@@ -197,7 +192,10 @@ impl BladeRf1 {
 
     /// Initialize device registers - required after power-up, but safe
     /// to call multiple times after power-up (e.g., multiple close and reopens)
-    pub fn initialize(&mut self) -> Result<()> {
+    pub fn initialize(&self) -> Result<()> {
+        let alt_setting = self.interface.get_alt_setting();
+        log::trace!("[*] Init - Default Alt Setting {alt_setting}");
+
         self.interface.set_alt_setting(0x01).wait()?;
         log::trace!("[*] Init - Set Alt Setting to 0x01");
 
@@ -657,10 +655,26 @@ impl BladeRf1 {
 
     /// Reset the BladeRF1
     /// TODO Find out if this is soft reset or hard reset?
-    pub fn reset(&self) -> Result<()> {
-        // self.check_api_version(UsbVersion::from_bcd(0x0102))?;
-        // self.write_control(Request::Reset, 0, 0, &[])?;
-        self.device.set_configuration(0).wait()?;
+    pub fn device_reset(&self) -> Result<()> {
+        // return usb->fn->control_transfer(usb->driver, USB_TARGET_DEVICE,
+        // USB_REQUEST_VENDOR,
+        // USB_DIR_HOST_TO_DEVICE,
+        // BLADE_USB_CMD_RESET,
+        // 0, 0, 0, 0, CTRL_TIMEOUT_MS);
+
+        // TODO: Dont know what this is doing
+        let pkt = ControlOut {
+            control_type: ControlType::Vendor,
+            recipient: Recipient::Device,
+            request: BLADE_USB_CMD_RESET,
+            value: 0x0,
+            index: 0x0,
+            data: &[],
+        };
+
+        self.interface.control_out(pkt, Duration::from_secs(100));
+        // self.device.set_configuration(0).wait()?;
+        // self.interface.set_alt_setting(0).wait()?;
 
         Ok(())
     }

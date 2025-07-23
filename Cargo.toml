@@ -21,3 +21,6 @@ bladerf-nios = { path= "crates/bladerf-nios" }
 bladerf-globals = { path= "crates/bladerf-globals" }
 log = "0.4"
 num-complex = "0.4"
+
+[dev-dependencies]
+env_logger = "0.11"

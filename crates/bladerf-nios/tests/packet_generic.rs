@@ -1,10 +1,8 @@
 #[cfg(test)]
 mod tests {
-    /*
-       Test if the fields in the generic packets are assigned correctly.
-       TODO: Test boundries of fields e.g. limit of  bits is not exceeded.
-    */
-    use bladerf_nios::packet_base::GenericNiosPkt;
+    /// Test if the fields in the generic packets are assigned correctly.
+    /// TODO: Test boundries of fields e.g. limit of bits is not exceeded.
+    // use bladerf_nios::packet_base::GenericNiosPkt;
     use bladerf_nios::packet_generic::NiosPktRequest;
 
     #[test]

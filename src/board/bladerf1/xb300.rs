@@ -42,8 +42,6 @@ pub enum BladeRfXb300Amplifier {
     Aux,
 }
 
-pub struct Xb300 {}
-
 impl BladeRf1 {
     /// Trying to detect if XB300 is enabled by reading the LNA enablement status Flag,
     /// which is set in xb300_enable(). Might be not the best, or correct way.
@@ -53,7 +51,7 @@ impl BladeRf1 {
             != 0)
     }
 
-    pub fn xb300_attach(&mut self) -> Result<()> {
+    pub fn xb300_attach(&self) -> Result<()> {
         let mut val = BLADERF_XB_TX_LED | BLADERF_XB_RX_LED | BLADERF_XB_TRX_MASK;
         val |= BLADERF_XB_PA_EN | BLADERF_XB_LNA_ENN;
         val |= BLADERF_XB_CSEL | BLADERF_XB_SCLK | BLADERF_XB_CS;
@@ -64,12 +62,10 @@ impl BladeRf1 {
         val = BLADERF_XB_CS | BLADERF_XB_LNA_ENN;
         self.interface.nios_expansion_gpio_write(0xffffffff, val)?;
 
-        self.xb300 = Some(Xb300 {});
         Ok(())
     }
 
     pub fn xb300_detach(&mut self) -> Result<()> {
-        self.xb300 = None;
         Ok(())
     }
 

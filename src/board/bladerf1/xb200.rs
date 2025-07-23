@@ -98,37 +98,13 @@ pub enum BladerfXb200Path {
     Mix = 1,
 }
 
-pub struct Xb200 {
-    // Track filterbank selection for RX and TX auto-selection
-    // rx_filterbank: Option<BladerfXb200Filter>,
-    // tx_filterbank: Option<BladerfXb200Filter>,
-}
-
-impl Xb200 {
-    // pub fn set_filterbank(&mut self, ch: u8, filter: Option<BladerfXb200Filter>) {
-    //     if bladerf_channel_rx!(ch) != 0 {
-    //         self.rx_filterbank = filter;
-    //     } else {
-    //         self.tx_filterbank = filter;
-    //     }
-    // }
-    //
-    // pub fn get_filterbank(&self, ch: u8) -> &Option<BladerfXb200Filter> {
-    //     if bladerf_channel_rx!(ch) != 0 {
-    //         &self.rx_filterbank
-    //     } else {
-    //         &self.tx_filterbank
-    //     }
-    // }
-}
-
 impl BladeRf1 {
     /// Trying to detect if XB200 is enabled by reading the BLADERF_XB_RF_ON gpio Flag,
     /// which is set in xb200_enable(). Might be not the best, or correct way.
     pub fn xb200_is_enabled(interface: &Interface) -> Result<bool> {
         Ok((interface.nios_expansion_gpio_read()? & BLADERF_XB_RF_ON) != 0)
     }
-    pub fn xb200_attach(&mut self) -> Result<()> {
+    pub fn xb200_attach(&self) -> Result<()> {
         let muxout: usize = 6;
 
         let mux_lut = [
@@ -198,16 +174,11 @@ impl BladeRf1 {
         self.interface
             .nios_expansion_gpio_write(0xffffffff, 0x3C000800)?;
 
-        self.xb200 = Some(Xb200 {
-            // rx_filterbank: None,
-            // tx_filterbank: None,
-        });
-
         Ok(())
     }
 
-    pub fn xb200_detach(&mut self) {
-        self.xb200 = None;
+    pub fn xb200_detach(&self) -> Result<()> {
+        Ok(())
     }
 
     pub fn xb200_enable(&self, enable: bool) -> Result<()> {
@@ -228,7 +199,7 @@ impl BladeRf1 {
         }
     }
 
-    pub fn xb200_init(&mut self) -> Result<()> {
+    pub fn xb200_init(&self) -> Result<()> {
         log::trace!("Setting RX path");
         self.xb200_set_path(bladerf_channel_rx!(0), &BladerfXb200Path::Bypass)?;
 
@@ -288,13 +259,13 @@ impl BladeRf1 {
         Ok(())
     }
 
-    pub fn xb200_set_filterbank(&mut self, ch: u8, filter: BladerfXb200Filter) -> Result<()> {
+    pub fn xb200_set_filterbank(&self, ch: u8, filter: BladerfXb200Filter) -> Result<()> {
         if ch != bladerf_channel_rx!(0) && ch != bladerf_channel_tx!(0) {
             log::error!("invalid channel");
             return Err(Error::Invalid);
         }
 
-        if self.xb200.as_ref().is_none() {
+        if BladeRf1::xb200_is_enabled(&self.interface)? == false {
             log::error!("xb_200 not attached!");
             return Err(Error::Invalid);
         }
@@ -331,7 +302,7 @@ impl BladeRf1 {
             return Err(Error::Invalid);
         }
 
-        if self.xb200.as_ref().is_none() {
+        if BladeRf1::xb200_is_enabled(&self.interface)? == false {
             log::error!("xb_200 not attached!");
             return Err(Error::Invalid);
         }
@@ -368,7 +339,7 @@ impl BladeRf1 {
         Ok(())
     }
 
-    pub fn xb200_set_path(&mut self, ch: u8, path: &BladerfXb200Path) -> Result<()> {
+    pub fn xb200_set_path(&self, ch: u8, path: &BladerfXb200Path) -> Result<()> {
         if ch != bladerf_channel_rx!(0) && ch != bladerf_channel_tx!(0) {
             log::error!("invalid channel!");
             return Err(Error::Invalid);

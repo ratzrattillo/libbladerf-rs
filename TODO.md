@@ -1,12 +1,9 @@
 - Inconsistent naming of Bladerf like e.g. BladerfRationalRate or BladeRfRationalRate
-- Let library user decide, if e.g. tokio feature should be used for nusb or not using feature gates
 - in basic.rs config_gpio_write: Speed info should not be determined on every call of gpio_write, but rather at global board_data level.
-- Check, if we can have an entire stateless BladeRF1 instance, not saving any board data but determining everything dynamically or on initialization of the BladeRF1
-- NIOS packet dont claim endoint on every call to nios_send
-- maybe have one hardcoded prereserved Vector that is reused by every call to nios_send.
-- Async in all methods might not be required. Drop async support!
+- NIOS packet don't claim endpoint on every call to nios_send
+- maybe have one hardcoded pre-reserved Vector that is reused by every call to nios_send.
 - Get rid of experimental_control_urb method.
 - Is a separate crate for nios and global variables really required??
 - Clarify, when to use asserts and when not
-- Adjust loglevels according to https://stackoverflow.com/questions/76753965/when-to-choose-the-trace-log-level-over-the-debug-log-level
-- Can dependencies between rates be shared, so they are not compiled twiche into the different crates?
+- Adjust log-levels according to https://stackoverflow.com/questions/76753965/when-to-choose-the-trace-log-level-over-the-debug-log-level
+- Can dependencies between rates be shared, so they are not compiled twice into the different crates?

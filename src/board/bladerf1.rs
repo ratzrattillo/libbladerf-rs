@@ -13,62 +13,45 @@ mod xb100;
 pub mod xb200;
 mod xb300;
 
-use crate::board::bladerf1::xb100::Xb100;
-use crate::board::bladerf1::xb300::Xb300;
 use crate::hardware::dac161s055::DAC161S055;
 use crate::hardware::lms6002d::LMS6002D;
 use crate::hardware::si5338::SI5338;
-use crate::xb200::Xb200;
 use bladerf_globals::TuningMode;
 use nusb::io::{EndpointRead, EndpointWrite};
 use nusb::transfer::Bulk;
-use nusb::{Device, Interface, Speed};
-use std::sync::{Arc, Mutex};
-
-// #[derive(thiserror::Error, Debug)]
-// pub enum BladeRfError {
-//     /// Device not found.
-//     #[error("NotFound")]
-//     NotFound,
-//     #[error("Unexpected")]
-//     Unexpected,
-//     #[error("Unsupported")]
-//     Unsupported,
-//     #[error("Invalid")]
-//     Invalid,
-// }
+use nusb::{Device, Interface};
 
 // TODO: The tuning mode should be read from the board config
 // In the packet captures, this is where the changes happen:
 // -  Packet No. 317 in rx-BladeRFTest-unix-filtered.pcapng
 // -  Packet No. 230 in rx-rusttool-filtered.pcapng
 // This is maybe due to the tuning mode being FPGA and not Host
+#[derive(Clone)]
 struct BoardData {
-    speed: Speed,
+    // speed: Speed,
+    // TODO: Find out if we can determine Tuningmode from device to get rid of the board data...
     tuning_mode: TuningMode,
 }
 
 pub struct BladeRf1RxStreamer {
-    dev: Arc<Mutex<BladeRf1>>,
+    dev: BladeRf1,
     reader: EndpointRead<Bulk>,
     buffer_size: usize,
 }
 
 pub struct BladeRf1TxStreamer {
-    dev: Arc<Mutex<BladeRf1>>,
+    dev: BladeRf1,
     writer: EndpointWrite<Bulk>,
     buffer_size: usize,
 }
 
 /// Representation of a BladeRF1 device.
+#[derive(Clone)]
 pub struct BladeRf1 {
     device: Device,
-    interface: Interface,
+    pub interface: Interface,
     board_data: BoardData,
     lms: LMS6002D,
     si5338: SI5338,
     dac: DAC161S055,
-    xb100: Option<Xb100>,
-    xb200: Option<Xb200>,
-    xb300: Option<Xb300>,
 }

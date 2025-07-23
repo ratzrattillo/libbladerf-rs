@@ -40,7 +40,7 @@ impl BladeRf1 {
         let val = BladerfRxMux::from(config_gpio);
 
         // Ensure it's a valid/supported value
-        if val == BladerfRxMux::MuxBaseband {
+        if val == BladerfRxMux::MuxInvalid {
             log::error!("Invalid rx mux mode read from config gpio");
             Err(Error::Invalid)
         } else {

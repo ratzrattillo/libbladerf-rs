@@ -314,23 +314,32 @@ impl BladeRf1 {
     /******************************************************************************/
     // Expansion support
     /******************************************************************************/
-    pub fn expansion_get_attached(&self) -> BladerfXb {
+    pub fn expansion_get_attached(&self) -> Result<BladerfXb> {
         // CHECK_BOARD_STATE(STATE_FPGA_LOADED);
-        if self.xb100.is_some() {
-            BladerfXb100
-        } else if self.xb200.is_some() {
-            BladerfXb200
-        } else if self.xb300.is_some() {
-            BladerfXb300
+        // if self.xb100.is_some() {
+        //     Ok(BladerfXb100)
+        // } else if self.xb200.is_some() {
+        //     Ok(BladerfXb200)
+        // } else if self.xb300.is_some() {
+        //     Ok(BladerfXb300)
+        // } else {
+        //     Ok(BladerfXbNone)
+        // }
+        if BladeRf1::xb100_is_enabled(&self.interface)? {
+            Ok(BladerfXb100)
+        } else if BladeRf1::xb200_is_enabled(&self.interface)? {
+            Ok(BladerfXb200)
+        } else if BladeRf1::xb300_is_enabled(&self.interface)? {
+            Ok(BladerfXb300)
         } else {
-            BladerfXbNone
+            Ok(BladerfXbNone)
         }
     }
 
-    pub fn expansion_attach(&mut self, xb: BladerfXb) -> Result<()> {
+    pub fn expansion_attach(&self, xb: BladerfXb) -> Result<()> {
         // CHECK_BOARD_STATE(STATE_INITIALIZED);
 
-        let attached = self.expansion_get_attached();
+        let attached = self.expansion_get_attached()?;
 
         if xb != attached && attached != BladerfXbNone {
             log::error!("Switching XB types is not supported.");

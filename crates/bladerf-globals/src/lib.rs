@@ -29,6 +29,7 @@ pub enum Error {
 /// Result type for operations that may return an `Error`.
 pub type Result<T> = std::result::Result<T, Error>;
 
+#[derive(Clone)]
 pub enum TuningMode {
     Host,
     Fpga,
@@ -317,7 +318,7 @@ pub enum BladerfFormat {
 /**
 * Loopback options
 */
-#[derive(PartialEq)]
+#[derive(PartialEq, Debug, Clone)]
 #[repr(u8)]
 pub enum BladerfLoopback {
     /** Disables loopback and returns to normal operation. */

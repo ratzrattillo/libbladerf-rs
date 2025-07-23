@@ -96,6 +96,19 @@ pub use board::bladerf1::*;
 
 pub use bladerf_globals::*;
 
+// #[derive(thiserror::Error, Debug)]
+// pub enum BladeRfError {
+//     /// Device not found.
+//     #[error("NotFound")]
+//     NotFound,
+//     #[error("Unexpected")]
+//     Unexpected,
+//     #[error("Unsupported")]
+//     Unsupported,
+//     #[error("Invalid")]
+//     Invalid,
+// }
+
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     /// I/O error occurred.

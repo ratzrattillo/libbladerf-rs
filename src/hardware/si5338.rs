@@ -45,6 +45,7 @@ pub struct Si5338Multisynth {
     regs: [u8; 10],
 }
 
+#[derive(Clone)]
 pub struct SI5338 {
     interface: Interface,
 }

@@ -130,8 +130,8 @@ pub const BLADERF1_RX_GAIN_OFFSET: f32 = -6.0;
 /// TX gain offset: 60 dB system gain ~= 0 dBm output
 pub const BLADERF1_TX_GAIN_OFFSET: f32 = 52.0;
 
-/// RX gain modes
-#[derive(PartialEq)]
+/// RX mux modes
+#[derive(PartialEq, Debug, Clone)]
 pub enum BladerfRxMux {
     MuxInvalid = -1,
     MuxBaseband = 0x0,
@@ -379,4 +379,29 @@ pub struct BladeRf1QuickTune {
     pub flags: u8,
     /// Flag bits used to configure XB
     pub xb_gpio: u8,
+}
+
+/// Correction parameter selection
+///
+/// These values specify the correction parameter to modify or query when calling
+/// bladerf_set_correction() or bladerf_get_correction(). Note that the meaning
+/// of the `value` parameter to these functions depends upon the correction
+/// parameter.
+#[derive(Clone, Debug)]
+pub enum BladeRf1Correction {
+    /// Adjusts the in-phase DC offset. Valid values are \[-2048, 2048\], which are
+    /// scaled to the available control bits.
+    DcoffI,
+
+    /// Adjusts the quadrature DC offset. Valid values are \[-2048, 2048\], which
+    /// are scaled to the available control bits.
+    DcoffQ,
+
+    /// Adjusts phase correction of \[-10, 10\] degrees, via a provided count value
+    /// of \[-4096, 4096\].
+    Phase,
+
+    /// Adjusts gain correction value in \[-1.0, 1.0\], via provided values in the
+    /// range of \[-4096, 4096\].
+    Gain,
 }

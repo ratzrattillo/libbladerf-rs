@@ -12,7 +12,7 @@ fn main() -> Result<()> {
         .filter_module("nusb", log::LevelFilter::Info)
         .init();
 
-    let mut bladerf = BladeRf1::from_first()?;
+    let bladerf = BladeRf1::from_first()?;
 
     log::debug!("Speed: {:?}", bladerf.speed());
     log::debug!("Serial: {}", bladerf.serial()?);
@@ -37,7 +37,7 @@ fn main() -> Result<()> {
     let xb = bladerf.expansion_get_attached();
     log::debug!("XB: {xb:?}");
 
-    let frequency_range = bladerf.get_frequency_range();
+    let frequency_range = bladerf.get_frequency_range()?;
     log::debug!("Frequency Range: {frequency_range:?}");
 
     // Set Frequency to minimum frequency

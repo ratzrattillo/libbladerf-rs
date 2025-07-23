@@ -1,29 +1,6 @@
 use crate::nios::Nios;
 use crate::{BladeRf1, Result};
-
-/// Correction parameter selection
-///
-/// These values specify the correction parameter to modify or query when calling
-/// bladerf_set_correction() or bladerf_get_correction(). Note that the meaning
-/// of the `value` parameter to these functions depends upon the correction
-/// parameter.
-pub enum BladeRf1Correction {
-    /// Adjusts the in-phase DC offset. Valid values are \[-2048, 2048\], which are
-    /// scaled to the available control bits.
-    DcoffI,
-
-    /// Adjusts the quadrature DC offset. Valid values are \[-2048, 2048\], which
-    /// are scaled to the available control bits.
-    DcoffQ,
-
-    /// Adjusts phase correction of \[-10, 10\] degrees, via a provided count value
-    /// of \[-4096, 4096\].
-    Phase,
-
-    /// Adjusts gain correction value in \[-1.0, 1.0\], via provided values in the
-    /// range of \[-4096, 4096\].
-    Gain,
-}
+use bladerf_globals::bladerf1::BladeRf1Correction;
 
 impl BladeRf1 {
     /****************************************************************************/

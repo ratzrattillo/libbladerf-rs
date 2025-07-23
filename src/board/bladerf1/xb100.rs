@@ -8,8 +8,6 @@ use crate::board::bladerf1::expansion_boards::{
 use crate::nios::Nios;
 use nusb::Interface;
 
-pub struct Xb100 {}
-
 impl BladeRf1 {
     /// Trying to detect if XB100 is enabled by reading the BLADERF_XB100* gpio Flags,
     /// which is set in xb100_enable(). Might be not the best, or correct way.
@@ -29,13 +27,11 @@ impl BladeRf1 {
         Ok((interface.nios_expansion_gpio_read()? & mask) != 0)
     }
 
-    pub fn xb100_attach(&mut self) -> Result<()> {
-        self.xb100 = Some(Xb100 {});
+    pub fn xb100_attach(&self) -> Result<()> {
         Ok(())
     }
 
-    pub fn xb100_detach(&mut self) -> Result<()> {
-        self.xb100 = None;
+    pub fn xb100_detach(&self) -> Result<()> {
         Ok(())
     }
 
