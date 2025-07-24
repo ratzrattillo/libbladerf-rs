@@ -9,9 +9,11 @@ use bladerf_globals::bladerf1::{
     BLADERF1_TX_GAIN_OFFSET, BladerfLnaGain,
 };
 use bladerf_globals::{
-    BLADERF_MODULE_RX, BLADERF_MODULE_TX, BladerfGainMode, SdrRange, bladerf_channel_is_tx,
+    BLADERF_MODULE_RX, BLADERF_MODULE_TX, BladerfGainMode, bladerf_channel_is_tx,
     bladerf_channel_rx, bladerf_channel_tx,
 };
+// use bladerf_globals::SdrRange;
+use bladerf_globals::range::{Range, RangeItem};
 
 // pub fn __scale(r: &SdrRange, v: f32) -> f32 {
 //     v / r.scale as f32
@@ -38,13 +40,13 @@ impl BladeRf1 {
     /// @param\[in\]  range         The range for stage_gain
     /// @param      stage_gain    The stage gain
     /// @param      overall_gain  The overall gain
-    fn _apportion_gain(range: &SdrRange<i8>, stage_gain: i8, overall_gain: i8) -> (i8, i8) {
+    fn _apportion_gain(range: &Range, stage_gain: i8, overall_gain: i8) -> (i8, i8) {
         // let headroom = __unscale_int(range, range.max as f32);
-        let headroom = range.scale * range.max;
+        let headroom = (range.scale().unwrap() * range.max().unwrap()).round() as i8;
         let mut allotment = overall_gain.min(headroom);
 
         // Enforce step size
-        while 0 != (allotment % range.step) {
+        while 0 != (allotment % (range.step().unwrap() as i8)) {
             allotment -= 1;
         }
 
@@ -70,31 +72,35 @@ impl BladeRf1 {
         }
     }
 
-    pub fn get_gain_range(channel: u8) -> SdrRange<i8> {
+    pub fn get_gain_range(channel: u8) -> Range {
         if bladerf_channel_is_tx!(channel) {
             // Overall TX gain range
-            SdrRange {
-                min: BLADERF_TXVGA1_GAIN_MIN
-                    + BLADERF_TXVGA2_GAIN_MIN
-                    + BLADERF1_TX_GAIN_OFFSET.round() as i8,
-                max: BLADERF_TXVGA1_GAIN_MAX
-                    + BLADERF_TXVGA2_GAIN_MAX
-                    + BLADERF1_TX_GAIN_OFFSET.round() as i8,
-                step: 1,
-                scale: 1,
+            Range {
+                items: vec![RangeItem::Step(
+                    BLADERF_TXVGA1_GAIN_MIN as f64
+                        + BLADERF_TXVGA2_GAIN_MIN as f64
+                        + BLADERF1_TX_GAIN_OFFSET as f64,
+                    BLADERF_TXVGA1_GAIN_MAX as f64
+                        + BLADERF_TXVGA2_GAIN_MAX as f64
+                        + BLADERF1_TX_GAIN_OFFSET as f64,
+                    1f64,
+                    1f64,
+                )],
             }
         } else {
             // Overall RX gain range
-            SdrRange {
-                min: BLADERF_RXVGA1_GAIN_MIN
-                    + BLADERF_RXVGA2_GAIN_MIN
-                    + BLADERF1_RX_GAIN_OFFSET.round() as i8,
-                max: BLADERF_LNA_GAIN_MAX_DB
-                    + BLADERF_RXVGA1_GAIN_MAX
-                    + BLADERF_RXVGA2_GAIN_MAX
-                    + BLADERF1_RX_GAIN_OFFSET.round() as i8,
-                step: 1,
-                scale: 1,
+            Range {
+                items: vec![RangeItem::Step(
+                    BLADERF_RXVGA1_GAIN_MIN as f64
+                        + BLADERF_RXVGA2_GAIN_MIN as f64
+                        + BLADERF1_RX_GAIN_OFFSET as f64,
+                    BLADERF_LNA_GAIN_MAX_DB as f64
+                        + BLADERF_RXVGA1_GAIN_MAX as f64
+                        + BLADERF_RXVGA2_GAIN_MAX as f64
+                        + BLADERF1_RX_GAIN_OFFSET as f64,
+                    1f64,
+                    1f64,
+                )],
             }
         }
     }
@@ -241,26 +247,32 @@ impl BladeRf1 {
     /// control of individual gain stages, use bladerf_get_gain_stages(),
     /// bladerf_get_gain_stage_range(), bladerf_set_gain_stage(), and
     /// bladerf_get_gain_stage().
-    pub fn get_gain_stage_range(channel: u8, stage: &str) -> Result<SdrRange<i8>> {
+    pub fn get_gain_stage_range(channel: u8, stage: &str) -> Result<Range> {
         if channel == BLADERF_MODULE_RX {
             match stage {
-                "lna" => Ok(SdrRange {
-                    min: 0,
-                    max: BLADERF_LNA_GAIN_MAX_DB,
-                    step: 3,
-                    scale: 1,
+                "lna" => Ok(Range {
+                    items: vec![RangeItem::Step(
+                        0f64,
+                        BLADERF_LNA_GAIN_MAX_DB as f64,
+                        3f64,
+                        1f64,
+                    )],
                 }),
-                "rxvga1" => Ok(SdrRange {
-                    min: BLADERF_RXVGA1_GAIN_MIN,
-                    max: BLADERF_RXVGA1_GAIN_MAX,
-                    step: 1,
-                    scale: 1,
+                "rxvga1" => Ok(Range {
+                    items: vec![RangeItem::Step(
+                        BLADERF_RXVGA1_GAIN_MIN as f64,
+                        BLADERF_RXVGA1_GAIN_MAX as f64,
+                        1f64,
+                        1f64,
+                    )],
                 }),
-                "rxvga2" => Ok(SdrRange {
-                    min: BLADERF_RXVGA2_GAIN_MIN,
-                    max: BLADERF_RXVGA2_GAIN_MAX,
-                    step: 3,
-                    scale: 1,
+                "rxvga2" => Ok(Range {
+                    items: vec![RangeItem::Step(
+                        BLADERF_RXVGA2_GAIN_MIN as f64,
+                        BLADERF_RXVGA2_GAIN_MAX as f64,
+                        1f64,
+                        1f64,
+                    )],
                 }),
                 _ => {
                     log::error!("invalid stage {stage}");
@@ -269,17 +281,21 @@ impl BladeRf1 {
             }
         } else {
             match stage {
-                "txvga1" => Ok(SdrRange {
-                    min: BLADERF_TXVGA1_GAIN_MIN,
-                    max: BLADERF_TXVGA1_GAIN_MAX,
-                    step: 1,
-                    scale: 1,
+                "txvga1" => Ok(Range {
+                    items: vec![RangeItem::Step(
+                        BLADERF_TXVGA1_GAIN_MIN as f64,
+                        BLADERF_TXVGA1_GAIN_MAX as f64,
+                        1f64,
+                        1f64,
+                    )],
                 }),
-                "txvga2" => Ok(SdrRange {
-                    min: BLADERF_TXVGA2_GAIN_MIN,
-                    max: BLADERF_TXVGA2_GAIN_MAX,
-                    step: 3,
-                    scale: 1,
+                "txvga2" => Ok(Range {
+                    items: vec![RangeItem::Step(
+                        BLADERF_TXVGA2_GAIN_MIN as f64,
+                        BLADERF_TXVGA2_GAIN_MAX as f64,
+                        1f64,
+                        1f64,
+                    )],
                 }),
                 _ => {
                     log::error!("invalid stage {stage}");
@@ -337,8 +353,10 @@ impl BladeRf1 {
         let txvga2_range = Self::get_gain_stage_range(bladerf_channel_tx!(0), "txvga2")?;
 
         // __unscale_int // as we use i8 type here, rounding is not necessary
-        let mut txvga1 = txvga1_range.scale * txvga1_range.min;
-        let mut txvga2 = txvga2_range.scale * txvga2_range.min;
+        let mut txvga1 =
+            (txvga1_range.scale().unwrap() * txvga1_range.min().unwrap()).round() as i8;
+        let mut txvga2 =
+            (txvga2_range.scale().unwrap() * txvga2_range.min().unwrap()).round() as i8;
 
         // offset gain so that we can use it as a counter when apportioning gain
         gain -= BLADERF1_TX_GAIN_OFFSET.round() as i8 + txvga1 + txvga2;
@@ -367,9 +385,11 @@ impl BladeRf1 {
         let rxvga2_range = Self::get_gain_stage_range(bladerf_channel_rx!(0), "rxvga2")?;
 
         // __unscale_int // as we use i8 type here, rounding is not necessary
-        let mut lna = lna_range.scale * lna_range.min;
-        let mut rxvga1 = rxvga1_range.scale * rxvga1_range.min;
-        let mut rxvga2 = rxvga2_range.scale * rxvga2_range.min;
+        let mut lna = (lna_range.scale().unwrap() * lna_range.min().unwrap()).round() as i8;
+        let mut rxvga1 =
+            (rxvga1_range.scale().unwrap() * rxvga1_range.min().unwrap()).round() as i8;
+        let mut rxvga2 =
+            (rxvga2_range.scale().unwrap() * rxvga2_range.min().unwrap()).round() as i8;
 
         // offset gain so that we can use it as a counter when apportioning gain
         gain -= BLADERF1_RX_GAIN_OFFSET.round() as i8 + lna + rxvga1 + rxvga2;
@@ -392,11 +412,13 @@ impl BladeRf1 {
 
         // if we still have remaining gain, it's because rxvga2 has a step size of
         // 3 dB. Steal a few dB from rxvga1...
-        // __unscale_int replaced by normal multiplications without rounding
-        if gain > 0 && rxvga1 >= (rxvga1_range.scale * rxvga1_range.max) {
+        // In the original driver __unscale_int replaced by normal multiplications without rounding
+        if gain > 0
+            && rxvga1 >= (rxvga1_range.scale().unwrap() * rxvga1_range.max().unwrap()).round() as i8
+        {
             // __unscale_int replaced by normal multiplications without rounding
-            rxvga1 -= rxvga2_range.scale * rxvga2_range.step;
-            gain += rxvga2_range.scale * rxvga2_range.step;
+            rxvga1 -= (rxvga2_range.scale().unwrap() * rxvga2_range.step().unwrap()).round() as i8;
+            gain += (rxvga2_range.scale().unwrap() * rxvga2_range.step().unwrap()).round() as i8;
 
             (rxvga2, gain) = Self::_apportion_gain(&rxvga2_range, rxvga2, gain);
             (rxvga1, gain) = Self::_apportion_gain(&rxvga1_range, rxvga1, gain);
@@ -414,8 +436,10 @@ impl BladeRf1 {
         self.lms
             .lna_set_gain(Self::_convert_gain_to_lna_gain(lna))?;
         // __scale_int(&rxvga1_range, rxvga1 as f32)
-        self.lms.rxvga1_set_gain(rxvga1 / rxvga1_range.scale)?;
+        self.lms
+            .rxvga1_set_gain(rxvga1 / rxvga1_range.scale().unwrap() as i8)?;
         // __scale_int(&rxvga2_range, rxvga2 as f32)
-        self.lms.rxvga2_set_gain(rxvga2 / rxvga2_range.scale)
+        self.lms
+            .rxvga2_set_gain(rxvga2 / rxvga2_range.scale().unwrap() as i8)
     }
 }

@@ -6,7 +6,9 @@ use crate::nios::Nios;
 use crate::xb200::BladerfXb200Path;
 use crate::{Error, Result};
 use bladerf_globals::bladerf1::{BLADERF_FREQUENCY_MAX, BLADERF_FREQUENCY_MIN};
-use bladerf_globals::{SdrRange, TuningMode};
+// use bladerf_globals::{SdrRange, TuningMode};
+use bladerf_globals::TuningMode;
+use bladerf_globals::range::{Range, RangeItem};
 use bladerf_nios::packet_retune::{Band, NiosPktRetuneRequest, Tune};
 
 impl BladeRf1 {
@@ -15,7 +17,6 @@ impl BladeRf1 {
 
         log::trace!("Setting Frequency on channel {channel} to {frequency}Hz");
 
-        // if self.xb200.is_some() {
         if BladeRf1::xb200_is_enabled(&self.interface)? {
             if frequency < BLADERF_FREQUENCY_MIN as u64 {
                 log::debug!("Setting path to Mix");
@@ -78,20 +79,24 @@ impl BladeRf1 {
         Ok(frequency_hz)
     }
 
-    pub fn get_frequency_range(&self) -> Result<SdrRange<u32>> {
+    pub fn get_frequency_range(&self) -> Result<Range> {
         if BladeRf1::xb200_is_enabled(&self.interface)? {
-            Ok(SdrRange {
-                min: 0,
-                max: BLADERF_FREQUENCY_MAX,
-                step: 1,
-                scale: 1,
+            Ok(Range {
+                items: vec![RangeItem::Step(
+                    0.0,
+                    BLADERF_FREQUENCY_MAX as f64,
+                    1f64,
+                    1f64,
+                )],
             })
         } else {
-            Ok(SdrRange {
-                min: BLADERF_FREQUENCY_MIN,
-                max: BLADERF_FREQUENCY_MAX,
-                step: 1,
-                scale: 1,
+            Ok(Range {
+                items: vec![RangeItem::Step(
+                    BLADERF_FREQUENCY_MIN as f64,
+                    BLADERF_FREQUENCY_MAX as f64,
+                    1f64,
+                    1f64,
+                )],
             })
         }
     }
@@ -118,10 +123,11 @@ impl BladeRf1 {
         let f = if let Some(qt) = quick_tune {
             qt
         } else {
-            // TODO:
-            // if (dev->xb == BLADERF_XB_200) {
-            //     log::info!("Consider supplying the quick_tune parameter to bladerf_schedule_retune() when the XB-200 is enabled.");
-            // }
+            if BladeRf1::xb200_is_enabled(&self.interface)? {
+                log::info!(
+                    "Consider supplying the quick_tune parameter to schedule_retune() when the XB-200 is enabled."
+                );
+            }
             LMS6002D::calculate_tuning_params(frequency)?
         };
 

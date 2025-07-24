@@ -9,32 +9,14 @@ use bladerf_globals::bladerf1::{
     BladerfLnaGain,
 };
 use bladerf_globals::{
-    BLADERF_MODULE_RX, BLADERF_MODULE_TX, BladerfLoopback, BladerfLpfMode, bladerf_channel_rx,
+    BLADERF_MODULE_RX, BLADERF_MODULE_TX, BladerfLoopback, BladerfLpfMode, bladerf_channel_rx, khz,
+    mhz,
 };
 use bladerf_nios::NIOS_PKT_8X8_TARGET_LMS6;
 use bladerf_nios::packet_retune::Band;
 use nusb::Interface;
 
 const LMS_REFERENCE_HZ: u32 = 38400000;
-
-#[macro_export]
-macro_rules! khz {
-    ($value:expr) => {
-        ($value * 1000u32)
-    };
-}
-
-macro_rules! mhz {
-    ($value:expr) => {
-        ($value * 1000000)
-    };
-}
-
-// macro_rules! ghz {
-//     ($value:expr) => {
-//         ($value * 1000000000)
-//     };
-// }
 
 struct DcCalState {
     /// Backup of clock enables
@@ -339,27 +321,6 @@ pub struct LmsFreq {
 /// band should be selected
 pub const BLADERF1_BAND_HIGH: u32 = 1500000000;
 
-// /// LPF conversion table
-// /// This table can be indexed into.
-// pub const UINT_BANDWIDTHS: [u32; 16] = [
-//     mhz!(28),
-//     mhz!(20),
-//     mhz!(14),
-//     mhz!(12),
-//     mhz!(10),
-//     khz!(8750),
-//     mhz!(7),
-//     mhz!(6),
-//     khz!(5500),
-//     mhz!(5),
-//     khz!(3840),
-//     mhz!(3),
-//     khz!(2750),
-//     khz!(2500),
-//     khz!(1750),
-//     khz!(1500),
-// ];
-
 /// Internal low-pass filter bandwidth selection
 pub enum LmsBw {
     /// 28MHz bandwidth, 14MHz LPF
@@ -456,7 +417,7 @@ impl From<LmsBw> for u32 {
             LmsBw::Bw5p5mhz => khz!(5500),
             LmsBw::Bw5mhz => mhz!(5),
             LmsBw::Bw3p84mhz => khz!(3840),
-            LmsBw::Bw3mhz => mhz!(4),
+            LmsBw::Bw3mhz => mhz!(3),
             LmsBw::Bw2p75mhz => khz!(2750),
             LmsBw::Bw2p5mhz => khz!(2500),
             LmsBw::Bw1p75mhz => khz!(1750),

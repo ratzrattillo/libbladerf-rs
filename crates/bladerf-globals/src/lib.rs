@@ -3,6 +3,7 @@
 
 pub mod bladerf1;
 mod bladerf2;
+pub mod range;
 
 use std::time::Duration;
 
@@ -16,6 +17,25 @@ macro_rules! bladerf_channel_rx {
 macro_rules! bladerf_channel_tx {
     ($ch:expr) => {
         ((($ch) << 1) | 0x1) as u8
+    };
+}
+
+#[macro_export]
+macro_rules! khz {
+    ($value:expr) => {
+        ($value * 1000u32)
+    };
+}
+#[macro_export]
+macro_rules! mhz {
+    ($value:expr) => {
+        ($value * 1000000)
+    };
+}
+#[macro_export]
+macro_rules! ghz {
+    ($value:expr) => {
+        ($value * 1000000000)
     };
 }
 
@@ -35,13 +55,13 @@ pub enum TuningMode {
     Fpga,
 }
 
-#[derive(Debug)]
-pub struct SdrRange<T> {
-    pub min: T,
-    pub max: T,
-    pub step: T,
-    pub scale: T,
-}
+// #[derive(Debug)]
+// pub struct SdrRange<T> {
+//     pub min: T,
+//     pub max: T,
+//     pub step: T,
+//     pub scale: T,
+// }
 
 /**
  * Stream direction

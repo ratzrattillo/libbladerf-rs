@@ -7,7 +7,7 @@ impl BladeRf1 {
     /* DC/Phase/Gain Correction */
     /****************************************************************************/
 
-    pub fn get_correction(&self, ch: u8, corr: BladeRf1Correction) -> Result<i16> {
+    pub fn get_correction(&self, ch: u8, corr: &BladeRf1Correction) -> Result<i16> {
         // CHECK_BOARD_STATE(STATE_INITIALIZED);
 
         match corr {
@@ -27,7 +27,7 @@ impl BladeRf1 {
         }
     }
 
-    pub fn set_correction(&self, ch: u8, corr: BladeRf1Correction, value: i16) -> Result<()> {
+    pub fn set_correction(&self, ch: u8, corr: &BladeRf1Correction, value: i16) -> Result<()> {
         // CHECK_BOARD_STATE(STATE_INITIALIZED);
 
         match corr {

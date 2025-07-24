@@ -1,9 +1,11 @@
 - Inconsistent naming of Bladerf like e.g. BladerfRationalRate or BladeRfRationalRate
 - in basic.rs config_gpio_write: Speed info should not be determined on every call of gpio_write, but rather at global board_data level.
-- NIOS packet don't claim endpoint on every call to nios_send
 - maybe have one hardcoded pre-reserved Vector that is reused by every call to nios_send.
 - Get rid of experimental_control_urb method.
 - Is a separate crate for nios and global variables really required??
 - Clarify, when to use asserts and when not
 - Adjust log-levels according to https://stackoverflow.com/questions/76753965/when-to-choose-the-trace-log-level-over-the-debug-log-level
 - Can dependencies between rates be shared, so they are not compiled twice into the different crates?
+- Ranges for frequency and sample rate are currently continuous, bu this is not supported by the Hardware.
+- NIOS packet don't claim endpoint on every call to nios_send. This is very slow, as acquiring and releaseing an endpoint takes more time,
+  than aquiring it once for the whole lifetime of the BladeRf1 session and accessing it via Mutex

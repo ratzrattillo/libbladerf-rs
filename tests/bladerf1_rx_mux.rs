@@ -16,13 +16,13 @@ fn rx_mux() -> Result<()> {
         BladerfRxMux::MuxBaseband,
     ] {
         let current = BLADERF.get_rx_mux()?;
-        log::trace!("Current RX Mux:\t{current:?}");
-        log::trace!("Desired RX Mux:\t{desired:?}");
+        log::trace!("RX Mux (CURRENT):\t{current:?}");
+        log::trace!("RX Mux (DESIRED):\t{desired:?}");
 
         BLADERF.set_rx_mux(desired.clone())?;
 
         let new = BLADERF.get_rx_mux()?;
-        log::trace!("New RX Mux:\t{new:?}");
+        log::trace!("RX Mux (NEW):\t{new:?}");
         assert_eq!(new, desired);
     }
 

@@ -15,14 +15,18 @@ fn gain_correction() -> Result<()> {
     for channel in [BLADERF_MODULE_RX, BLADERF_MODULE_TX] {
         for desired in [-4096, 4096] {
             // TODO: What channels are supported?
-            let current = BLADERF.get_correction(channel, correction_type.clone())?;
-            log::trace!("{correction_type:?}: Current Gain Correction:\t{current}");
-            log::trace!("{correction_type:?}: Desired Gain Correction:\t{desired}");
+            let current = BLADERF.get_correction(channel, correction_type)?;
+            log::trace!(
+                "Channel {channel} {correction_type:?}-Gain Correction (CURRENT):\t{current}"
+            );
+            log::trace!(
+                "Channel {channel} {correction_type:?}-Gain Correction (DESIRED):\t{desired}"
+            );
 
-            BLADERF.set_correction(channel, correction_type.clone(), desired)?;
+            BLADERF.set_correction(channel, correction_type, desired)?;
 
-            let new = BLADERF.get_correction(channel, correction_type.clone())?;
-            log::trace!("{correction_type:?}: New Gain Correction:\t{new}");
+            let new = BLADERF.get_correction(channel, correction_type)?;
+            log::trace!("Channel {channel} {correction_type:?}-Gain Correction (NEW):\t{new}");
             assert_eq!(new, desired);
         }
     }
@@ -40,14 +44,18 @@ fn phase_correction() -> Result<()> {
     for channel in [BLADERF_MODULE_RX, BLADERF_MODULE_TX] {
         for desired in [-4096, 4096] {
             // TODO: What channels are supported?
-            let current = BLADERF.get_correction(channel, correction_type.clone())?;
-            log::trace!("{correction_type:?}: Current Gain Correction:\t{current}");
-            log::trace!("{correction_type:?}: Desired Gain Correction:\t{desired}");
+            let current = BLADERF.get_correction(channel, correction_type)?;
+            log::trace!(
+                "Channel {channel} {correction_type:?}-Gain Correction (CURRENT):\t{current}"
+            );
+            log::trace!(
+                "Channel {channel} {correction_type:?}-Gain Correction (DESIRED):\t{desired}"
+            );
 
-            BLADERF.set_correction(channel, correction_type.clone(), desired)?;
+            BLADERF.set_correction(channel, correction_type, desired)?;
 
-            let new = BLADERF.get_correction(channel, correction_type.clone())?;
-            log::trace!("{correction_type:?}: New Gain Correction:\t{new}");
+            let new = BLADERF.get_correction(channel, correction_type)?;
+            log::trace!("Channel {channel} {correction_type:?}-Gain Correction (NEW):\t{new}");
             assert_eq!(new, desired);
         }
     }
@@ -63,15 +71,21 @@ fn iq_correction() -> Result<()> {
     for channel in [BLADERF_MODULE_RX, BLADERF_MODULE_TX] {
         for correction_type in &[BladeRf1Correction::DcoffI, BladeRf1Correction::DcoffQ] {
             for desired in [-2048, 2048] {
+                // TODO: Check, why the correction only goes until +-2016 instead of +-2048
+                // for desired in [-2016, 2016] {
                 // TODO: What channels are supported?
-                let current = BLADERF.get_correction(channel, correction_type.clone())?;
-                log::trace!("{correction_type:?}: Current Gain Correction:\t{current}");
-                log::trace!("{correction_type:?}: Desired Gain Correction:\t{desired}");
+                let current = BLADERF.get_correction(channel, correction_type)?;
+                log::trace!(
+                    "Channel {channel} {correction_type:?}-Gain Correction (CURRENT):\t{current}"
+                );
+                log::trace!(
+                    "Channel {channel} {correction_type:?}-Gain Correction (DESIRED):\t{desired}"
+                );
 
-                BLADERF.set_correction(channel, correction_type.clone(), desired)?;
+                BLADERF.set_correction(channel, correction_type, desired)?;
 
-                let new = BLADERF.get_correction(channel, correction_type.clone())?;
-                log::trace!("{correction_type:?}: New Gain Correction:\t{new}");
+                let new = BLADERF.get_correction(channel, correction_type)?;
+                log::trace!("Channel {channel} {correction_type:?}-Gain Correction (NEW):\t{new}");
                 assert_eq!(new, desired);
             }
         }

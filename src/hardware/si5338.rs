@@ -45,6 +45,15 @@ pub struct Si5338Multisynth {
     regs: [u8; 10],
 }
 
+/// The Si5338 is a high-performance, low-jitter clock generator capable of synthesizing
+/// any frequency on each of the device's four output drivers. This timing IC is capable of
+/// replacing up to four different frequency crystal oscillators or operating as a frequency
+/// translator. Using its patented MultiSynth™ technology, the Si5338 allows generation of
+/// four independent clocks with 0 ppm precision. Each output clock is independently configurable
+/// to support various signal formats and supply voltages. The Si5338 provides low-jitter
+/// frequency synthesis in a space-saving 4 x 4 mm QFN package. The device is programmable
+/// via an I2 C/SMBus-compatible serial interface and supports operation from a 1.8, 2.5,
+/// or 3.3 V core supply.
 #[derive(Clone)]
 pub struct SI5338 {
     interface: Interface,
@@ -246,8 +255,6 @@ impl SI5338 {
     }
 
     pub fn calculate_multisynth(ms: &mut Si5338Multisynth, rate: &BladerfRationalRate) {
-        let mut r_value: u8;
-
         // Don't mess with the users data
         let mut req = BladerfRationalRate {
             integer: rate.integer,
@@ -257,13 +264,12 @@ impl SI5338 {
 
         // Double requested frequency for sample clocks since LMS requires
         // 2:1 clock:sample rate
-
         if ms.index == 1 || ms.index == 2 {
             Self::rational_double(&mut req);
         }
 
         // Find a suitable R value
-        r_value = 1;
+        let mut r_value = 1;
         while req.integer < 5000000 && r_value < 32 {
             Self::rational_double(&mut req);
             r_value <<= 1;

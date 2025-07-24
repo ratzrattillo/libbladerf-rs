@@ -41,8 +41,8 @@ fn main() -> Result<()> {
     log::debug!("Frequency Range: {frequency_range:?}");
 
     // Set Frequency to minimum frequency
-    bladerf.set_frequency(BLADERF_MODULE_RX, frequency_range.min as u64)?;
-    bladerf.set_frequency(BLADERF_MODULE_TX, frequency_range.min as u64)?;
+    bladerf.set_frequency(BLADERF_MODULE_RX, frequency_range.min().unwrap() as u64)?;
+    bladerf.set_frequency(BLADERF_MODULE_TX, frequency_range.min().unwrap() as u64)?;
 
     let frequency_rx = bladerf.get_frequency(BLADERF_MODULE_RX)?;
     let frequency_tx = bladerf.get_frequency(BLADERF_MODULE_TX)?;

@@ -21,13 +21,13 @@ fn rx_mux() -> Result<()> {
         BladerfLoopback::Lna3,
     ] {
         let current = BLADERF.get_loopback()?;
-        log::trace!("Current Loopback:\t{current:?}");
-        log::trace!("Desired Loopback:\t{desired:?}");
+        log::trace!("Loopback (CURRENT):\t{current:?}");
+        log::trace!("Loopback (DESIRED):\t{desired:?}");
 
         BLADERF.set_loopback(desired.clone())?;
 
         let new = BLADERF.get_loopback()?;
-        log::trace!("New Loopback:\t\t{new:?}");
+        log::trace!("Loopback (NEW):\t\t{new:?}");
         assert_eq!(new, desired);
     }
 

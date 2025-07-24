@@ -80,7 +80,7 @@ impl BladeRf1RxStreamer {
 
         let mut received = 0;
         for (dst, src) in buffers[0].iter_mut().zip(
-            buf.chunks_exact(4)
+            buf.chunks_exact(2 * size_of::<i16>())
                 .map(|buf| buf.split_at(2))
                 .map(|(re, im)| {
                     (
@@ -94,13 +94,13 @@ impl BladeRf1RxStreamer {
         ) {
             *dst = src;
             log::trace!("{src}");
-            received += 4;
+            received += 2 * size_of::<i16>();
         }
 
         self.reader.consume(received);
         log::trace!("consumed length: {received}");
 
-        Ok(received / 4)
+        Ok(received / (2 * size_of::<i16>()))
     }
 }
 
@@ -152,6 +152,8 @@ impl BladeRf1TxStreamer {
         _end_burst: bool,
         _timeout_us: i64,
     ) -> Result<usize> {
+        // TODO: Revisit for correctness
+        // https://doc.rust-lang.org/nightly/std/io/trait.Write.html#tymethod.write
         todo!()
     }
 
@@ -162,22 +164,27 @@ impl BladeRf1TxStreamer {
         end_burst: bool,
         timeout_us: i64,
     ) -> Result<()> {
+        // TODO, find out how to implement write_all
+        // https://doc.rust-lang.org/nightly/std/io/trait.Write.html#method.write_all
         self.writer
             .set_write_timeout(Duration::from_micros(timeout_us as u64));
         if let Some(t) = at_ns {
             sleep(Duration::from_nanos(t as u64));
         }
+        // let mut sent = 0;
         for (re, im) in buffers[0]
             .iter()
-            // .map(|c| ((c.re/// 2047.5) as i16, (c.im/// 2047.5) as i16))
+            // .map(|c| ((c.re * 2047.5) as i16, (c.im * 2047.5) as i16))
             .map(|c| (c.re as i16, c.im as i16))
         {
             let _ = self.writer.write(re.to_le_bytes().as_slice())?;
             let _ = self.writer.write(im.to_le_bytes().as_slice())?;
+            // sent += 2 * size_of::<i16>();
         }
         if end_burst {
             self.writer.submit();
         }
+        // Ok(sent)
         Ok(())
     }
 }
