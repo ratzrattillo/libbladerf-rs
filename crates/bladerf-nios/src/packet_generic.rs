@@ -1,6 +1,5 @@
 use crate::NiosPktMagic;
 use crate::packet_base::GenericNiosPkt;
-use bladerf_globals::{Error, Result};
 use std::fmt::{Debug, Display, Formatter, LowerHex};
 // pub const NIOS_PKT_8X8_MAGIC: u8 = 0x41; // 'A'
 // pub const NIOS_PKT_8X16_MAGIC: u8 = 0x42; // 'B'
@@ -144,12 +143,12 @@ where
     pub fn data(&self) -> D {
         D::from_le_bytes(&self.buf[Self::IDX_DATA..(Self::IDX_DATA + size_of::<D>())])
     }
-    pub fn is_success(&self) -> Result<()> {
-        if self.buf[Self::IDX_FLAGS] & Self::FLAG_SUCCESS == 0 {
+    pub fn is_success(&self) -> bool {
+        let success = self.buf[Self::IDX_FLAGS] & Self::FLAG_SUCCESS != 0;
+        if !success {
             log::error!("response packet reported failure.");
-            return Err(Error::Invalid);
         }
-        Ok(())
+        success
     }
     pub fn write(&self) -> bool {
         self.buf[Self::IDX_FLAGS] & Self::FLAG_WRITE != 0
@@ -405,7 +404,7 @@ where
     pub fn data(&self) -> D {
         self.pkt.data()
     }
-    pub fn is_success(&self) -> Result<()> {
+    pub fn is_success(&self) -> bool {
         self.pkt.is_success()
     }
     pub fn is_write(&self) -> bool {
@@ -483,7 +482,7 @@ where
     pub fn data(&self) -> D {
         self.pkt.data()
     }
-    pub fn is_success(&self) -> Result<()> {
+    pub fn is_success(&self) -> bool {
         self.pkt.is_success()
     }
     pub fn is_write(&self) -> bool {

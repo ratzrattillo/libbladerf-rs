@@ -2,19 +2,24 @@
 
 use crate::nios::Nios;
 use crate::{BladeRf1, Error, Result};
-use bladerf_globals::bladerf1::{
-    BLADERF_FREQUENCY_MAX, BLADERF_FREQUENCY_MIN, BLADERF_RXVGA1_GAIN_MAX, BLADERF_RXVGA1_GAIN_MIN,
+use bladerf_globals::bladerf1::{BLADERF_FREQUENCY_MAX, BLADERF_FREQUENCY_MIN, BladeRf1QuickTune};
+pub(crate) use bladerf_globals::{
+    BLADERF_MODULE_RX, BLADERF_MODULE_TX, BLADERF_RXVGA1_GAIN_MAX, BLADERF_RXVGA1_GAIN_MIN,
     BLADERF_RXVGA2_GAIN_MAX, BLADERF_RXVGA2_GAIN_MIN, BLADERF_TXVGA1_GAIN_MAX,
-    BLADERF_TXVGA1_GAIN_MIN, BLADERF_TXVGA2_GAIN_MAX, BLADERF_TXVGA2_GAIN_MIN, BladeRf1QuickTune,
-    BladerfLnaGain,
-};
-use bladerf_globals::{
-    BLADERF_MODULE_RX, BLADERF_MODULE_TX, BladerfLoopback, BladerfLpfMode, bladerf_channel_rx, khz,
+    BLADERF_TXVGA1_GAIN_MIN, BLADERF_TXVGA2_GAIN_MAX, BLADERF_TXVGA2_GAIN_MIN, BladeRf1Loopback,
+    BladeRf1LpfMode, GainDb, LnaGainCode, Rxvga1GainCode, Rxvga2GainCode, bladerf_channel_rx, khz,
     mhz,
 };
+use bladerf_globals::{Txvga1GainCode, Txvga2GainCode};
 use bladerf_nios::NIOS_PKT_8X8_TARGET_LMS6;
 use bladerf_nios::packet_retune::Band;
 use nusb::Interface;
+
+/// RX gain offset
+pub const BLADERF1_RX_GAIN_OFFSET: f32 = -6.0;
+
+/// TX gain offset: 60 dB system gain ~= 0 dBm output
+pub const BLADERF1_TX_GAIN_OFFSET: f32 = 52.0;
 
 const LMS_REFERENCE_HZ: u32 = 38400000;
 
@@ -24,7 +29,7 @@ struct DcCalState {
     /// Register backup
     reg0x72: u8,
     ///  Backup of gain values
-    lna_gain: BladerfLnaGain,
+    lna_gain: LnaGainCode,
     rxvga1_gain: i32,
     rxvga2_gain: i32,
 
@@ -170,20 +175,24 @@ pub const BANDS: [FreqRange; 16] = [
 ///
 /// However, an offset of 5 appears to be required, yielding:
 ///     `value_db =  5 + 20 * log10(127 / (127 - code))`
-pub const RXVGA1_LUT_CODE2VAL: [u8; 121] = [
-    5, 5, 5, 5, 5, 5, 5, 5, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
-    8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 9, 9, 9, 9, 9, 9, 9, 9, 9, 10, 10, 10, 10, 10, 10, 10, 10, 11,
-    11, 11, 11, 11, 11, 11, 12, 12, 12, 12, 12, 12, 12, 13, 13, 13, 13, 13, 13, 14, 14, 14, 14, 14,
-    15, 15, 15, 15, 15, 16, 16, 16, 16, 17, 17, 17, 18, 18, 18, 18, 19, 19, 19, 20, 20, 21, 21, 22,
-    22, 22, 23, 24, 24, 25, 25, 26, 27, 28, 29, 30,
-];
+///
+/// let gain_db = (BLADERF_RXVGA1_GAIN_MIN as f32 + (20.0 * (127.0 / (127.0 - code)).log10())).round() as i8;
+// pub const RXVGA1_LUT_CODE2VAL: [u8; 121] = [
+//     5, 5, 5, 5, 5, 5, 5, 5, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
+//     8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 9, 9, 9, 9, 9, 9, 9, 9, 9, 10, 10, 10, 10, 10, 10, 10, 10, 11,
+//     11, 11, 11, 11, 11, 11, 12, 12, 12, 12, 12, 12, 12, 13, 13, 13, 13, 13, 13, 14, 14, 14, 14, 14,
+//     15, 15, 15, 15, 15, 16, 16, 16, 16, 17, 17, 17, 18, 18, 18, 18, 19, 19, 19, 20, 20, 21, 21, 22,
+//     22, 22, 23, 24, 24, 25, 25, 26, 27, 28, 29, 30,
+// ];
 
 /// The closest values from the above formula have been selected.
 /// indicides 0 - 4 are clamped to 5dB
-pub const RXVGA1_LUT_VAL2CODE: [u8; 31] = [
-    2, 2, 2, 2, 2, 2, 14, 26, 37, 47, 56, 63, 70, 76, 82, 87, 91, 95, 99, 102, 104, 107, 109, 111,
-    113, 114, 116, 117, 118, 119, 120,
-];
+///
+/// let code = 127.0 - 127.0 / (10.0f32.powf((val as f32 - BLADERF_RXVGA1_GAIN_MIN as f32) / 20.0));
+// pub const RXVGA1_LUT_VAL2CODE: [u8; 31] = [
+//     2, 2, 2, 2, 2, 2, 14, 26, 37, 47, 56, 63, 70, 76, 82, 87, 91, 95, 99, 102, 104, 107, 109, 111,
+//     113, 114, 116, 117, 118, 119, 120,
+// ];
 
 pub const LMS_REG_DUMPSET: [u8; 107] = [
     // Top level configuration
@@ -528,7 +537,7 @@ pub struct LmsXcvrConfig {
     /// Receive frequency in Hz
     rx_freq_hz: u32,
     /// Loopback Mode
-    loopback_mode: BladerfLoopback,
+    loopback_mode: BladeRf1Loopback,
     /// LNA Selection
     lna: LmsLna,
     /// PA Selection
@@ -616,7 +625,7 @@ impl LMS6002D {
         self.write(addr, data | mask)
     }
 
-    // Soft reset of the LMS
+    /// Soft reset of the LMS
     pub fn soft_reset(&self) -> Result<()> {
         self.write(0x05, 0x12)?;
         self.write(0x05, 0x32)
@@ -767,7 +776,7 @@ impl LMS6002D {
         self.write(base + 9, vcocap | vcocap_reg_state)
     }
 
-    pub fn loopback_path(&self, mode: &BladerfLoopback) -> Result<()> {
+    pub fn loopback_path(&self, mode: &BladeRf1Loopback) -> Result<()> {
         let mut loopbben = self.read(0x46)?;
         let mut lben_lbrf = self.read(0x08)?;
 
@@ -778,30 +787,30 @@ impl LMS6002D {
         lben_lbrf &= !(LBRFEN_MASK | LBEN_MASK);
 
         match mode {
-            BladerfLoopback::None => {}
-            BladerfLoopback::BbTxlpfRxvga2 => {
+            BladeRf1Loopback::None => {}
+            BladeRf1Loopback::BbTxlpfRxvga2 => {
                 loopbben |= LOOPBBEN_TXLPF;
                 lben_lbrf |= LBEN_VGA2IN;
             }
-            BladerfLoopback::BbTxvga1Rxvga2 => {
+            BladeRf1Loopback::BbTxvga1Rxvga2 => {
                 loopbben |= LOOPBBEN_TXVGA;
                 lben_lbrf |= LBEN_VGA2IN;
             }
-            BladerfLoopback::BbTxlpfRxlpf => {
+            BladeRf1Loopback::BbTxlpfRxlpf => {
                 loopbben |= LOOPBBEN_TXLPF;
                 lben_lbrf |= LBEN_LPFIN;
             }
-            BladerfLoopback::BbTxvga1Rxlpf => {
+            BladeRf1Loopback::BbTxvga1Rxlpf => {
                 loopbben |= LOOPBBEN_TXVGA;
                 lben_lbrf |= LBEN_LPFIN;
             }
-            BladerfLoopback::Lna1 => {
+            BladeRf1Loopback::Lna1 => {
                 lben_lbrf |= LBRFEN_LNA1;
             }
-            BladerfLoopback::Lna2 => {
+            BladeRf1Loopback::Lna2 => {
                 lben_lbrf |= LBRFEN_LNA2;
             }
-            BladerfLoopback::Lna3 => {
+            BladeRf1Loopback::Lna3 => {
                 lben_lbrf |= LBRFEN_LNA3;
             }
             _ => Err(Error::Argument("Loopback mode not supported"))?,
@@ -811,7 +820,7 @@ impl LMS6002D {
         self.write(0x08, lben_lbrf)
     }
 
-    pub fn lpf_get_mode(&self, channel: u8) -> Result<BladerfLpfMode> {
+    pub fn lpf_get_mode(&self, channel: u8) -> Result<BladeRf1LpfMode> {
         let reg: u8 = if channel == BLADERF_MODULE_RX {
             0x54
         } else {
@@ -825,18 +834,18 @@ impl LMS6002D {
         let lpf_bypassed = (data_h & (1 << 6)) != 0;
 
         if lpf_enabled && !lpf_bypassed {
-            Ok(BladerfLpfMode::Normal)
+            Ok(BladeRf1LpfMode::Normal)
         } else if !lpf_enabled && lpf_bypassed {
-            Ok(BladerfLpfMode::Bypassed)
+            Ok(BladeRf1LpfMode::Bypassed)
         } else if !lpf_enabled && !lpf_bypassed {
-            Ok(BladerfLpfMode::Disabled)
+            Ok(BladeRf1LpfMode::Disabled)
         } else {
             log::error!("Invalid LPF configuration: {:x}, {:x}", data_l, data_h);
             Err(Error::Invalid)
         }
     }
 
-    pub fn lpf_set_mode(&self, channel: u8, mode: BladerfLpfMode) -> Result<()> {
+    pub fn lpf_set_mode(&self, channel: u8, mode: BladeRf1LpfMode) -> Result<()> {
         let reg: u8 = if channel == BLADERF_MODULE_RX {
             0x54
         } else {
@@ -847,19 +856,19 @@ impl LMS6002D {
         let mut data_h = self.read(reg + 1)?;
 
         match mode {
-            BladerfLpfMode::Normal => {
+            BladeRf1LpfMode::Normal => {
                 // Enable LPF
                 data_l |= 1 << 1;
                 // Disable LPF bypass
                 data_h &= !(1 << 6);
             }
-            BladerfLpfMode::Bypassed => {
+            BladeRf1LpfMode::Bypassed => {
                 // Power down LPF
                 data_l &= !(1 << 1);
                 // Enable LPF bypass
                 data_h |= 1 << 6;
             }
-            BladerfLpfMode::Disabled => {
+            BladeRf1LpfMode::Disabled => {
                 // Power down LPF
                 data_l &= !(1 << 1);
                 // Disable LPF bypass
@@ -885,15 +894,15 @@ impl LMS6002D {
     }
 
     /// Configure RX-side of loopback
-    pub fn loopback_rx(&self, mode: &BladerfLoopback) -> Result<()> {
+    pub fn loopback_rx(&self, mode: &BladeRf1Loopback) -> Result<()> {
         let lpf_mode = self.lpf_get_mode(BLADERF_MODULE_RX)?;
         match mode {
-            BladerfLoopback::None => {
+            BladeRf1Loopback::None => {
                 // Ensure all RX blocks are enabled
                 self.rxvga1_enable(true)?;
 
-                if lpf_mode == BladerfLpfMode::Disabled {
-                    self.lpf_set_mode(BLADERF_MODULE_RX, BladerfLpfMode::Disabled)?;
+                if lpf_mode == BladeRf1LpfMode::Disabled {
+                    self.lpf_set_mode(BLADERF_MODULE_RX, BladeRf1LpfMode::Disabled)?;
                 }
 
                 self.rxvga2_enable(true)?;
@@ -914,32 +923,32 @@ impl LMS6002D {
                 };
                 self.select_band(BLADERF_MODULE_RX, band)
             }
-            BladerfLoopback::BbTxvga1Rxvga2 | BladerfLoopback::BbTxlpfRxvga2 => {
+            BladeRf1Loopback::BbTxvga1Rxvga2 | BladeRf1Loopback::BbTxlpfRxvga2 => {
                 // Ensure RXVGA2 is enabled
                 self.rxvga2_enable(true)?;
                 // RXLPF must be disabled
-                self.lpf_set_mode(BLADERF_MODULE_RX, BladerfLpfMode::Disabled)
+                self.lpf_set_mode(BLADERF_MODULE_RX, BladeRf1LpfMode::Disabled)
             }
-            BladerfLoopback::BbTxlpfRxlpf | BladerfLoopback::BbTxvga1Rxlpf => {
+            BladeRf1Loopback::BbTxlpfRxlpf | BladeRf1Loopback::BbTxvga1Rxlpf => {
                 // RXVGA1 must be disabled
                 self.rxvga1_enable(false)?;
 
                 // Enable the RXLPF if needed
-                if lpf_mode == BladerfLpfMode::Disabled {
-                    self.lpf_set_mode(BLADERF_MODULE_RX, BladerfLpfMode::Disabled)?;
+                if lpf_mode == BladeRf1LpfMode::Disabled {
+                    self.lpf_set_mode(BLADERF_MODULE_RX, BladeRf1LpfMode::Disabled)?;
                 }
 
                 // Ensure RXVGA2 is enabled
                 self.rxvga2_enable(true)
             }
-            BladerfLoopback::Lna1 | BladerfLoopback::Lna2 | BladerfLoopback::Lna3 => {
+            BladeRf1Loopback::Lna1 | BladeRf1Loopback::Lna2 | BladeRf1Loopback::Lna3 => {
                 // let lna: u8 = u8::from(mode) - BladerfLoopback::Lna1 as u8 + 1;
                 // assert!(lna >= 1 && lna <= 3);
                 // let lms_lna = LmsLna::try_from(lna)?;
                 let lms_lna = match mode {
-                    BladerfLoopback::Lna1 => LmsLna::Lna1,
-                    BladerfLoopback::Lna2 => LmsLna::Lna2,
-                    BladerfLoopback::Lna3 => LmsLna::Lna3,
+                    BladeRf1Loopback::Lna1 => LmsLna::Lna1,
+                    BladeRf1Loopback::Lna2 => LmsLna::Lna2,
+                    BladeRf1Loopback::Lna3 => LmsLna::Lna3,
                     _ => return Err(Error::Argument("Could not convert LNA mode.")),
                 };
 
@@ -950,8 +959,8 @@ impl LMS6002D {
                 self.rxvga1_enable(true)?;
 
                 // Enable the RXLPF if needed
-                if lpf_mode == BladerfLpfMode::Disabled {
-                    self.lpf_set_mode(BLADERF_MODULE_RX, BladerfLpfMode::Disabled)?;
+                if lpf_mode == BladeRf1LpfMode::Disabled {
+                    self.lpf_set_mode(BLADERF_MODULE_RX, BladeRf1LpfMode::Disabled)?;
                 }
 
                 // Ensure RXVGA2 is enabled
@@ -974,9 +983,9 @@ impl LMS6002D {
         }
     }
 
-    pub fn loopback_tx(&self, mode: &BladerfLoopback) -> Result<()> {
+    pub fn loopback_tx(&self, mode: &BladeRf1Loopback) -> Result<()> {
         match mode {
-            BladerfLoopback::None => {
+            BladeRf1Loopback::None => {
                 // Restore proper settings (PA) for this frequency
                 let f = self.get_frequency(BLADERF_MODULE_TX)?;
                 self.set_frequency(BLADERF_MODULE_TX, LMS6002D::frequency_to_hz(&f))?;
@@ -988,28 +997,28 @@ impl LMS6002D {
                 };
                 self.select_band(BLADERF_MODULE_TX, band)
             }
-            BladerfLoopback::BbTxlpfRxvga2
-            | BladerfLoopback::BbTxvga1Rxvga2
-            | BladerfLoopback::BbTxlpfRxlpf
-            | BladerfLoopback::BbTxvga1Rxlpf => Ok(()),
-            BladerfLoopback::Lna1 | BladerfLoopback::Lna2 | BladerfLoopback::Lna3 => {
+            BladeRf1Loopback::BbTxlpfRxvga2
+            | BladeRf1Loopback::BbTxvga1Rxvga2
+            | BladeRf1Loopback::BbTxlpfRxlpf
+            | BladeRf1Loopback::BbTxvga1Rxlpf => Ok(()),
+            BladeRf1Loopback::Lna1 | BladeRf1Loopback::Lna2 | BladeRf1Loopback::Lna3 => {
                 self.select_pa(LmsPa::PaAux)
             }
             _ => Err(Error::Argument("Invalid loopback mode encountered")),
         }
     }
 
-    pub fn set_loopback_mode(&self, mode: BladerfLoopback) -> Result<()> {
+    pub fn set_loopback_mode(&self, mode: BladeRf1Loopback) -> Result<()> {
         // Verify a valid mode is provided before shutting anything down
         match mode {
-            BladerfLoopback::None => {}
-            BladerfLoopback::BbTxlpfRxvga2 => {}
-            BladerfLoopback::BbTxvga1Rxvga2 => {}
-            BladerfLoopback::BbTxlpfRxlpf => {}
-            BladerfLoopback::BbTxvga1Rxlpf => {}
-            BladerfLoopback::Lna1 => {}
-            BladerfLoopback::Lna2 => {}
-            BladerfLoopback::Lna3 => {}
+            BladeRf1Loopback::None => {}
+            BladeRf1Loopback::BbTxlpfRxvga2 => {}
+            BladeRf1Loopback::BbTxvga1Rxvga2 => {}
+            BladeRf1Loopback::BbTxlpfRxlpf => {}
+            BladeRf1Loopback::BbTxvga1Rxlpf => {}
+            BladeRf1Loopback::Lna1 => {}
+            BladeRf1Loopback::Lna2 => {}
+            BladeRf1Loopback::Lna3 => {}
             _ => return Err(Error::Argument("Unsupported loopback mode")),
         }
 
@@ -1019,7 +1028,7 @@ impl LMS6002D {
 
         // Disconnect loopback paths while we re-configure blocks
 
-        self.loopback_path(&BladerfLoopback::None)?;
+        self.loopback_path(&BladeRf1Loopback::None)?;
 
         // Configure the RX side of the loopback path
         self.loopback_rx(&mode)?;
@@ -1031,21 +1040,21 @@ impl LMS6002D {
         self.loopback_path(&mode)
     }
 
-    pub fn get_loopback_mode(&self) -> Result<BladerfLoopback> {
-        let mut loopback = BladerfLoopback::None;
+    pub fn get_loopback_mode(&self) -> Result<BladeRf1Loopback> {
+        let mut loopback = BladeRf1Loopback::None;
 
         let lben_lbrfen = self.read(0x08)?;
         let loopbben = self.read(0x46)?;
 
         match lben_lbrfen & 0x7 {
             LBRFEN_LNA1 => {
-                loopback = BladerfLoopback::Lna1;
+                loopback = BladeRf1Loopback::Lna1;
             }
             LBRFEN_LNA2 => {
-                loopback = BladerfLoopback::Lna2;
+                loopback = BladeRf1Loopback::Lna2;
             }
             LBRFEN_LNA3 => {
-                loopback = BladerfLoopback::Lna3;
+                loopback = BladeRf1Loopback::Lna3;
             }
             _ => {}
         }
@@ -1053,16 +1062,16 @@ impl LMS6002D {
         match lben_lbrfen & LBEN_MASK {
             LBEN_VGA2IN => {
                 if (loopbben & LOOPBBEN_TXLPF) != 0 {
-                    loopback = BladerfLoopback::BbTxlpfRxvga2;
+                    loopback = BladeRf1Loopback::BbTxlpfRxvga2;
                 } else if (loopbben & LOOPBBEN_TXVGA) != 0 {
-                    loopback = BladerfLoopback::BbTxvga1Rxvga2;
+                    loopback = BladeRf1Loopback::BbTxvga1Rxvga2;
                 }
             }
             LBEN_LPFIN => {
                 if (loopbben & LOOPBBEN_TXLPF) != 0 {
-                    loopback = BladerfLoopback::BbTxlpfRxlpf;
+                    loopback = BladeRf1Loopback::BbTxlpfRxlpf;
                 } else if (loopbben & LOOPBBEN_TXVGA) != 0 {
-                    loopback = BladerfLoopback::BbTxvga1Rxlpf;
+                    loopback = BladeRf1Loopback::BbTxvga1Rxlpf;
                 }
             }
             _ => {}
@@ -1074,7 +1083,7 @@ impl LMS6002D {
     pub fn is_loopback_enabled(&self) -> Result<bool> {
         let loopback = self.get_loopback_mode()?;
 
-        Ok(loopback != BladerfLoopback::None)
+        Ok(loopback != BladeRf1Loopback::None)
     }
 
     pub fn write_pll_config(&self, module: u8, freqsel: u8, low_band: bool) -> Result<()> {
@@ -1557,38 +1566,28 @@ impl LMS6002D {
         (((LMS_REFERENCE_HZ as u64 * pll_coeff) + (div >> 1)) / div) as u32
     }
 
-    pub fn lms_soft_reset(&self) -> Result<()> {
-        // Soft reset of the LMS
-        self.write(0x05, 0x12)?;
-        self.write(0x05, 0x32)
-    }
-
-    pub fn lna_set_gain(&self, gain: BladerfLnaGain) -> Result<()> {
+    pub fn lna_set_gain(&self, gain: GainDb) -> Result<()> {
         // Set the gain on the LNA
-        if gain != BladerfLnaGain::Unknown {
-            let mut data = self.read(0x75)?;
-            // Clear out previous gain setting
-            data &= !(3 << 6);
-            // Update gain value
-            data |= (gain as u8 & 3) << 6;
-            self.write(0x75, data)
-        } else {
-            log::error!("Invalid Gain value");
-            Err(Error::Invalid)
-        }
+        let mut data = self.read(0x75)?;
+        // Clear out previous gain setting
+        data &= !(3 << 6);
+
+        let lna_gain_code: LnaGainCode = gain.into();
+        let lna_gain_code_u8: u8 = lna_gain_code.into();
+        // Update gain value
+        data |= (lna_gain_code_u8 & 3) << 6;
+        //let lna_gain_code_u8: u8 = lna_gain_code.into();
+        //data |= lna_gain_code_u8;
+        self.write(0x75, data)
     }
 
-    pub fn lna_get_gain(&self) -> Result<BladerfLnaGain> {
+    pub fn lna_get_gain(&self) -> Result<GainDb> {
         let mut data = self.read(0x75)?;
         data >>= 6;
         data &= 3;
 
-        if data == BladerfLnaGain::Unknown as u8 {
-            log::error!("Invalid Gain");
-            Err(Error::Invalid)
-        } else {
-            BladerfLnaGain::try_from(data).map_err(|_| Error::Invalid)
-        }
+        let lna_gain_code: LnaGainCode = data.try_into().map_err(|_| Error::Invalid)?;
+        Ok(lna_gain_code.into())
     }
 
     pub fn get_lna(&self) -> Result<LmsLna> {
@@ -1608,18 +1607,39 @@ impl LMS6002D {
         self.write(0x7d, data)
     }
 
-    pub fn rxvga1_set_gain(&self, gain: i8) -> Result<()> {
+    pub fn rxvga1_set_gain(&self, gain_db: GainDb) -> Result<()> {
         // Set the RFB_TIA_RXFE mixer gain
-        let idx = gain.clamp(BLADERF_RXVGA1_GAIN_MIN, BLADERF_RXVGA1_GAIN_MAX);
-        self.write(0x76, RXVGA1_LUT_VAL2CODE[idx as usize])
+        // let gain_db = gain.clamp(BLADERF_RXVGA1_GAIN_MIN, BLADERF_RXVGA1_GAIN_MAX);
+        // let code = RXVGA1_LUT_VAL2CODE[gain_db as usize];
+
+        // let gain_db = gain_db.clamp(BLADERF_RXVGA1_GAIN_MIN, BLADERF_RXVGA1_GAIN_MAX) as f32;
+        // let code = (127.0
+        //     - 127.0 / (10.0f32.powf((gain_db - BLADERF_RXVGA1_GAIN_MIN as f32) / 20.0)))
+        // .round() as u8;
+        let code: Rxvga1GainCode = gain_db.into();
+        self.write(0x76, code.code)
     }
-    pub fn rxvga1_get_gain(&self) -> Result<i8> {
+    pub fn rxvga1_get_gain(&self) -> Result<GainDb> {
         let mut data = self.read(0x76)?;
 
         data &= 0x7f;
-        let idx = data.clamp(0, 120) as usize;
+        // https://cdn.sanity.io/files/yv2p7ubm/production/44688b111c3f9bfcfb68c4851d13283f37cdc0e9.pdf#%5B%7B%22num%22%3A99%2C%22gen%22%3A0%7D%2C%7B%22name%22%3A%22XYZ%22%7D%2C68%2C544%2C0%5D
+        // The LMS FAQ (Rev 1.0r10, Section 5.20) states that the RXVGA1 codes may be
+        // converted to dB via:
+        //      `value_db = 20 * log10(127 / (127 - code))`
+        //
+        // However, an offset of 5 appears to be required, yielding:
+        //     `value_db =  5 + 20 * log10(127 / (127 - code))`
+        // let code = data.clamp(0, 120) as usize;
+        // let gain_db = RXVGA1_LUT_CODE2VAL[code] as i8;
+        let rxvga1_gain_code = Rxvga1GainCode {
+            code: data.clamp(0, 120),
+        };
+        // let gain_db = (BLADERF_RXVGA1_GAIN_MIN as f32
+        //     + (20.0 * (127.0 / (127.0 - rxvga1_gain_code as f32)).log10()))
+        // .round() as i8;
 
-        Ok(RXVGA1_LUT_CODE2VAL[idx] as i8)
+        Ok(rxvga1_gain_code.into())
     }
 
     pub fn rxvga2_enable(&self, enable: bool) -> Result<()> {
@@ -1633,52 +1653,51 @@ impl LMS6002D {
         self.write(0x64, data)
     }
 
-    pub fn rxvga2_set_gain(&self, gain: i8) -> Result<()> {
+    /// RXVGA2 gain can only be incremented in 3dB steps.
+    /// It is not recommended to use a gain higher than 30.
+    /// This is enforced by clamping higher gains to 30 automatically in this method.
+    /// For details see section 2.7 RX VGA2 Configuration in Programming and Calibration Guide
+    pub fn rxvga2_set_gain(&self, gain_db: GainDb) -> Result<()> {
         // Set the gain on RXVGA2
-        let gain = gain.clamp(BLADERF_RXVGA2_GAIN_MIN, BLADERF_RXVGA2_GAIN_MAX);
-        self.write(0x65, (gain / 3) as u8)
+        let code: Rxvga2GainCode = gain_db.into();
+        self.write(0x65, code.code)
     }
-    pub fn rxvga2_get_gain(&self) -> Result<i8> {
-        let data = self.read(0x65)?;
+    pub fn rxvga2_get_gain(&self) -> Result<GainDb> {
+        let rxvga2_gain_code = Rxvga2GainCode {
+            code: self.read(0x65)?,
+        };
 
-        Ok((data * 3) as i8)
-    }
-
-    pub fn txvga1_get_gain(&self) -> Result<i8> {
-        let mut data = self.read(0x41)?;
-        // Clamp to max value
-        data &= 0x1f;
-
-        // Convert table index to value
-        Ok(data as i8 - 35)
+        Ok(rxvga2_gain_code.into())
     }
 
-    pub fn txvga2_get_gain(&self) -> Result<i8> {
-        let mut data = self.read(0x45)?;
-        // Clamp to max value
-        data = (data >> 3) & 0x1f;
-
-        // Register values of 25-31 all correspond to 25 dB
-        Ok(data.min(25) as i8)
+    pub fn txvga1_get_gain(&self) -> Result<GainDb> {
+        let txvga1_gain_code = Txvga1GainCode {
+            code: self.read(0x41)?,
+        };
+        Ok(txvga1_gain_code.into())
     }
 
-    pub fn txvga1_set_gain(&self, gain: i8) -> Result<()> {
-        let mut gain = gain.clamp(BLADERF_TXVGA1_GAIN_MIN, BLADERF_TXVGA1_GAIN_MAX);
+    pub fn txvga2_get_gain(&self) -> Result<GainDb> {
+        let txvga2_gain_code = Txvga2GainCode {
+            code: self.read(0x45)?,
+        };
+        Ok(txvga2_gain_code.into())
+    }
 
-        // Apply offset to convert gain to register table index
-        gain += 35;
-
+    pub fn txvga1_set_gain(&self, gain: GainDb) -> Result<()> {
+        let txvga1_gain_code: Txvga1GainCode = gain.into();
         // Since 0x41 is only VGA1GAIN, we don't need to RMW
-        self.write(0x41, gain as u8)
+        self.write(0x41, txvga1_gain_code.code)
     }
 
-    pub fn txvga2_set_gain(&self, gain: i8) -> Result<()> {
-        let gain = gain.clamp(BLADERF_TXVGA2_GAIN_MIN, BLADERF_TXVGA2_GAIN_MAX);
-
-        let mut data = self.read(0x45)? as i8;
+    pub fn txvga2_set_gain(&self, gain: GainDb) -> Result<()> {
+        // 0x45 is not only VGA2GAIN, thus we have to RMW to not accidentally overwrite ENVD setting
+        let mut data = self.read(0x45)?;
         data &= !(0x1f << 3);
-        data |= (gain & 0x1f) << 3;
-        self.write(0x45, data as u8)
+
+        let txvga2_gain_code: Txvga2GainCode = gain.into();
+        data |= txvga2_gain_code.code;
+        self.write(0x45, data)
     }
 
     pub fn peakdetect_enable(&self, enable: bool) -> Result<()> {

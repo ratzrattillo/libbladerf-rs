@@ -3,7 +3,7 @@ use crate::{BladeRf1, BladeRf1RxStreamer, BladeRf1TxStreamer, Error};
 use bladerf_globals::bladerf1::{
     BLADERF_GPIO_PACKET, BLADERF_GPIO_TIMESTAMP, BLADERF_GPIO_TIMESTAMP_DIV2,
 };
-use bladerf_globals::{BLADERF_MODULE_RX, BLADERF_MODULE_TX, BladeRfDirection, BladerfFormat};
+use bladerf_globals::{BLADERF_MODULE_RX, BLADERF_MODULE_TX, BladeRf1Direction, BladeRf1Format};
 use num_complex::Complex32;
 use nusb::MaybeFuture;
 use nusb::transfer::{Bulk, ControlIn, ControlType, In, Out, Recipient};
@@ -45,13 +45,13 @@ impl BladeRf1RxStreamer {
 
     pub fn activate(&mut self) -> Result<()> {
         self.dev
-            .perform_format_config(BladeRfDirection::Rx, BladerfFormat::Sc16Q11)?;
+            .perform_format_config(BladeRf1Direction::Rx, BladeRf1Format::Sc16Q11)?;
         self.dev.enable_module(BLADERF_MODULE_RX, true)?;
         self.dev.experimental_control_urb()
     }
 
     pub fn deactivate(&mut self) -> Result<()> {
-        self.dev.perform_format_deconfig(BladeRfDirection::Rx)?;
+        self.dev.perform_format_deconfig(BladeRf1Direction::Rx)?;
         self.dev.enable_module(BLADERF_MODULE_RX, false)
     }
 
@@ -201,8 +201,8 @@ impl BladeRf1 {
     // @return 0 on success, BLADERF_ERR_* on failure
     pub fn perform_format_config(
         &self,
-        dir: BladeRfDirection,
-        format: BladerfFormat,
+        dir: BladeRf1Direction,
+        format: BladeRf1Format,
     ) -> Result<()> {
         // BladerfFormatPacketMeta
         // struct bladerf1_board_data *board_data = dev->board_data;
@@ -218,8 +218,8 @@ impl BladeRf1 {
         // }
 
         let _other = match dir {
-            BladeRfDirection::Rx => BladeRfDirection::Tx,
-            BladeRfDirection::Tx => BladeRfDirection::Rx,
+            BladeRf1Direction::Rx => BladeRf1Direction::Tx,
+            BladeRf1Direction::Tx => BladeRf1Direction::Rx,
         };
 
         // status = requires_timestamps(board_data->module_format[other],
@@ -233,7 +233,7 @@ impl BladeRf1 {
         let mut gpio_val = self.config_gpio_read()?;
 
         log::debug!("gpio_val {gpio_val:#08x}");
-        if format == BladerfFormat::PacketMeta {
+        if format == BladeRf1Format::PacketMeta {
             gpio_val |= BLADERF_GPIO_PACKET;
             use_timestamps = true;
             log::debug!("BladerfFormat::PacketMeta");
@@ -269,11 +269,11 @@ impl BladeRf1 {
     ///    dir     Direction that is currently being deconfigured
     ///
     /// @return 0 on success, BLADERF_ERR_* on failure
-    pub fn perform_format_deconfig(&self, direction: BladeRfDirection) -> Result<()> {
+    pub fn perform_format_deconfig(&self, direction: BladeRf1Direction) -> Result<()> {
         // struct bladerf1_board_data *board_data = dev->board_data;
 
         match direction {
-            BladeRfDirection::Rx | BladeRfDirection::Tx => {
+            BladeRf1Direction::Rx | BladeRf1Direction::Tx => {
                 // We'll reconfigure the HW when we call perform_format_config, so
                 // we just need to update our stored information
                 // board_data -> module_format[dir] = - 1;

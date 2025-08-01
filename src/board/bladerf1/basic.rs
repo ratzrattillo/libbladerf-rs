@@ -9,8 +9,8 @@ use bladerf_globals::bladerf1::{
 };
 use bladerf_globals::{
     BLADE_USB_CMD_GET_LOOPBACK, BLADE_USB_CMD_RESET, BLADE_USB_CMD_RF_RX, BLADE_USB_CMD_RF_TX,
-    BLADE_USB_CMD_SET_LOOPBACK, BLADERF_MODULE_RX, BLADERF_MODULE_TX, BladeRfDirection,
-    BladerfGainMode, DescriptorTypes, StringDescriptors, TIMEOUT, TuningMode, USB_IF_NULL,
+    BLADE_USB_CMD_SET_LOOPBACK, BLADERF_MODULE_RX, BLADERF_MODULE_TX, BladeRf1Direction,
+    BladeRf1GainMode, DescriptorTypes, StringDescriptors, TIMEOUT, TuningMode, USB_IF_NULL,
     USB_IF_RF_LINK, bladerf_channel_is_tx, bladerf_channel_rx, bladerf_channel_tx,
 };
 use bladerf_nios::packet_retune::Band;
@@ -382,7 +382,7 @@ impl BladeRf1 {
             // In: expected: 4200030008d1ab000000000000000000
             // In actual:    42000300080000000000000000000000
             // Todo: Implement AGC table and set mode to BladerfGainDefault
-            self.set_gain_mode(bladerf_channel_rx!(0), BladerfGainMode::Mgc)?;
+            self.set_gain_mode(bladerf_channel_rx!(0), BladeRf1GainMode::Mgc)?;
         } else {
             log::trace!("[*] Init - Device already initialized: {cfg:#04x}");
             // board_data->tuning_mode = tuning_get_default_mode(dev);
@@ -485,10 +485,10 @@ impl BladeRf1 {
 
     /// Enable/Disable RF Module via the USB backend.
     /// This method should probably be moved to some USB backend dedicated source file.
-    fn usb_enable_module(&self, direction: BladeRfDirection, enable: bool) -> Result<()> {
+    fn usb_enable_module(&self, direction: BladeRf1Direction, enable: bool) -> Result<()> {
         let val = enable as u16;
 
-        let cmd = if direction == BladeRfDirection::Rx {
+        let cmd = if direction == BladeRf1Direction::Rx {
             BLADE_USB_CMD_RF_RX
         } else {
             BLADE_USB_CMD_RF_TX
@@ -536,9 +536,9 @@ impl BladeRf1 {
         // CHECK_BOARD_STATE(STATE_INITIALIZED);
 
         let direction = if bladerf_channel_is_tx!(module) {
-            BladeRfDirection::Tx
+            BladeRf1Direction::Tx
         } else {
-            BladeRfDirection::Rx
+            BladeRf1Direction::Rx
         };
 
         //

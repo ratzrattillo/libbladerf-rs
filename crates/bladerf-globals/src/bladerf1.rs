@@ -1,4 +1,3 @@
-use crate::Error;
 use std::fmt::{Display, Formatter};
 
 /// BladeRF1 USB vendor ID.
@@ -82,54 +81,6 @@ pub enum BladeRfChannelLayout {
     TxX2 = 3, // x2 TX (MIMO)
 }
 
-/// LNA gain options
-///
-/// \deprecated Use bladerf_get_gain_stage_range()
-#[derive(PartialEq)]
-pub enum BladerfLnaGain {
-    /// Invalid LNA gain
-    Unknown,
-    /// LNA bypassed - 0dB gain
-    Bypass,
-    /// LNA Mid Gain (MAX-6dB)
-    Mid,
-    /// LNA Max Gain
-    Max,
-}
-
-impl From<BladerfLnaGain> for u8 {
-    fn from(value: BladerfLnaGain) -> Self {
-        match value {
-            BladerfLnaGain::Unknown => 0,
-            BladerfLnaGain::Bypass => 1,
-            BladerfLnaGain::Mid => 2,
-            BladerfLnaGain::Max => 3,
-        }
-    }
-}
-impl TryFrom<u8> for BladerfLnaGain {
-    type Error = crate::Error;
-
-    fn try_from(value: u8) -> Result<Self, Self::Error> {
-        match value {
-            0 => Ok(BladerfLnaGain::Unknown),
-            1 => Ok(BladerfLnaGain::Bypass),
-            2 => Ok(BladerfLnaGain::Mid),
-            3 => Ok(BladerfLnaGain::Max),
-            _ => {
-                log::error!("Could not convert from u8 to BladerfLnaGain");
-                Err(Error::Invalid)
-            }
-        }
-    }
-}
-
-/// RX gain offset
-pub const BLADERF1_RX_GAIN_OFFSET: f32 = -6.0;
-
-/// TX gain offset: 60 dB system gain ~= 0 dBm output
-pub const BLADERF1_TX_GAIN_OFFSET: f32 = 52.0;
-
 /// RX mux modes
 #[derive(PartialEq, Debug, Clone)]
 pub enum BladerfRxMux {
@@ -166,65 +117,6 @@ impl From<u32> for BladerfRxMux {
 // /// @{
 //
 //
-//
-// /// In general, the gains should be incremented in the following order (and
-// /// decremented in the reverse order).
-// ///
-// /// <b>TX:</b> `TXVGA1`, `TXVGA2`
-// ///
-// /// <b>RX:</b> `LNA`, `RXVGA`, `RXVGA2`
-// ///
-//
-/// Minimum RXVGA1 gain, in dB
-///
-/// \deprecated Use bladerf_get_gain_stage_range()
-pub const BLADERF_RXVGA1_GAIN_MIN: i8 = 5;
-
-/// Maximum RXVGA1 gain, in dB
-///
-/// \deprecated Use bladerf_get_gain_stage_range()
-pub const BLADERF_RXVGA1_GAIN_MAX: i8 = 30;
-
-/// Minimum RXVGA2 gain, in dB
-///
-/// \deprecated Use bladerf_get_gain_stage_range()
-pub const BLADERF_RXVGA2_GAIN_MIN: i8 = 0;
-
-/// Maximum RXVGA2 gain, in dB
-///
-/// \deprecated Use bladerf_get_gain_stage_range()
-pub const BLADERF_RXVGA2_GAIN_MAX: i8 = 30;
-
-/// Minimum TXVGA1 gain, in dB
-///
-/// \deprecated Use bladerf_get_gain_stage_range()
-pub const BLADERF_TXVGA1_GAIN_MIN: i8 = -35;
-
-/// Maximum TXVGA1 gain, in dB
-///
-/// \deprecated Use bladerf_get_gain_stage_range()
-pub const BLADERF_TXVGA1_GAIN_MAX: i8 = -4;
-
-/// Minimum TXVGA2 gain, in dB
-///
-///\deprecated Use bladerf_get_gain_stage_range()
-pub const BLADERF_TXVGA2_GAIN_MIN: i8 = 0;
-
-/// Maximum TXVGA2 gain, in dB
-///
-/// \deprecated Use bladerf_get_gain_stage_range()
-pub const BLADERF_TXVGA2_GAIN_MAX: i8 = 25;
-
-/// Gain in dB of the LNA at mid setting
-///
-/// \deprecated Use bladerf_get_gain_stage_range()
-pub const BLADERF_LNA_GAIN_MID_DB: i8 = 3;
-
-/// Gain in db of the LNA at max setting
-///
-/// \deprecated Use bladerf_get_gain_stage_range()
-
-pub const BLADERF_LNA_GAIN_MAX_DB: i8 = 6;
 
 /// Enable LMS receive
 ///

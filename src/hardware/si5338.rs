@@ -5,7 +5,7 @@ use crate::{Error, Result};
 use bladerf_globals::bladerf1::{
     BLADERF_SAMPLERATE_MIN, BLADERF_SMB_FREQUENCY_MAX, BLADERF_SMB_FREQUENCY_MIN,
 };
-use bladerf_globals::{BladerfRationalRate, bladerf_channel_rx, bladerf_channel_tx};
+use bladerf_globals::{BladeRf1RationalRate, bladerf_channel_rx, bladerf_channel_tx};
 use bladerf_nios::NIOS_PKT_8X8_TARGET_SI5338;
 use nusb::Interface;
 
@@ -24,8 +24,8 @@ pub struct Si5338Multisynth {
     base: u16,
 
     // Requested and actual sample rates
-    requested: BladerfRationalRate,
-    actual: BladerfRationalRate,
+    requested: BladeRf1RationalRate,
+    actual: BladeRf1RationalRate,
 
     // Enables for A and/or B outputs
     enable: u8,
@@ -90,7 +90,7 @@ impl SI5338 {
         a
     }
 
-    pub fn rational_reduce(r: &mut BladerfRationalRate) {
+    pub fn rational_reduce(r: &mut BladeRf1RationalRate) {
         if (r.den > 0) && (r.num >= r.den) {
             // Get whole number
             let whole: u64 = r.num / r.den;
@@ -106,14 +106,14 @@ impl SI5338 {
         }
     }
 
-    pub fn rational_double(r: &mut BladerfRationalRate) {
+    pub fn rational_double(r: &mut BladeRf1RationalRate) {
         r.integer *= 2;
         r.num *= 2;
         Self::rational_reduce(r);
     }
 
-    pub fn calculate_ms_freq(ms: &mut Si5338Multisynth, rate: &mut BladerfRationalRate) {
-        let abc = BladerfRationalRate {
+    pub fn calculate_ms_freq(ms: &mut Si5338Multisynth, rate: &mut BladeRf1RationalRate) {
+        let abc = BladeRf1RationalRate {
             integer: ms.a as u64,
             num: ms.b as u64,
             den: ms.c as u64,
@@ -254,9 +254,9 @@ impl SI5338 {
         self.write(ms.index + 31, val)
     }
 
-    pub fn calculate_multisynth(ms: &mut Si5338Multisynth, rate: &BladerfRationalRate) {
+    pub fn calculate_multisynth(ms: &mut Si5338Multisynth, rate: &BladeRf1RationalRate) {
         // Don't mess with the users data
-        let mut req = BladerfRationalRate {
+        let mut req = BladeRf1RationalRate {
             integer: rate.integer,
             num: rate.num,
             den: rate.den,
@@ -278,7 +278,7 @@ impl SI5338 {
         assert!(!(r_value == 32 && req.integer < 5000000));
 
         // Find suitable MS (a, b, c) values
-        let mut abc = BladerfRationalRate {
+        let mut abc = BladeRf1RationalRate {
             integer: 0,
             num: SI5338_F_VCO * req.den,
             den: req.integer * req.den + req.num,
@@ -330,10 +330,10 @@ impl SI5338 {
         &self,
         index: u8,
         channel: u8,
-        mut rate: BladerfRationalRate,
-    ) -> Result<BladerfRationalRate> {
+        mut rate: BladeRf1RationalRate,
+    ) -> Result<BladeRf1RationalRate> {
         let mut ms = Si5338Multisynth::default();
-        let mut actual = BladerfRationalRate::default();
+        let mut actual = BladeRf1RationalRate::default();
 
         Self::rational_reduce(&mut rate);
 
@@ -352,7 +352,7 @@ impl SI5338 {
 
         // Program it to the part
         self.write_multisynth(&ms)?;
-        Ok(BladerfRationalRate {
+        Ok(BladeRf1RationalRate {
             integer: actual.integer,
             num: actual.num,
             den: actual.den,
@@ -361,8 +361,8 @@ impl SI5338 {
     pub fn set_rational_sample_rate(
         &self,
         ch: u8,
-        rate: &mut BladerfRationalRate,
-    ) -> Result<BladerfRationalRate> {
+        rate: &mut BladeRf1RationalRate,
+    ) -> Result<BladeRf1RationalRate> {
         let mut rate_reduced = rate.clone();
         let index: u8 = if ch == bladerf_channel_rx!(0) {
             0x1
@@ -383,7 +383,7 @@ impl SI5338 {
     }
 
     pub fn set_sample_rate(&self, channel: u8, rate_requested: u32) -> Result<u32> {
-        let mut req = BladerfRationalRate {
+        let mut req = BladeRf1RationalRate {
             integer: rate_requested as u64,
             num: 0,
             den: 1,
@@ -403,7 +403,7 @@ impl SI5338 {
         Ok(act.integer as u32)
     }
 
-    pub fn get_rational_sample_rate(&self, channel: u8) -> Result<BladerfRationalRate> {
+    pub fn get_rational_sample_rate(&self, channel: u8) -> Result<BladeRf1RationalRate> {
         // Select the multisynth we want to read
         let mut ms = Si5338Multisynth {
             index: if channel == bladerf_channel_rx!(0) {
@@ -420,7 +420,7 @@ impl SI5338 {
         // Readback
         self.read_multisynth(&mut ms)?;
 
-        let mut rate = BladerfRationalRate::default();
+        let mut rate = BladeRf1RationalRate::default();
         Self::calculate_ms_freq(&mut ms, &mut rate);
         Ok(rate)
     }
@@ -436,7 +436,10 @@ impl SI5338 {
         Ok(actual.integer as u32)
     }
 
-    pub fn set_rational_smb_freq(&self, rate: &BladerfRationalRate) -> Result<BladerfRationalRate> {
+    pub fn set_rational_smb_freq(
+        &self,
+        rate: &BladeRf1RationalRate,
+    ) -> Result<BladeRf1RationalRate> {
         let mut rate_reduced = rate.clone();
 
         // Enforce minimum and maximum frequencies
@@ -454,7 +457,7 @@ impl SI5338 {
     }
 
     pub fn set_smb_freq(&self, rate: u32) -> Result<u32> {
-        let mut req = BladerfRationalRate::default();
+        let mut req = BladeRf1RationalRate::default();
         log::trace!("Setting integer SMB frequency: {rate}");
         req.integer = rate as u64;
         req.num = 0;
@@ -473,9 +476,9 @@ impl SI5338 {
         Ok(act.integer as u32)
     }
 
-    pub fn get_rational_smb_freq(&self) -> Result<BladerfRationalRate> {
+    pub fn get_rational_smb_freq(&self) -> Result<BladeRf1RationalRate> {
         let mut ms = Si5338Multisynth::default();
-        let mut rate = BladerfRationalRate::default();
+        let mut rate = BladeRf1RationalRate::default();
 
         // Select MS3 for the SMB output
         ms.index = 3;

@@ -1,6 +1,6 @@
 use anyhow::Result;
-use bladerf_globals::BladeRfDirection::Rx;
-use bladerf_globals::BladerfFormat::Sc16Q11;
+use bladerf_globals::BladeRf1Direction::Rx;
+use bladerf_globals::BladeRf1Format::Sc16Q11;
 use bladerf_globals::bladerf1::BladerfXb::BladerfXb200;
 use bladerf_globals::{BLADERF_MODULE_RX, BLADERF_MODULE_TX};
 use libbladerf_rs::board::bladerf1::BladeRf1;
@@ -101,8 +101,8 @@ fn main() -> Result<()> {
 
     let gain_rx = bladerf.get_gain(BLADERF_MODULE_RX)?;
     let gain_tx = bladerf.get_gain(BLADERF_MODULE_TX)?;
-    log::debug!("Gain RX: {}", gain_rx);
-    log::debug!("Gain TX: {}", gain_tx);
+    log::debug!("Gain RX: {}", gain_rx.db);
+    log::debug!("Gain TX: {}", gain_tx.db);
 
     // bladerf.reset()?;
 

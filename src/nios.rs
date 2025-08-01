@@ -201,7 +201,11 @@ impl Nios for Interface {
         // let pkt = PktType::new(id, PktType::FLAG_WRITE, addr, data);
         let resp = self.nios_send(ENDPOINT_OUT, ENDPOINT_IN, pkt.into(), None)?;
         let resp_pkt: NiosPkt<A, D> = resp.into();
-        resp_pkt.is_success().map_err(|_| Error::Invalid)
+        if resp_pkt.is_success() {
+            Ok(())
+        } else {
+            Err(Error::Invalid)
+        }
     }
 
     // fn nios_32x32_masked_read(&self, id: u8, mask: u32) -> Result<u32> {

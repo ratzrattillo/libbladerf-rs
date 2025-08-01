@@ -1,6 +1,6 @@
 use crate::NiosPktMagic;
 use crate::packet_base::GenericNiosPkt;
-use bladerf_globals::BladeRfDirection;
+use bladerf_globals::BladeRf1Direction;
 use bladerf_globals::bladerf_channel_is_tx;
 use std::fmt::{Debug, Formatter};
 

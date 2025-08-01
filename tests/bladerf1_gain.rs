@@ -3,11 +3,11 @@ mod common;
 use crate::common::*;
 
 use bladerf_globals::range::RangeItem;
-use bladerf_globals::{BLADERF_MODULE_RX, BLADERF_MODULE_TX};
+use bladerf_globals::{BLADERF_MODULE_RX, BLADERF_MODULE_TX, GainDb};
 use libbladerf_rs::{BladeRf1, Result};
 
 #[test]
-fn sample_rate() -> Result<()> {
+fn set_gain() -> Result<()> {
     logging_init("bladerf1_gain");
 
     // TODO: The definition of allowed gain rates is still wrong.
@@ -26,13 +26,13 @@ fn sample_rate() -> Result<()> {
 
             while desired <= max.round() as i8 {
                 // TODO: What channels are supported?
-                let current = BLADERF.get_gain(channel)?;
+                let current = BLADERF.get_gain(channel)?.db;
                 log::trace!("Channel {channel} Gain (CURRENT):\t{current}");
                 log::trace!("Channel {channel} Gain (DESIRED):\t{desired}");
 
-                BLADERF.set_gain(channel, desired)?;
+                BLADERF.set_gain(channel, GainDb { db: desired })?;
 
-                let new = BLADERF.get_gain(channel)?;
+                let new = BLADERF.get_gain(channel)?.db;
                 log::trace!("Channel {channel} Gain (NEW):\t{new}");
                 assert_eq!(new, desired);
 

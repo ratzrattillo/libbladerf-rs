@@ -9,3 +9,5 @@
 - Ranges for frequency and sample rate are currently continuous, bu this is not supported by the Hardware.
 - NIOS packet don't claim endpoint on every call to nios_send. This is very slow, as acquiring and releaseing an endpoint takes more time,
   than aquiring it once for the whole lifetime of the BladeRf1 session and accessing it via Mutex
+- Code Clarity could be increased with custom types for GainDb and GainCode. Because different parts of the code consume tha Gain in different Formats
+  This might help to avoid confusion between the From Traits impl for BladeRfLnaGain and functions like _convert_gain_to_lna_gain
