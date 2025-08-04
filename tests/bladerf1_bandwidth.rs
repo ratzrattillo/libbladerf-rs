@@ -17,7 +17,7 @@ fn bandwidth() -> Result<()> {
 
     let supported_bandwidths = BladeRf1::get_bandwidth_range();
 
-    log::trace!("supported_bandwidths: {:?}", supported_bandwidths);
+    log::trace!("supported_bandwidths: {supported_bandwidths:?}");
     for range_item in supported_bandwidths.items {
         let desired = match range_item {
             RangeItem::Value(v) => v.round() as u32,

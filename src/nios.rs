@@ -1,7 +1,7 @@
 #![allow(clippy::too_many_arguments)]
 
 use crate::{Error, Result};
-use bladerf_globals::bladerf1::BladeRfVersion;
+use bladerf_globals::bladerf1::BladeRf1Version;
 use bladerf_globals::{BLADERF_MODULE_RX, BLADERF_MODULE_TX, ENDPOINT_IN, ENDPOINT_OUT};
 use bladerf_nios::packet_generic::{NiosPkt, NumToByte};
 use bladerf_nios::packet_retune::{Band, NiosPktRetuneRequest, NiosPktRetuneResponse, Tune};
@@ -60,7 +60,7 @@ pub trait Nios {
     fn nios_expansion_gpio_write(&self, mask: u32, val: u32) -> Result<()>;
     fn nios_expansion_gpio_dir_read(&self) -> Result<u32>;
     fn nios_expansion_gpio_dir_write(&self, mask: u32, val: u32) -> Result<()>;
-    fn nios_get_fpga_version(&self) -> Result<BladeRfVersion>;
+    fn nios_get_fpga_version(&self) -> Result<BladeRf1Version>;
     fn nios_get_iq_gain_correction(&self, ch: u8) -> Result<i16>;
     fn nios_get_iq_phase_correction(&self, ch: u8) -> Result<i16>;
     fn nios_set_iq_gain_correction(&self, ch: u8, value: i16) -> Result<()>;
@@ -244,11 +244,11 @@ impl Nios for Interface {
         self.nios_write::<u32, u32>(NIOS_PKT_32X32_TARGET_EXP_DIR, mask, val)
     }
 
-    fn nios_get_fpga_version(&self) -> Result<BladeRfVersion> {
+    fn nios_get_fpga_version(&self) -> Result<BladeRf1Version> {
         let regval = self.nios_read::<u8, u32>(NIOS_PKT_8X32_TARGET_VERSION, 0)?;
         log::trace!("Read FPGA version word: {regval:#010x}");
 
-        let version = BladeRfVersion {
+        let version = BladeRf1Version {
             major: ((regval >> 24) & 0xff) as u16,
             minor: ((regval >> 16) & 0xff) as u16,
             // #[cfg(target_endian = "big")]

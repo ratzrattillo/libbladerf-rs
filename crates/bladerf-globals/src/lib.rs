@@ -342,16 +342,16 @@ pub enum BladeRf1Loopback {
 //
 //     fn try_from(value: u8) -> Result<Self, Self::Error> {
 //         match value {
-//             0 => Ok(BladerfLoopback::None),
-//             1 => Ok(BladerfLoopback::Firmware),
-//             2 => Ok(BladerfLoopback::BbTxlpfRxvga2),
-//             3 => Ok(BladerfLoopback::BbTxvga1Rxvga2),
-//             4 => Ok(BladerfLoopback::BbTxlpfRxlpf),
-//             5 => Ok(BladerfLoopback::BbTxvga1Rxlpf),
-//             6 => Ok(BladerfLoopback::Lna1),
-//             7 => Ok(BladerfLoopback::Lna2),
-//             8 => Ok(BladerfLoopback::Lna3),
-//             9 => Ok(BladerfLoopback::RficBist),
+//             0 => Ok(BladeRf1Loopback::None),
+//             1 => Ok(BladeRf1Loopback::Firmware),
+//             2 => Ok(BladeRf1Loopback::BbTxlpfRxvga2),
+//             3 => Ok(BladeRf1Loopback::BbTxvga1Rxvga2),
+//             4 => Ok(BladeRf1Loopback::BbTxlpfRxlpf),
+//             5 => Ok(BladeRf1Loopback::BbTxvga1Rxlpf),
+//             6 => Ok(BladeRf1Loopback::Lna1),
+//             7 => Ok(BladeRf1Loopback::Lna2),
+//             8 => Ok(BladeRf1Loopback::Lna3),
+//             9 => Ok(BladeRf1Loopback::RficBist),
 //             _ => Err(()),
 //         }
 //     }
@@ -425,7 +425,6 @@ pub const BLADERF_LNA_GAIN_MID_DB: i8 = 3;
 /// Gain in db of the LNA at max setting
 ///
 /// \deprecated Use bladerf_get_gain_stage_range()
-
 pub const BLADERF_LNA_GAIN_MAX_DB: i8 = 6;
 
 /// Gain in dB
@@ -635,7 +634,7 @@ impl From<GainDb> for Txvga2GainCode {
 ///  continuously adjust the gain to maximize dynamic range and minimize clipping.
 ///
 ///  @note Implementers are encouraged to simply present a boolean choice between
-///        "AGC On" (::BladerfGainDefault) and "AGC Off" (::BladerfGainMgc).
+///        "AGC On" (BladeRf1GainMode::Default) and "AGC Off" (BladeRf1GainMode::Mgc).
 ///        The remaining choices are for advanced use cases.
 #[derive(PartialEq)]
 pub enum BladeRf1GainMode {
@@ -644,7 +643,7 @@ pub enum BladeRf1GainMode {
     /// On the bladeRF x40 and x115 with FPGA versions >= v0.7.0, this is
     /// automatic gain control.
     ///
-    /// On the bladeRF 2.0 Micro, this is BladerfGainSlowattackAgc with
+    /// On the bladeRF 2.0 Micro, this is BladeRf1GainMode::SlowattackAgc with
     /// reasonable default settings.
     Default,
 
@@ -657,13 +656,13 @@ pub enum BladeRf1GainMode {
     ///
     /// Only available on the bladeRF 2.0 Micro. This is an advanced option, and
     /// typically requires additional configuration for ideal performance.
-    FastattackAgc,
+    FastAttackAgc,
 
     /// Automatic gain control, slow attack (advanced)
     ///
     /// Only available on the bladeRF 2.0 Micro. This is an advanced option, and
     /// typically requires additional configuration for ideal performance.
-    SlowattackAgc,
+    SlowAttackAgc,
 
     /// Automatic gain control, hybrid attack (advanced)
     ///

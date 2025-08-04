@@ -171,7 +171,7 @@ impl BladeRf1 {
     pub(crate) fn config_gpio_write(&self, mut data: u32) -> Result<()> {
         log::trace!("[config_gpio_write] data: {data}");
         let speed = self.speed()?;
-        log::trace!("[config_gpio_write] speed: {:?}", speed);
+        log::trace!("[config_gpio_write] speed: {speed:?}");
         // If we're connected at HS, we need to use smaller DMA transfers
         match speed {
             Speed::High => {
@@ -181,7 +181,7 @@ impl BladeRf1 {
                 data &= !(BLADERF_GPIO_FEATURE_SMALL_DMA_XFER as u32);
             }
             _ => {
-                log::error!("speed {:?} not supported", speed);
+                log::error!("speed {speed:?} not supported");
                 return Err(Error::Invalid);
             }
         }
@@ -381,7 +381,7 @@ impl BladeRf1 {
             // Out actual:   42000100080000000000000000000000
             // In: expected: 4200030008d1ab000000000000000000
             // In actual:    42000300080000000000000000000000
-            // Todo: Implement AGC table and set mode to BladerfGainDefault
+            // Todo: Implement AGC table and set mode to BladeRf1GainDefault
             self.set_gain_mode(bladerf_channel_rx!(0), BladeRf1GainMode::Mgc)?;
         } else {
             log::trace!("[*] Init - Device already initialized: {cfg:#04x}");
@@ -672,7 +672,9 @@ impl BladeRf1 {
             data: &[],
         };
 
-        self.interface.control_out(pkt, Duration::from_secs(100));
+        self.interface
+            .control_out(pkt, Duration::from_secs(100))
+            .wait()?;
         // self.device.set_configuration(0).wait()?;
         // self.interface.set_alt_setting(0).wait()?;
 

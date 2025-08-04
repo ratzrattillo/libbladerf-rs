@@ -45,7 +45,6 @@ pub const BLADERF_FREQUENCY_MIN: u32 = 237500000;
 /// \deprecated Use bladerf_get_frequency_range()
 pub const BLADERF_FREQUENCY_MAX: u32 = 3800000000;
 
-//
 // /// @ingroup FN_IMAGE
 // /// @defgroup BLADERF_FLASH_CONSTANTS Flash image format constants
 // ///
@@ -74,7 +73,7 @@ pub const BLADERF_FLASH_ADDR_FPGA: u32 = 0x00040000;
 
 /// Stream channel layout
 #[derive(PartialEq)]
-pub enum BladeRfChannelLayout {
+pub enum BladeRf1ChannelLayout {
     RxX1 = 0, // x1 RX (SISO)
     TxX1 = 1, // x1 TX (SISO)
     RxX2 = 2, // x2 RX (MIMO)
@@ -83,40 +82,25 @@ pub enum BladeRfChannelLayout {
 
 /// RX mux modes
 #[derive(PartialEq, Debug, Clone)]
-pub enum BladerfRxMux {
+pub enum BladeRf1RxMux {
     MuxInvalid = -1,
-    MuxBaseband = 0x0,
-    Mux12BitCounter = 0x1,
-    Mux32BitCounter = 0x2,
-    MuxDigitalLoopback = 0x4,
+    MuxBaseband = 0,
+    Mux12BitCounter = 1,
+    Mux32BitCounter = 2,
+    MuxDigitalLoopback = 4,
 }
 
-impl From<u32> for BladerfRxMux {
+impl From<u32> for BladeRf1RxMux {
     fn from(value: u32) -> Self {
         match value {
-            0 => BladerfRxMux::MuxBaseband,
-            1 => BladerfRxMux::Mux12BitCounter,
-            2 => BladerfRxMux::Mux32BitCounter,
-            4 => BladerfRxMux::MuxDigitalLoopback,
-            _ => BladerfRxMux::MuxInvalid,
+            0 => BladeRf1RxMux::MuxBaseband,
+            1 => BladeRf1RxMux::Mux12BitCounter,
+            2 => BladeRf1RxMux::Mux32BitCounter,
+            4 => BladeRf1RxMux::MuxDigitalLoopback,
+            _ => BladeRf1RxMux::MuxInvalid,
         }
     }
 }
-
-//
-// /// @defgroup FN_BLADERF1_GAIN Gain stages (deprecated)
-// ///
-// /// These functions provide control over the device's RX and TX gain stages.
-// ///
-// /// \deprecated Use bladerf_get_gain_range(), bladerf_set_gain(), and
-// ///             bladerf_get_gain() to control total system gain. For direct
-// ///             control of individual gain stages, use bladerf_get_gain_stages(),
-// ///             bladerf_get_gain_stage_range(), bladerf_set_gain_stage(), and
-// ///             bladerf_get_gain_stage().
-// ///
-// /// @{
-//
-//
 
 /// Enable LMS receive
 ///
@@ -220,23 +204,23 @@ pub const BLADERF_DIRECTION_MASK: u8 = 0x1;
 
 /// Expansion boards
 #[derive(Clone, PartialEq, Debug)]
-pub enum BladerfXb {
+pub enum BladeRf1Xb {
     /// No expansion boards attached
-    BladerfXbNone = 0,
+    XbNone = 0,
     /// XB-100 GPIO expansion board.
     ///   This device is not yet supported in
     ///   libbladeRF, and is here as a placeholder
     ///   for future support.
-    BladerfXb100,
+    Xb100,
     /// XB-200 Transverter board
-    BladerfXb200,
+    Xb200,
     /// XB-300 Amplifier board
-    BladerfXb300,
+    Xb300,
 }
 
 /// Version structure for FPGA, firmware, libbladeRF, and associated utilities
 #[derive(Debug)]
-pub struct BladeRfVersion {
+pub struct BladeRf1Version {
     /// Major version
     pub major: u16,
     /// Minor version
@@ -245,7 +229,7 @@ pub struct BladeRfVersion {
     pub patch: u16,
 }
 
-impl Display for BladeRfVersion {
+impl Display for BladeRf1Version {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.write_fmt(format_args!("{}.{}.{}", self.major, self.minor, self.patch))
     }

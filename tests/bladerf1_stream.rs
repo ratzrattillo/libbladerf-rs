@@ -40,7 +40,7 @@ fn tx_stream() -> Result<()> {
     streamer.activate()?;
     // TODO: should we return number of written bytes?
     // TODO: Test the write method instead of write_all only
-    let _n = streamer.write_all(&mut [&mut samples], None, true, 20000)?;
+    streamer.write_all(&[&mut samples], None, true, 20000)?;
 
     // assert_eq!(samples.len(), n);
     log::trace!("Wrote samples!");

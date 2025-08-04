@@ -2,10 +2,8 @@
 
 use crate::BladeRf1;
 use crate::{Error, Result};
-use bladerf_globals::bladerf1::BladerfXb;
-use bladerf_globals::bladerf1::BladerfXb::{
-    BladerfXb100, BladerfXb200, BladerfXb300, BladerfXbNone,
-};
+use bladerf_globals::bladerf1::BladeRf1Xb;
+use bladerf_globals::bladerf1::BladeRf1Xb::{Xb100, Xb200, Xb300, XbNone};
 
 // @defgroup FN_EXP_IO Expansion I/O
 //
@@ -314,39 +312,30 @@ impl BladeRf1 {
     /******************************************************************************/
     // Expansion support
     /******************************************************************************/
-    pub fn expansion_get_attached(&self) -> Result<BladerfXb> {
+    pub fn expansion_get_attached(&self) -> Result<BladeRf1Xb> {
         // CHECK_BOARD_STATE(STATE_FPGA_LOADED);
-        // if self.xb100.is_some() {
-        //     Ok(BladerfXb100)
-        // } else if self.xb200.is_some() {
-        //     Ok(BladerfXb200)
-        // } else if self.xb300.is_some() {
-        //     Ok(BladerfXb300)
-        // } else {
-        //     Ok(BladerfXbNone)
-        // }
         if BladeRf1::xb100_is_enabled(&self.interface)? {
-            Ok(BladerfXb100)
+            Ok(Xb100)
         } else if BladeRf1::xb200_is_enabled(&self.interface)? {
-            Ok(BladerfXb200)
+            Ok(Xb200)
         } else if BladeRf1::xb300_is_enabled(&self.interface)? {
-            Ok(BladerfXb300)
+            Ok(Xb300)
         } else {
-            Ok(BladerfXbNone)
+            Ok(XbNone)
         }
     }
 
-    pub fn expansion_attach(&self, xb: BladerfXb) -> Result<()> {
+    pub fn expansion_attach(&self, xb: BladeRf1Xb) -> Result<()> {
         // CHECK_BOARD_STATE(STATE_INITIALIZED);
 
         let attached = self.expansion_get_attached()?;
 
-        if xb != attached && attached != BladerfXbNone {
+        if xb != attached && attached != XbNone {
             log::error!("Switching XB types is not supported.");
             return Err(Error::Invalid);
         }
 
-        if xb == BladerfXb100 {
+        if xb == Xb100 {
             // if (!have_cap(board_data->capabilities, BLADERF_CAP_MASKED_XBIO_WRITE)) {
             //   log::debug!("%s: XB100 support requires FPGA v0.4.1 or later.\n", __FUNCTION__);
             //   return BLADERF_ERR_UNSUPPORTED;
@@ -360,7 +349,7 @@ impl BladeRf1 {
 
             log::debug!("Initializing XB100");
             self.xb100_init()?;
-        } else if xb == BladerfXb200 {
+        } else if xb == Xb200 {
             // if (!have_cap(board_data->capabilities, BLADERF_CAP_XB200)) {
             //   log::debug!("%s: XB200 support requires FPGA v0.0.5 or later\n", __FUNCTION__);
             //   return BLADERF_ERR_UPDATE_FPGA;
@@ -375,7 +364,7 @@ impl BladeRf1 {
 
             log::trace!("Initializing XB200");
             self.xb200_init()?;
-        } else if xb == BladerfXb300 {
+        } else if xb == Xb300 {
             log::trace!("Attaching XB300");
             self.xb300_attach()?;
 
@@ -384,7 +373,7 @@ impl BladeRf1 {
 
             log::trace!("Initializing XB300");
             self.xb300_init()?;
-        } else if xb == BladerfXbNone {
+        } else if xb == XbNone {
             log::error!("Disabling an attached XB is not supported.");
             return Err(Error::Invalid);
         } else {

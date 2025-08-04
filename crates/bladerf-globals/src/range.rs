@@ -1,5 +1,4 @@
-/// Shamelessly stolen from: https://github.com/FutureSDR/seify/blob/main/src/range.rs
-
+// Shamelessly stolen from: https://github.com/FutureSDR/seify/blob/main/src/range.rs
 impl RangeItem {
     pub fn min(&self) -> f64 {
         match self {
@@ -39,14 +38,16 @@ impl Range {
         self.items
             .iter()
             .reduce(|a, b| if a.min() < b.min() { a } else { b })
-            .and_then(|item| Some(item.min()))
+            .map(|item| item.min())
+        //.and_then(|item| Some(item.min()))
     }
 
     pub fn max(&self) -> Option<f64> {
         self.items
             .iter()
             .reduce(|a, b| if a.max() > b.max() { a } else { b })
-            .and_then(|item| Some(item.max()))
+            .map(|item| item.max())
+        //.and_then(|item| Some(item.max()))
     }
 
     pub fn step(&self) -> Option<f64> {

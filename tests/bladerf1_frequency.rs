@@ -12,7 +12,7 @@ fn frequency_tuning() -> Result<()> {
 
     let supported_frequencies = BLADERF.get_frequency_range()?;
 
-    log::trace!("supported_frequencies: {:?}", supported_frequencies);
+    log::trace!("supported_frequencies: {supported_frequencies:?}");
     for range_item in supported_frequencies.items {
         let (min, max, _step, _scale) = match range_item {
             RangeItem::Step(min, max, step, scale) => (min, max, step, scale),
@@ -22,21 +22,21 @@ fn frequency_tuning() -> Result<()> {
         // To not go through each possible frequency, we split the range in num_splits parts
         // and tune to each of the desired frequencies.
         let num_splits = 10.0;
-        let offset = ((max - min) / num_splits).round() as u32;
+        let offset = ((max - min) / num_splits).round() as u64;
         // let mut desired = range_item.min().round() as u32;
         // while desired <= range_item.max().round() as u32 {
-        let mut desired = min.round() as u32;
-        while desired <= max.round() as u32 {
+        let mut desired = min.round() as u64;
+        while desired <= max.round() as u64 {
             for channel in [BLADERF_MODULE_RX, BLADERF_MODULE_TX] {
                 // TODO: What channels are supported?
                 let current = BLADERF.get_frequency(channel)?;
-                log::trace!("Channel {channel} Frequency (CURRENT):\t{}", current);
+                log::trace!("Channel {channel} Frequency (CURRENT):\t{current}");
                 // let desired = current + 1000;
-                log::trace!("Channel {channel} Frequency (DESIRED):\t{}", desired);
+                log::trace!("Channel {channel} Frequency (DESIRED):\t{desired}");
                 // TODO: Why is set frequency requiring a u64 while get frequency returns u32
-                BLADERF.set_frequency(channel, desired as u64)?;
+                BLADERF.set_frequency(channel, desired)?;
                 let new = BLADERF.get_frequency(channel)?;
-                log::trace!("Channel {channel} Frequency (NEW):\t{}", new);
+                log::trace!("Channel {channel} Frequency (NEW):\t{new}");
                 assert_eq!(new, desired);
             }
 
@@ -50,7 +50,7 @@ fn frequency_tuning() -> Result<()> {
             // when we want to tune to each possible frequency
             // desired += (step * scale).round() as u32;
             desired += offset;
-            desired = desired.clamp(min.round() as u32, max.round() as u32);
+            desired = desired.clamp(min.round() as u64, max.round() as u64);
         }
     }
 

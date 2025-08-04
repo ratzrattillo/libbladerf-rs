@@ -2,7 +2,9 @@ mod common;
 
 use crate::common::*;
 
-use bladerf_globals::bladerf1::BladerfRxMux;
+use bladerf_globals::bladerf1::BladeRf1RxMux::{
+    Mux12BitCounter, Mux32BitCounter, MuxBaseband, MuxDigitalLoopback,
+};
 use libbladerf_rs::Result;
 
 #[test]
@@ -10,10 +12,10 @@ fn rx_mux() -> Result<()> {
     logging_init("bladerf1_rx_mux");
 
     for desired in [
-        BladerfRxMux::Mux12BitCounter,
-        BladerfRxMux::Mux32BitCounter,
-        BladerfRxMux::MuxDigitalLoopback,
-        BladerfRxMux::MuxBaseband,
+        Mux12BitCounter,
+        Mux32BitCounter,
+        MuxDigitalLoopback,
+        MuxBaseband,
     ] {
         let current = BLADERF.get_rx_mux()?;
         log::trace!("RX Mux (CURRENT):\t{current:?}");

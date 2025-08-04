@@ -18,10 +18,7 @@ impl BladeRf1RxStreamer {
         num_transfers: Option<usize>,
         timeout: Option<Duration>,
     ) -> Result<Self> {
-        let endpoint = dev
-            .interface
-            .endpoint::<Bulk, In>(0x81)
-            .map_err(|e| Error::Nusb(e))?;
+        let endpoint = dev.interface.endpoint::<Bulk, In>(0x81)?;
         log::trace!(
             "using endpoint 0x81 with buffer_size: {buffer_size}, num_transfers: {num_transfers:?}, timeout: {timeout:?}"
         );
@@ -134,7 +131,7 @@ impl BladeRf1TxStreamer {
     }
 
     pub fn activate(&mut self) -> Result<()> {
-        // self.dev.perform_format_config(BladeRfDirection::Rx, BladerfFormat::Sc16Q11)
+        // self.dev.perform_format_config(BladeRfDirection::Rx, Format::Sc16Q11)
         //    ?;
         self.dev.enable_module(BLADERF_MODULE_TX, true)
         // dev.experimental_control_urb()
@@ -204,7 +201,7 @@ impl BladeRf1 {
         dir: BladeRf1Direction,
         format: BladeRf1Format,
     ) -> Result<()> {
-        // BladerfFormatPacketMeta
+        // BladeRf1Format::PacketMeta
         // struct bladerf1_board_data *board_data = dev->board_data;
 
         // int status = 0;
@@ -236,7 +233,7 @@ impl BladeRf1 {
         if format == BladeRf1Format::PacketMeta {
             gpio_val |= BLADERF_GPIO_PACKET;
             use_timestamps = true;
-            log::debug!("BladerfFormat::PacketMeta");
+            log::debug!("BladeRf1Format::PacketMeta");
         } else {
             gpio_val &= !BLADERF_GPIO_PACKET;
             log::debug!("else");

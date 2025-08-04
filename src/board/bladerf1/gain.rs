@@ -349,8 +349,6 @@ impl BladeRf1 {
             log::debug!("gain={orig_gain} -> txvga2={txvga2} txvga1={txvga1} remainder={gain}\n");
         }
 
-        // self.lms.txvga1_set_gain(txvga1)?;
-        // self.lms.txvga2_set_gain(txvga2)
         self.lms.txvga1_set_gain(GainDb { db: txvga1 })?;
         self.lms.txvga2_set_gain(GainDb { db: txvga2 })
     }

@@ -1,7 +1,6 @@
+/// This trait contains methods that are used by more than one packet type, to avoid
+/// code duplication.
 pub trait GenericNiosPkt {
-    /// This trait contains methods that are used by more than one packet type, to avoid
-    /// code duplication.
-
     const IDX_MAGIC: usize = 0;
     const IDX_TIME: usize = 1;
 

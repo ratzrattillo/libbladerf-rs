@@ -628,7 +628,6 @@ impl Debug for NiosPktRetuneRequest {
 ///   is full.
 ///
 ///  flags\[7:2\]    Reserved. Set to 0.
-
 pub struct NiosPktRetuneResponse {
     pkt: NiosPktRetune,
 }

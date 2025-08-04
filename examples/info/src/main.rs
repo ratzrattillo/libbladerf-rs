@@ -1,7 +1,7 @@
 use anyhow::Result;
 use bladerf_globals::BladeRf1Direction::Rx;
 use bladerf_globals::BladeRf1Format::Sc16Q11;
-use bladerf_globals::bladerf1::BladerfXb::BladerfXb200;
+use bladerf_globals::bladerf1::BladeRf1Xb::Xb200;
 use bladerf_globals::{BLADERF_MODULE_RX, BLADERF_MODULE_TX};
 use libbladerf_rs::board::bladerf1::BladeRf1;
 use std::time::Duration;
@@ -32,7 +32,7 @@ fn main() -> Result<()> {
 
     // tokio::time::sleep(Duration::from_secs(10));
 
-    bladerf.expansion_attach(BladerfXb200)?;
+    bladerf.expansion_attach(Xb200)?;
 
     let xb = bladerf.expansion_get_attached();
     log::debug!("XB: {xb:?}");

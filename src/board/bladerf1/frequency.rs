@@ -1,9 +1,9 @@
 use crate::BladeRf1;
 use crate::hardware::lms6002d::{
-    BLADERF1_BAND_HIGH, LMS_FREQ_FLAGS_FORCE_VCOCAP, LMS_FREQ_FLAGS_LOW_BAND, LMS6002D, LmsFreq,
+    BLADERF1_BAND_HIGH, LMS_FREQ_FLAGS_FORCE_VCOCAP, LMS_FREQ_FLAGS_LOW_BAND, LmsFreq,
 };
 use crate::nios::Nios;
-use crate::xb200::BladerfXb200Path;
+use crate::xb200::Xb200Path;
 use crate::{Error, Result};
 use bladerf_globals::bladerf1::{BLADERF_FREQUENCY_MAX, BLADERF_FREQUENCY_MIN};
 // use bladerf_globals::{SdrRange, TuningMode};
@@ -20,21 +20,21 @@ impl BladeRf1 {
         if BladeRf1::xb200_is_enabled(&self.interface)? {
             if frequency < BLADERF_FREQUENCY_MIN as u64 {
                 log::debug!("Setting path to Mix");
-                self.xb200_set_path(channel, &BladerfXb200Path::Mix)?;
+                self.xb200_set_path(channel, &Xb200Path::Mix)?;
 
-                self.xb200_auto_filter_selection(channel, frequency as u32)?;
+                self.xb200_auto_filter_selection(channel, frequency)?;
 
                 frequency = 1248000000 - frequency;
             } else {
                 log::debug!("Setting path to Bypass");
-                self.xb200_set_path(channel, &BladerfXb200Path::Bypass)?;
+                self.xb200_set_path(channel, &Xb200Path::Bypass)?;
             }
         }
 
         // For tuning HOST Tuning Mode:
         match &self.board_data.tuning_mode {
             TuningMode::Host => {
-                self.lms.set_frequency(channel, frequency as u32)?;
+                self.lms.set_frequency(channel, frequency)?;
                 let band = if frequency < BLADERF1_BAND_HIGH as u64 {
                     Band::Low
                 } else {
@@ -43,19 +43,14 @@ impl BladeRf1 {
                 self.band_select(channel, band)?;
             }
             TuningMode::Fpga => {
-                self.schedule_retune(
-                    channel,
-                    NiosPktRetuneRequest::RETUNE_NOW,
-                    frequency as u32,
-                    None,
-                )?;
+                self.schedule_retune(channel, NiosPktRetuneRequest::RETUNE_NOW, frequency, None)?;
             }
         }
 
         Ok(())
     }
 
-    pub fn get_frequency(&self, channel: u8) -> Result<u32> {
+    pub fn get_frequency(&self, channel: u8) -> Result<u64> {
         let f = self.lms.get_frequency(channel)?;
         if f.x == 0 {
             // If we see this, it's most often an indication that communication
@@ -63,14 +58,15 @@ impl BladeRf1 {
             log::error!("LMSFreq.x was zero!");
             return Err(Error::Invalid);
         }
-        let mut frequency_hz = LMS6002D::frequency_to_hz(&f);
+        // let mut frequency_hz = LMS6002D::frequency_to_hz(&f);
+        let mut frequency_hz: u64 = (&f).into();
         log::trace!("Frequency Hz: {frequency_hz}");
 
         // if self.xb200.is_some() {
         if BladeRf1::xb200_is_enabled(&self.interface)? {
             let path = self.xb200_get_path(channel)?;
 
-            if path == BladerfXb200Path::Mix {
+            if path == Xb200Path::Mix {
                 log::debug!("Bypass Frequency Hz: 1248000000 - {frequency_hz}");
                 frequency_hz = 1248000000 - frequency_hz;
             }
@@ -117,7 +113,7 @@ impl BladeRf1 {
         &self,
         channel: u8,
         timestamp: u64,
-        frequency: u32,
+        frequency: u64,
         quick_tune: Option<LmsFreq>,
     ) -> Result<LmsFreq> {
         let f = if let Some(qt) = quick_tune {
@@ -128,7 +124,7 @@ impl BladeRf1 {
                     "Consider supplying the quick_tune parameter to schedule_retune() when the XB-200 is enabled."
                 );
             }
-            LMS6002D::calculate_tuning_params(frequency)?
+            frequency.try_into()?
         };
 
         log::trace!("{f:?}");

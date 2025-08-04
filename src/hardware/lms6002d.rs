@@ -169,14 +169,14 @@ pub const BANDS: [FreqRange; 16] = [
     },
 ];
 
-/// The LMS FAQ (Rev 1.0r10, Section 5.20) states that the RXVGA1 codes may be
-/// converted to dB via:
-///      `value_db = 20 * log10(127 / (127 - code))`
-///
-/// However, an offset of 5 appears to be required, yielding:
-///     `value_db =  5 + 20 * log10(127 / (127 - code))`
-///
-/// let gain_db = (BLADERF_RXVGA1_GAIN_MIN as f32 + (20.0 * (127.0 / (127.0 - code)).log10())).round() as i8;
+// /// The LMS FAQ (Rev 1.0r10, Section 5.20) states that the RXVGA1 codes may be
+// /// converted to dB via:
+// ///      `value_db = 20 * log10(127 / (127 - code))`
+// ///
+// /// However, an offset of 5 appears to be required, yielding:
+// ///     `value_db =  5 + 20 * log10(127 / (127 - code))`
+// ///
+// /// let gain_db = (BLADERF_RXVGA1_GAIN_MIN as f32 + (20.0 * (127.0 / (127.0 - code)).log10())).round() as i8;
 // pub const RXVGA1_LUT_CODE2VAL: [u8; 121] = [
 //     5, 5, 5, 5, 5, 5, 5, 5, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
 //     8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 9, 9, 9, 9, 9, 9, 9, 9, 9, 10, 10, 10, 10, 10, 10, 10, 10, 11,
@@ -185,10 +185,10 @@ pub const BANDS: [FreqRange; 16] = [
 //     22, 22, 23, 24, 24, 25, 25, 26, 27, 28, 29, 30,
 // ];
 
-/// The closest values from the above formula have been selected.
-/// indicides 0 - 4 are clamped to 5dB
-///
-/// let code = 127.0 - 127.0 / (10.0f32.powf((val as f32 - BLADERF_RXVGA1_GAIN_MIN as f32) / 20.0));
+// /// The closest values from the above formula have been selected.
+// /// indicides 0 - 4 are clamped to 5dB
+// ///
+// /// let code = 127.0 - 127.0 / (10.0f32.powf((val as f32 - BLADERF_RXVGA1_GAIN_MIN as f32) / 20.0));
 // pub const RXVGA1_LUT_VAL2CODE: [u8; 31] = [
 //     2, 2, 2, 2, 2, 2, 14, 26, 37, 47, 56, 63, 70, 76, 82, 87, 91, 95, 99, 102, 104, 107, 109, 111,
 //     113, 114, 116, 117, 118, 119, 120,
@@ -324,6 +324,97 @@ pub struct LmsFreq {
     pub x: u8,
     /// Filled in by retune operation to denote which VCOCAP value was used
     pub vcocap_result: u8,
+}
+
+// pub struct FrequencyHz {
+//     pub hz: u64,
+// }
+
+impl From<&LmsFreq> for u64 {
+    fn from(value: &LmsFreq) -> Self {
+        let pll_coeff = ((value.nint as u64) << 23) + value.nfrac as u64;
+        let div = (value.x as u64) << 23;
+
+        // FrequencyHz {
+        //     hz: ((LMS_REFERENCE_HZ as u64 * pll_coeff) + (div >> 1)) / div,
+        // }
+        ((LMS_REFERENCE_HZ as u64 * pll_coeff) + (div >> 1)) / div
+    }
+}
+
+impl TryFrom<u64> for LmsFreq {
+    type Error = Error;
+
+    fn try_from(value: u64) -> std::result::Result<Self, Self::Error> {
+        /// This is a linear interpolation of our experimentally identified
+        /// mean VCOCAP min and VCOCAP max values.
+        ///
+        /// The MIN/MAX values were determined experimentally by
+        /// sampling the VCOCAP values over frequency, for each of the VCOs and finding
+        /// these to be in the "middle" of a linear regression. Although the curve
+        /// isn't actually linear, the linear approximation yields satisfactory error.
+        fn estimate_vcocap(f_target: u32, f_low: u32, f_high: u32) -> u8 {
+            let denom: f32 = (f_high - f_low) as f32;
+            let num: f32 = VCOCAP_EST_RANGE as f32;
+            let f_diff: f32 = (f_target - f_low) as f32;
+
+            let vcocap = (num / denom * f_diff) + 0.5 + VCOCAP_EST_MIN as f32;
+
+            if vcocap > VCOCAP_MAX_VALUE as f32 {
+                log::debug!("Clamping VCOCAP estimate from {vcocap} to {VCOCAP_MAX_VALUE}");
+                VCOCAP_MAX_VALUE
+            } else {
+                log::debug!("VCOCAP estimate: {vcocap}");
+                vcocap as u8
+            }
+        }
+
+        // /// Several parameters are required to tune the LMS to a specific frequency.
+        // /// These parameters are being calculated in this function.
+        let mut f: LmsFreq = LmsFreq::default();
+
+        // Clamp out of range values
+        let freq = value.clamp(BLADERF_FREQUENCY_MIN as u64, BLADERF_FREQUENCY_MAX as u64);
+        // log::debug!("freq: {freq}");
+
+        // Figure out freqsel
+        let freq_range = BANDS
+            .iter()
+            .find(|freq_range| (freq >= freq_range.low) && (freq <= freq_range.high))
+            .ok_or(Error::Argument("Could not determine frequency range"))?;
+
+        f.freqsel = freq_range.value;
+        log::trace!("f.freqsel: {}", f.freqsel);
+
+        // Estimate our target VCOCAP value.
+        f.vcocap = estimate_vcocap(freq as u32, freq_range.low as u32, freq_range.high as u32);
+        log::trace!("f.vcocap: {}", f.vcocap);
+
+        // Calculate the integer portion of the frequency value
+        let vco_x = 1 << ((f.freqsel & 7) - 3);
+        log::trace!("vco_x: {vco_x}");
+        assert!(vco_x <= u8::MAX as u64);
+        f.x = vco_x as u8;
+        log::trace!("f.x: {}", f.x);
+        let mut temp = (vco_x * freq) / LMS_REFERENCE_HZ as u64;
+        assert!(temp <= u16::MAX as u64);
+        f.nint = temp as u16;
+        log::trace!("f.nint: {}", f.nint);
+
+        temp = (1 << 23) * (vco_x * freq - f.nint as u64 * LMS_REFERENCE_HZ as u64);
+        temp = (temp + LMS_REFERENCE_HZ as u64 / 2) / LMS_REFERENCE_HZ as u64;
+        assert!(temp <= u32::MAX as u64);
+        f.nfrac = temp as u32;
+        log::trace!("f.nfrac: {}", f.nfrac);
+
+        assert!(LMS_REFERENCE_HZ as u64 <= u32::MAX as u64);
+
+        if freq < BLADERF1_BAND_HIGH as u64 {
+            f.flags |= LMS_FREQ_FLAGS_LOW_BAND;
+        }
+        log::trace!("f.flags: {}", f.flags);
+        Ok(f)
+    }
 }
 
 /// For >= 1.5 GHz uses the high band should be used. Otherwise, the low
@@ -698,77 +789,6 @@ impl LMS6002D {
         self.write(base + 8, data)
     }
 
-    /// This is a linear interpolation of our experimentally identified
-    /// mean VCOCAP min and VCOCAP max values.
-    ///
-    /// The MIN/MAX values were determined experimentally by
-    /// sampling the VCOCAP values over frequency, for each of the VCOs and finding
-    /// these to be in the "middle" of a linear regression. Although the curve
-    /// isn't actually linear, the linear approximation yields satisfactory error.
-    pub fn estimate_vcocap(f_target: u32, f_low: u32, f_high: u32) -> u8 {
-        let denom: f32 = (f_high - f_low) as f32;
-        let num: f32 = VCOCAP_EST_RANGE as f32;
-        let f_diff: f32 = (f_target - f_low) as f32;
-
-        let vcocap = (num / denom * f_diff) + 0.5 + VCOCAP_EST_MIN as f32;
-
-        if vcocap > VCOCAP_MAX_VALUE as f32 {
-            log::debug!("Clamping VCOCAP estimate from {vcocap} to {VCOCAP_MAX_VALUE}");
-            VCOCAP_MAX_VALUE
-        } else {
-            log::debug!("VCOCAP estimate: {vcocap}");
-            vcocap as u8
-        }
-    }
-
-    /// Several parameters are required to tune the LMS to a specific frequency.
-    /// These parameters are being calculated in this function.
-    pub fn calculate_tuning_params(mut freq: u32) -> Result<LmsFreq> {
-        let mut f: LmsFreq = LmsFreq::default();
-
-        // Clamp out of range values
-        freq = freq.clamp(BLADERF_FREQUENCY_MIN, BLADERF_FREQUENCY_MAX);
-        // log::debug!("freq: {freq}");
-
-        // Figure out freqsel
-        let freq_range = BANDS
-            .iter()
-            .find(|freq_range| (freq >= freq_range.low as u32) && (freq <= freq_range.high as u32))
-            .expect("Could not determine frequency range");
-
-        f.freqsel = freq_range.value;
-        log::trace!("f.freqsel: {}", f.freqsel);
-
-        // Estimate our target VCOCAP value.
-        f.vcocap = Self::estimate_vcocap(freq, freq_range.low as u32, freq_range.high as u32);
-        log::trace!("f.vcocap: {}", f.vcocap);
-
-        // Calculate the integer portion of the frequency value
-        let vco_x = 1 << ((f.freqsel & 7) - 3);
-        log::trace!("vco_x: {vco_x}");
-        assert!(vco_x <= u8::MAX as u64);
-        f.x = vco_x as u8;
-        log::trace!("f.x: {}", f.x);
-        let mut temp = (vco_x * freq as u64) / LMS_REFERENCE_HZ as u64;
-        assert!(temp <= u16::MAX as u64);
-        f.nint = temp as u16;
-        log::trace!("f.nint: {}", f.nint);
-
-        temp = (1 << 23) * (vco_x * freq as u64 - f.nint as u64 * LMS_REFERENCE_HZ as u64);
-        temp = (temp + LMS_REFERENCE_HZ as u64 / 2) / LMS_REFERENCE_HZ as u64;
-        assert!(temp <= u32::MAX as u64);
-        f.nfrac = temp as u32;
-        log::trace!("f.nfrac: {}", f.nfrac);
-
-        assert!(LMS_REFERENCE_HZ as u64 <= u32::MAX as u64);
-
-        if freq < BLADERF1_BAND_HIGH {
-            f.flags |= LMS_FREQ_FLAGS_LOW_BAND;
-        }
-        log::trace!("f.flags: {}", f.flags);
-        Ok(f)
-    }
-
     pub fn write_vcocap(&self, base: u8, vcocap: u8, vcocap_reg_state: u8) -> Result<()> {
         assert!(vcocap <= VCOCAP_MAX_VALUE);
         log::trace!("Writing VCOCAP={vcocap}");
@@ -840,7 +860,7 @@ impl LMS6002D {
         } else if !lpf_enabled && !lpf_bypassed {
             Ok(BladeRf1LpfMode::Disabled)
         } else {
-            log::error!("Invalid LPF configuration: {:x}, {:x}", data_l, data_h);
+            log::error!("Invalid LPF configuration: {data_l:x}, {data_h:x}");
             Err(Error::Invalid)
         }
     }
@@ -914,9 +934,10 @@ impl LMS6002D {
                 self.enable_lna_power(true)?;
 
                 // Restore proper settings (LNA, RX PLL) for this frequency
-                let f = self.get_frequency(BLADERF_MODULE_RX)?;
-                self.set_frequency(BLADERF_MODULE_RX, LMS6002D::frequency_to_hz(&f))?;
-                let band = if LMS6002D::frequency_to_hz(&f) < BLADERF1_BAND_HIGH {
+                let f = &self.get_frequency(BLADERF_MODULE_RX)?;
+                self.set_frequency(BLADERF_MODULE_RX, f.into())?;
+                let f_hz: u64 = f.into();
+                let band = if f_hz < BLADERF1_BAND_HIGH as u64 {
                     Band::Low
                 } else {
                     Band::High
@@ -942,9 +963,6 @@ impl LMS6002D {
                 self.rxvga2_enable(true)
             }
             BladeRf1Loopback::Lna1 | BladeRf1Loopback::Lna2 | BladeRf1Loopback::Lna3 => {
-                // let lna: u8 = u8::from(mode) - BladerfLoopback::Lna1 as u8 + 1;
-                // assert!(lna >= 1 && lna <= 3);
-                // let lms_lna = LmsLna::try_from(lna)?;
                 let lms_lna = match mode {
                     BladeRf1Loopback::Lna1 => LmsLna::Lna1,
                     BladeRf1Loopback::Lna2 => LmsLna::Lna2,
@@ -987,10 +1005,11 @@ impl LMS6002D {
         match mode {
             BladeRf1Loopback::None => {
                 // Restore proper settings (PA) for this frequency
-                let f = self.get_frequency(BLADERF_MODULE_TX)?;
-                self.set_frequency(BLADERF_MODULE_TX, LMS6002D::frequency_to_hz(&f))?;
+                let f = &self.get_frequency(BLADERF_MODULE_TX)?;
+                self.set_frequency(BLADERF_MODULE_TX, f.into())?;
 
-                let band = if LMS6002D::frequency_to_hz(&f) < BLADERF1_BAND_HIGH {
+                let f_hz: u64 = f.into();
+                let band = if f_hz < BLADERF1_BAND_HIGH as u64 {
                     Band::Low
                 } else {
                     Band::High
@@ -1521,8 +1540,8 @@ impl LMS6002D {
         }
     }
 
-    pub fn set_frequency(&self, channel: u8, frequency: u32) -> Result<()> {
-        let mut f = Self::calculate_tuning_params(frequency)?;
+    pub fn set_frequency(&self, channel: u8, frequency: u64) -> Result<()> {
+        let mut f = frequency.try_into()?;
         log::trace!("{f:?}");
 
         self.set_precalculated_frequency(channel, &mut f)
@@ -1559,12 +1578,12 @@ impl LMS6002D {
         Ok(f)
     }
 
-    pub fn frequency_to_hz(lms_freq: &LmsFreq) -> u32 {
-        let pll_coeff = ((lms_freq.nint as u64) << 23) + lms_freq.nfrac as u64;
-        let div = (lms_freq.x as u64) << 23;
-
-        (((LMS_REFERENCE_HZ as u64 * pll_coeff) + (div >> 1)) / div) as u32
-    }
+    // pub fn frequency_to_hz(lms_freq: &LmsFreq) -> u32 {
+    //     let pll_coeff = ((lms_freq.nint as u64) << 23) + lms_freq.nfrac as u64;
+    //     let div = (lms_freq.x as u64) << 23;
+    //
+    //     (((LMS_REFERENCE_HZ as u64 * pll_coeff) + (div >> 1)) / div) as u32
+    // }
 
     pub fn lna_set_gain(&self, gain: GainDb) -> Result<()> {
         // Set the gain on the LNA
@@ -1576,8 +1595,6 @@ impl LMS6002D {
         let lna_gain_code_u8: u8 = lna_gain_code.into();
         // Update gain value
         data |= (lna_gain_code_u8 & 3) << 6;
-        //let lna_gain_code_u8: u8 = lna_gain_code.into();
-        //data |= lna_gain_code_u8;
         self.write(0x75, data)
     }
 
@@ -1612,10 +1629,6 @@ impl LMS6002D {
         // let gain_db = gain.clamp(BLADERF_RXVGA1_GAIN_MIN, BLADERF_RXVGA1_GAIN_MAX);
         // let code = RXVGA1_LUT_VAL2CODE[gain_db as usize];
 
-        // let gain_db = gain_db.clamp(BLADERF_RXVGA1_GAIN_MIN, BLADERF_RXVGA1_GAIN_MAX) as f32;
-        // let code = (127.0
-        //     - 127.0 / (10.0f32.powf((gain_db - BLADERF_RXVGA1_GAIN_MIN as f32) / 20.0)))
-        // .round() as u8;
         let code: Rxvga1GainCode = gain_db.into();
         self.write(0x76, code.code)
     }
@@ -1635,9 +1648,6 @@ impl LMS6002D {
         let rxvga1_gain_code = Rxvga1GainCode {
             code: data.clamp(0, 120),
         };
-        // let gain_db = (BLADERF_RXVGA1_GAIN_MIN as f32
-        //     + (20.0 * (127.0 / (127.0 - rxvga1_gain_code as f32)).log10()))
-        // .round() as i8;
 
         Ok(rxvga1_gain_code.into())
     }
@@ -1711,7 +1721,7 @@ impl LMS6002D {
     }
 
     pub fn get_quick_tune(&self, module: u8) -> Result<BladeRf1QuickTune> {
-        let f = self.get_frequency(module)?;
+        let f = &self.get_frequency(module)?;
 
         let mut quick_tune = BladeRf1QuickTune {
             freqsel: f.freqsel,
@@ -1746,7 +1756,8 @@ impl LMS6002D {
 
             quick_tune.flags = LMS_FREQ_FLAGS_FORCE_VCOCAP;
 
-            if LMS6002D::frequency_to_hz(&f) < BLADERF1_BAND_HIGH {
+            let f_hz: u64 = f.into();
+            if f_hz < BLADERF1_BAND_HIGH as u64 {
                 quick_tune.flags |= LMS_FREQ_FLAGS_LOW_BAND;
             }
         }

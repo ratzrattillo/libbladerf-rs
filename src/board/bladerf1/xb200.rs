@@ -34,7 +34,7 @@ pub const LMS_TX_SWAP: u8 = 0x08;
 
 /// XB-200 filter selection options
 #[derive(PartialEq, Debug, Clone)]
-pub enum BladerfXb200Filter {
+pub enum Xb200Filter {
     /// 50-54 MHz (6 meter band) filterbank */
     _50M = 0,
 
@@ -71,16 +71,16 @@ pub enum BladerfXb200Filter {
     Auto3db = 5,
 }
 
-impl TryFrom<u32> for BladerfXb200Filter {
+impl TryFrom<u32> for Xb200Filter {
     type Error = Error;
     fn try_from(value: u32) -> Result<Self> {
         match value {
-            0 => Ok(BladerfXb200Filter::_50M),
-            1 => Ok(BladerfXb200Filter::_144M),
-            2 => Ok(BladerfXb200Filter::_222M),
-            3 => Ok(BladerfXb200Filter::Custom),
-            4 => Ok(BladerfXb200Filter::Auto1db),
-            5 => Ok(BladerfXb200Filter::Auto3db),
+            0 => Ok(Xb200Filter::_50M),
+            1 => Ok(Xb200Filter::_144M),
+            2 => Ok(Xb200Filter::_222M),
+            3 => Ok(Xb200Filter::Custom),
+            4 => Ok(Xb200Filter::Auto1db),
+            5 => Ok(Xb200Filter::Auto3db),
             _ => {
                 log::error!("invalid filter selection!");
                 Err(Error::Invalid)
@@ -91,7 +91,7 @@ impl TryFrom<u32> for BladerfXb200Filter {
 
 /// XB-200 signal paths
 #[derive(PartialEq, Debug)]
-pub enum BladerfXb200Path {
+pub enum Xb200Path {
     /// Bypass the XB-200 mixer
     Bypass = 0,
     /// Pass signals through the XB-200 mixer
@@ -201,20 +201,20 @@ impl BladeRf1 {
 
     pub fn xb200_init(&self) -> Result<()> {
         log::trace!("Setting RX path");
-        self.xb200_set_path(bladerf_channel_rx!(0), &BladerfXb200Path::Bypass)?;
+        self.xb200_set_path(bladerf_channel_rx!(0), &Xb200Path::Bypass)?;
 
         log::trace!("Setting TX path");
-        self.xb200_set_path(bladerf_channel_tx!(0), &BladerfXb200Path::Bypass)?;
+        self.xb200_set_path(bladerf_channel_tx!(0), &Xb200Path::Bypass)?;
 
         log::trace!("Setting RX filter");
-        self.xb200_set_filterbank(bladerf_channel_rx!(0), BladerfXb200Filter::Auto1db)?;
+        self.xb200_set_filterbank(bladerf_channel_rx!(0), Xb200Filter::Auto1db)?;
 
         log::trace!("Setting TX filter");
-        self.xb200_set_filterbank(bladerf_channel_tx!(0), BladerfXb200Filter::Auto1db)
+        self.xb200_set_filterbank(bladerf_channel_tx!(0), Xb200Filter::Auto1db)
     }
 
     /// Validate XB-200 path selection
-    pub fn xb200_get_filterbank(&self, ch: u8) -> Result<BladerfXb200Filter> {
+    pub fn xb200_get_filterbank(&self, ch: u8) -> Result<Xb200Filter> {
         if ch != bladerf_channel_rx!(0) && ch != bladerf_channel_tx!(0) {
             log::error!("invalid channel");
             return Err(Error::Invalid);
@@ -229,10 +229,10 @@ impl BladeRf1 {
             BLADERF_XB_TX_SHIFT
         };
 
-        BladerfXb200Filter::try_from((val >> shift) & 3)
+        Xb200Filter::try_from((val >> shift) & 3)
     }
 
-    pub fn set_filterbank_mux(&self, ch: u8, filter: BladerfXb200Filter) -> Result<()> {
+    pub fn set_filterbank_mux(&self, ch: u8, filter: Xb200Filter) -> Result<()> {
         let (mask, shift) = if ch == bladerf_channel_rx!(0) {
             (BLADERF_XB_RX_MASK, BLADERF_XB_RX_SHIFT)
         } else {
@@ -259,18 +259,18 @@ impl BladeRf1 {
         Ok(())
     }
 
-    pub fn xb200_set_filterbank(&self, ch: u8, filter: BladerfXb200Filter) -> Result<()> {
+    pub fn xb200_set_filterbank(&self, ch: u8, filter: Xb200Filter) -> Result<()> {
         if ch != bladerf_channel_rx!(0) && ch != bladerf_channel_tx!(0) {
             log::error!("invalid channel");
             return Err(Error::Invalid);
         }
 
-        if BladeRf1::xb200_is_enabled(&self.interface)? == false {
+        if !BladeRf1::xb200_is_enabled(&self.interface)? {
             log::error!("xb_200 not attached!");
             return Err(Error::Invalid);
         }
 
-        if filter == BladerfXb200Filter::Auto1db || filter == BladerfXb200Filter::Auto3db {
+        if filter == Xb200Filter::Auto1db || filter == Xb200Filter::Auto3db {
             // Save which soft auto filter mode we're in
             // (Just saves the state, but does not communicate with the board)
             // xb_data->auto_filter[ch] = filter;
@@ -292,7 +292,7 @@ impl BladeRf1 {
         }
     }
 
-    pub fn xb200_auto_filter_selection(&self, ch: u8, frequency: u32) -> Result<()> {
+    pub fn xb200_auto_filter_selection(&self, ch: u8, frequency: u64) -> Result<()> {
         if frequency >= 300000000 {
             return Ok(());
         }
@@ -302,30 +302,30 @@ impl BladeRf1 {
             return Err(Error::Invalid);
         }
 
-        if BladeRf1::xb200_is_enabled(&self.interface)? == false {
+        if !BladeRf1::xb200_is_enabled(&self.interface)? {
             log::error!("xb_200 not attached!");
             return Err(Error::Invalid);
         }
 
-        let filter = if self.xb200_get_filterbank(ch)? == BladerfXb200Filter::Auto1db {
+        let filter = if self.xb200_get_filterbank(ch)? == Xb200Filter::Auto1db {
             if (37774405..=59535436).contains(&frequency) {
-                Ok(BladerfXb200Filter::_50M)
+                Ok(Xb200Filter::_50M)
             } else if (128326173..=166711171).contains(&frequency) {
-                Ok(BladerfXb200Filter::_144M)
+                Ok(Xb200Filter::_144M)
             } else if (187593160..=245346403).contains(&frequency) {
-                Ok(BladerfXb200Filter::_222M)
+                Ok(Xb200Filter::_222M)
             } else {
-                Ok(BladerfXb200Filter::Custom)
+                Ok(Xb200Filter::Custom)
             }
-        } else if self.xb200_get_filterbank(ch)? == BladerfXb200Filter::Auto3db {
+        } else if self.xb200_get_filterbank(ch)? == Xb200Filter::Auto3db {
             if (34782924..=61899260).contains(&frequency) {
-                Ok(BladerfXb200Filter::_50M)
+                Ok(Xb200Filter::_50M)
             } else if (121956957..=178444099).contains(&frequency) {
-                Ok(BladerfXb200Filter::_144M)
+                Ok(Xb200Filter::_144M)
             } else if (177522675..=260140935).contains(&frequency) {
-                Ok(BladerfXb200Filter::_222M)
+                Ok(Xb200Filter::_222M)
             } else {
-                Ok(BladerfXb200Filter::Custom)
+                Ok(Xb200Filter::Custom)
             }
         } else {
             log::error!("unexpected filterbank!");
@@ -339,7 +339,7 @@ impl BladeRf1 {
         Ok(())
     }
 
-    pub fn xb200_set_path(&self, ch: u8, path: &BladerfXb200Path) -> Result<()> {
+    pub fn xb200_set_path(&self, ch: u8, path: &Xb200Path) -> Result<()> {
         if ch != bladerf_channel_rx!(0) && ch != bladerf_channel_tx!(0) {
             log::error!("invalid channel!");
             return Err(Error::Invalid);
@@ -348,7 +348,7 @@ impl BladeRf1 {
         let lorig = self.lms.read(0x5A)?;
         let mut lval = lorig;
 
-        if path == &BladerfXb200Path::Mix {
+        if path == &Xb200Path::Mix {
             lval |= if ch == bladerf_channel_rx!(0) {
                 LMS_RX_SWAP
             } else {
@@ -381,12 +381,12 @@ impl BladeRf1 {
         val &= !mask;
 
         if ch == bladerf_channel_rx!(0) {
-            if path == &BladerfXb200Path::Mix {
+            if path == &Xb200Path::Mix {
                 val |= BLADERF_XB_RX_ENABLE | BLADERF_XB_CONFIG_RX_PATH_MIX;
             } else {
                 val |= BLADERF_XB_CONFIG_RX_PATH_BYPASS;
             }
-        } else if path == &BladerfXb200Path::Mix {
+        } else if path == &Xb200Path::Mix {
             val |= BLADERF_XB_TX_ENABLE | BLADERF_XB_CONFIG_TX_PATH_MIX;
         } else {
             val |= BLADERF_XB_CONFIG_TX_PATH_BYPASS;
@@ -395,21 +395,21 @@ impl BladeRf1 {
         self.interface.nios_expansion_gpio_write(0xffffffff, val)
     }
 
-    pub fn xb200_get_path(&self, ch: u8) -> Result<BladerfXb200Path> {
+    pub fn xb200_get_path(&self, ch: u8) -> Result<Xb200Path> {
         let val = self.interface.nios_expansion_gpio_read()?;
         log::trace!("[xb200_get_path] expansion_gpio_read: {val}");
 
         if ch == bladerf_channel_rx!(0) {
             if val & BLADERF_XB_CONFIG_RX_BYPASS != 0 {
-                Ok(BladerfXb200Path::Mix)
+                Ok(Xb200Path::Mix)
             } else {
-                Ok(BladerfXb200Path::Bypass)
+                Ok(Xb200Path::Bypass)
             }
         } else if ch == bladerf_channel_tx!(0) {
             if val & BLADERF_XB_CONFIG_TX_BYPASS != 0 {
-                Ok(BladerfXb200Path::Mix)
+                Ok(Xb200Path::Mix)
             } else {
-                Ok(BladerfXb200Path::Bypass)
+                Ok(Xb200Path::Bypass)
             }
         } else {
             log::error!("invalid channel!");

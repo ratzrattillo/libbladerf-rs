@@ -12,7 +12,7 @@ fn sample_rate() -> Result<()> {
 
     let supported_sample_rates = BladeRf1::get_sample_rate_range();
 
-    log::trace!("supported_sample_rates: {:?}", supported_sample_rates);
+    log::trace!("supported_sample_rates: {supported_sample_rates:?}");
     for range_item in supported_sample_rates.items {
         let (min, max, step, scale) = match range_item {
             RangeItem::Step(min, max, step, scale) => (min, max, step, scale),
