@@ -27,6 +27,6 @@ cd ${SCRIPTPATH}/examples && cargo clippy --all-targets -- -D warnings
 # doctests
 cd ${SCRIPTPATH} && cargo test --doc
 # standard tests
-cd ${SCRIPTPATH} && cargo test --all-targets
+cd ${SCRIPTPATH} && cargo test --all-targets -- --test-threads=1 # --no-capture
 # examples
-cd ${SCRIPTPATH}/examples && cargo test --all-targets
+cd ${SCRIPTPATH}/examples && cargo test --all-targets -- --test-threads=1 # --no-capture

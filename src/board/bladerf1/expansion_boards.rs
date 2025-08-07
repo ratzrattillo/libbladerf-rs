@@ -337,7 +337,7 @@ impl BladeRf1 {
 
         if xb == Xb100 {
             // if (!have_cap(board_data->capabilities, BLADERF_CAP_MASKED_XBIO_WRITE)) {
-            //   log::debug!("%s: XB100 support requires FPGA v0.4.1 or later.\n", __FUNCTION__);
+            //   log::debug!("%s: XB100 support requires FPGA v0.4.1 or later.", __FUNCTION__);
             //   return BLADERF_ERR_UNSUPPORTED;
             // }
 
@@ -351,7 +351,7 @@ impl BladeRf1 {
             self.xb100_init()?;
         } else if xb == Xb200 {
             // if (!have_cap(board_data->capabilities, BLADERF_CAP_XB200)) {
-            //   log::debug!("%s: XB200 support requires FPGA v0.0.5 or later\n", __FUNCTION__);
+            //   log::debug!("%s: XB200 support requires FPGA v0.0.5 or later", __FUNCTION__);
             //   return BLADERF_ERR_UPDATE_FPGA;
             // }
             // TODO: Maybe define an expansion Board trait with default impls for all boards

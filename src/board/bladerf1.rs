@@ -50,6 +50,8 @@ pub struct BladeRf1TxStreamer {
 pub struct BladeRf1 {
     device: Device,
     pub interface: Interface,
+    // nios_ep_in: Endpoint<Bulk, In>,
+    // nios_ep_out: Endpoint<Bulk, Out>,
     board_data: BoardData,
     lms: LMS6002D,
     si5338: SI5338,

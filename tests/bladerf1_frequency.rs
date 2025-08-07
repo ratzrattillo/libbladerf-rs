@@ -5,11 +5,30 @@ use crate::common::*;
 use bladerf_globals::range::RangeItem;
 use bladerf_globals::{BLADERF_MODULE_RX, BLADERF_MODULE_TX};
 use libbladerf_rs::Result;
+// use libbladerf_rs::hardware::lms6002d::LmsFreq;
+
+// #[test]
+// fn freq_to_lms_freq() -> Result<()> {
+//     logging_init("bladerf1_frequency");
+//     let frequencies = [2660000000u64];
+//
+//     for freq in frequencies {
+//         let lms_freq: LmsFreq = freq.try_into()?;
+//         let restored_freq: u64 = (&lms_freq).into();
+//
+//         log::error!("{lms_freq:?}");
+//         log::error!("{restored_freq}");
+//
+//         assert_eq!(restored_freq, freq);
+//     }
+//     Ok(())
+// }
 
 #[test]
 fn frequency_tuning() -> Result<()> {
     logging_init("bladerf1_frequency");
 
+    let accepted_deviation = 1;
     let supported_frequencies = BLADERF.get_frequency_range()?;
 
     log::trace!("supported_frequencies: {supported_frequencies:?}");
@@ -23,21 +42,23 @@ fn frequency_tuning() -> Result<()> {
         // and tune to each of the desired frequencies.
         let num_splits = 10.0;
         let offset = ((max - min) / num_splits).round() as u64;
-        // let mut desired = range_item.min().round() as u32;
-        // while desired <= range_item.max().round() as u32 {
         let mut desired = min.round() as u64;
+
         while desired <= max.round() as u64 {
             for channel in [BLADERF_MODULE_RX, BLADERF_MODULE_TX] {
                 // TODO: What channels are supported?
                 let current = BLADERF.get_frequency(channel)?;
                 log::trace!("Channel {channel} Frequency (CURRENT):\t{current}");
-                // let desired = current + 1000;
                 log::trace!("Channel {channel} Frequency (DESIRED):\t{desired}");
                 // TODO: Why is set frequency requiring a u64 while get frequency returns u32
                 BLADERF.set_frequency(channel, desired)?;
                 let new = BLADERF.get_frequency(channel)?;
                 log::trace!("Channel {channel} Frequency (NEW):\t{new}");
-                assert_eq!(new, desired);
+
+                // The conversion from frequency (u64) to LMSFREQ struct (LmsFreq) is not 100% accurate
+                // Minor deviations in frequency are thus expected and accepted...
+                let tolerable_deviation = (new as i64 - desired as i64).abs();
+                assert!(tolerable_deviation <= accepted_deviation);
             }
 
             // if let Some(step) = range_item.step() && let Some(scale) = range_item.scale() {
@@ -50,30 +71,10 @@ fn frequency_tuning() -> Result<()> {
             // when we want to tune to each possible frequency
             // desired += (step * scale).round() as u32;
             desired += offset;
-            desired = desired.clamp(min.round() as u64, max.round() as u64);
+            desired = desired.clamp(min.round() as u64, max.round() as u64 + 1);
         }
     }
 
     // BLADERF.device_reset()
     Ok(())
 }
-
-// #[test]
-// fn frequency_tuning_xb200() -> Result<()> {
-//     logging_init("bladerf1_tuning");
-//     for channel in [BLADERF_MODULE_RX, BLADERF_MODULE_TX] {
-//         // TODO: What channels are supported?
-//         let old_freq = BLADERF.get_frequency(channel)?;
-//         log::trace!("Current Frequency:\t{}", old_freq);
-//         let desired_freq = 925e5 as u32;
-//         log::trace!("Desired Frequency:\t{}", desired_freq);
-//         // TODO: Why is set frequency requiring a u64 while get frequency returns u32
-//         BLADERF.set_frequency(channel, desired_freq as u64)?;
-//         let new_freq = BLADERF.get_frequency(channel)?;
-//         log::trace!("New Frequency:\t{}", new_freq);
-//         assert_eq!(new_freq, desired_freq);
-//     }
-//
-//     // BLADERF.device_reset()
-//     Ok(())
-// }

@@ -215,7 +215,7 @@ impl SI5338 {
         val = self.read(31 + ms.index)?;
 
         // RxDIV is stored as a power of 2, so restore it on readback
-        // log_verbose("Read r register: 0x%2.2x\n", val);
+        // log_verbose("Read r register: 0x%2.2x", val);
         val = (val >> 2) & 7;
         ms.r = 1 << val;
 

@@ -546,7 +546,7 @@ impl BladeRf1 {
         //     return BLADERF_ERR_INVAL;
         // }
         //
-        // log_debug("Enable channel: %s - %s\n",
+        // log_debug("Enable channel: %s - %s",
         //           BLADERF_CHANNEL_IS_TX(ch) ? "TX" : "RX",
         //           enable ? "True" : "False");
 
@@ -630,7 +630,7 @@ impl BladeRf1 {
         Ok(languages)
     }
 
-    pub fn get_configurations(&self) -> Vec<ConfigurationDescriptor> {
+    pub fn get_configurations(&'_ self) -> Vec<ConfigurationDescriptor<'_>> {
         self.device.configurations().collect()
     }
 

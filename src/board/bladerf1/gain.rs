@@ -10,7 +10,7 @@ use bladerf_globals::bladerf1::BLADERF_GPIO_AGC_ENABLE;
 use bladerf_globals::range::{Range, RangeItem};
 use bladerf_globals::{
     BLADERF_LNA_GAIN_MAX_DB, BLADERF_LNA_GAIN_MID_DB, BLADERF_MODULE_RX, BLADERF_MODULE_TX,
-    BladeRf1GainMode, bladerf_channel_is_tx, bladerf_channel_rx, bladerf_channel_tx,
+    BladeRf1GainMode, bladerf_channel_is_tx,
 };
 use bladerf_globals::{BladeRf1Direction, GainDb};
 // pub fn __scale(r: &SdrRange, v: f32) -> f32 {
@@ -34,21 +34,32 @@ impl BladeRf1 {
     ///
     /// "Moves" gain from overall_gain to stage_gain, ensuring that overall_gain
     /// doesn't go negative and stage_gain doesn't exceed range->max.
+    /// Returns the new suggested gain for a stage and the remaining gain, that is
+    /// still left to be assigned to another stage / could not be assigned to this stage
     ///
-    /// @param\[in\]  range         The range for stage_gain
-    /// @param      stage_gain    The stage gain
-    /// @param      overall_gain  The overall gain
-    fn _apportion_gain(range: &Range, stage_gain: i8, overall_gain: i8) -> (i8, i8) {
-        // let headroom = __unscale_int(range, range.max as f32);
-        let headroom = (range.scale().unwrap() * range.max().unwrap()).round() as i8;
-        let mut allotment = overall_gain.min(headroom);
+    /// @param\[in\]  stage_gain_range   The range for stage_gain
+    /// @param      stage_gain           The stage gain
+    /// @param      gain                 The gain that should be assigned to the stage
+    fn _apportion_gain(stage_gain_range: &Range, stage_gain: i8, gain: i8) -> (i8, i8) {
+        // overall_gain is the gain, that is left to be distributed on the selected stage
+        // if not the whole overall_gain can be assigned to the stage, the remaining gain is returned
+        let stage_max_gain =
+            (stage_gain_range.scale().unwrap() * stage_gain_range.max().unwrap()).round() as i8;
+        // headroom is the amount of gain space we have left to increase our gain
+        let headroom = (stage_max_gain - stage_gain).abs();
+        // allotment is the available gain amount, that can be assigned to a stage
+        let mut allotment = gain.min(headroom);
+        // log::error!("headroom: {headroom}, allotment: {allotment}");
 
         // Enforce step size
-        while 0 != (allotment % (range.step().unwrap() as i8)) {
-            allotment -= 1;
-        }
+        allotment -= allotment % (stage_gain_range.step().unwrap() as i8);
+        // while 0 != allotment % (stage_gain_range.step().unwrap() as i8) {
+        //     allotment -= 1;
+        // }
 
-        (stage_gain + allotment, overall_gain - allotment)
+        // Assign the allotment to the gain_stage and return
+        // the reamaining gain, that yet has to be apportioned!
+        (stage_gain + allotment, gain - allotment)
     }
 
     pub fn get_gain_range(channel: u8) -> Range {
@@ -105,9 +116,9 @@ impl BladeRf1 {
             // Default mode is the same as Automatic mode
             // return Err(anyhow!("Todo: Implement AGC Table"));
             // if (!have_cap(board_data->capabilities, BLADERF_CAP_AGC_DC_LUT)) {
-            //     log_warning("AGC not supported by FPGA. %s\n", MGC_WARN);
-            //     log_info("To enable AGC, %s, then %s\n", FPGA_STR, DCCAL_STR);
-            //     log_debug("%s: expected FPGA >= v0.7.0, got v%u.%u.%u\n",
+            //     log_warning("AGC not supported by FPGA. %s", MGC_WARN);
+            //     log_info("To enable AGC, %s, then %s", FPGA_STR, DCCAL_STR);
+            //     log_debug("%s: expected FPGA >= v0.7.0, got v%u.%u.%u",
             //               __FUNCTION__, board_data->fpga_version.major,
             //               board_data->fpga_version.minor,
             //               board_data->fpga_version.patch);
@@ -115,16 +126,16 @@ impl BladeRf1 {
             // }
             //
             // if (!board_data->cal.dc_rx) {
-            //     log_warning("RX DC calibration table not found. %s\n", MGC_WARN);
-            //     log_info("To enable AGC, %s\n", DCCAL_STR);
+            //     log_warning("RX DC calibration table not found. %s", MGC_WARN);
+            //     log_info("To enable AGC, %s", DCCAL_STR);
             //     return BLADERF_ERR_UNSUPPORTED;
             // }
             //
             // if (board_data->cal.dc_rx->version != TABLE_VERSION) {
-            //     log_warning("RX DC calibration table is out-of-date. %s\n",
+            //     log_warning("RX DC calibration table is out-of-date. %s",
             //                 MGC_WARN);
-            //     log_info("To enable AGC, %s\n", DCCAL_STR);
-            //     log_debug("%s: expected version %u, got %u\n", __FUNCTION__,
+            //     log_info("To enable AGC, %s", DCCAL_STR);
+            //     log_debug("%s: expected version %u, got %u", __FUNCTION__,
             //               TABLE_VERSION, board_data->cal.dc_rx->version);
             //
             //     return BLADERF_ERR_UNSUPPORTED;
@@ -244,7 +255,7 @@ impl BladeRf1 {
                     items: vec![RangeItem::Step(
                         BLADERF_RXVGA2_GAIN_MIN as f64,
                         BLADERF_RXVGA2_GAIN_MAX as f64,
-                        1f64,
+                        3f64,
                         1f64,
                     )],
                 }),
@@ -284,7 +295,7 @@ impl BladeRf1 {
         let txvga2 = self.lms.txvga2_get_gain()?;
 
         Ok(GainDb {
-            db: txvga1.db + txvga2.db + BLADERF1_TX_GAIN_OFFSET.round() as i8,
+            db: txvga1.db + txvga2.db + BLADERF1_TX_GAIN_OFFSET as i8,
         })
     }
 
@@ -322,31 +333,33 @@ impl BladeRf1 {
     }
 
     pub fn set_tx_gain(&self, gain_db: GainDb) -> Result<()> {
-        let mut gain = gain_db.db;
-        let orig_gain = gain;
+        let desired_gain = gain_db.db;
 
-        let txvga1_range = Self::get_gain_stage_range(bladerf_channel_tx!(0), "txvga1")?;
-        let txvga2_range = Self::get_gain_stage_range(bladerf_channel_tx!(0), "txvga2")?;
+        let txvga1_range = Self::get_gain_stage_range(BLADERF_MODULE_TX, "txvga1")?;
+        let txvga2_range = Self::get_gain_stage_range(BLADERF_MODULE_TX, "txvga2")?;
 
-        // __unscale_int // as we use i8 type here, rounding is not necessary
         let mut txvga1 =
             (txvga1_range.scale().unwrap() * txvga1_range.min().unwrap()).round() as i8;
         let mut txvga2 =
             (txvga2_range.scale().unwrap() * txvga2_range.min().unwrap()).round() as i8;
 
         // offset gain so that we can use it as a counter when apportioning gain
-        gain -= BLADERF1_TX_GAIN_OFFSET.round() as i8 + txvga1 + txvga2;
+        // This is a relative gain value with the minimal possible gain substracted.
+        let mut gain = desired_gain - (BLADERF1_TX_GAIN_OFFSET as i8 + txvga1 + txvga2);
+        log::trace!("gain={desired_gain} -> txvga2={txvga2} txvga1={txvga1} remainder={gain}");
 
         // apportion gain to TXVGA2
         (txvga2, gain) = Self::_apportion_gain(&txvga2_range, txvga2, gain);
+        log::trace!("gain={desired_gain} -> txvga2={txvga2} txvga1={txvga1} remainder={gain}");
 
         // apportion gain to TXVGA1
         (txvga1, gain) = Self::_apportion_gain(&txvga1_range, txvga1, gain);
+        log::trace!("gain={desired_gain} -> txvga2={txvga2} txvga1={txvga1} remainder={gain}");
 
         // verification
         if gain != 0 {
-            log::debug!("unable to achieve requested gain {orig_gain} (missed by {gain})\n");
-            log::debug!("gain={orig_gain} -> txvga2={txvga2} txvga1={txvga1} remainder={gain}\n");
+            log::debug!("unable to achieve requested gain {desired_gain} (missed by {gain})");
+            log::debug!("gain={desired_gain} -> txvga2={txvga2} txvga1={txvga1} remainder={gain}");
         }
 
         self.lms.txvga1_set_gain(GainDb { db: txvga1 })?;
@@ -354,15 +367,13 @@ impl BladeRf1 {
     }
 
     pub fn set_rx_gain(&self, gain_db: GainDb) -> Result<()> {
-        let mut gain = gain_db.db;
-        let orig_gain = gain;
-        const CHANNEL: u8 = bladerf_channel_rx!(0);
+        let desired_gain = gain_db.db;
 
-        let lna_range = Self::get_gain_stage_range(CHANNEL, "lna")?;
-        let rxvga1_range = Self::get_gain_stage_range(CHANNEL, "rxvga1")?;
-        let rxvga2_range = Self::get_gain_stage_range(CHANNEL, "rxvga2")?;
+        let lna_range = Self::get_gain_stage_range(BLADERF_MODULE_RX, "lna")?;
+        let rxvga1_range = Self::get_gain_stage_range(BLADERF_MODULE_RX, "rxvga1")?;
+        let rxvga2_range = Self::get_gain_stage_range(BLADERF_MODULE_RX, "rxvga2")?;
 
-        // __unscale_int // as we use i8 type here, rounding is not necessary
+        // Start with the minimum gain for each stage.
         let mut lna = (lna_range.scale().unwrap() * lna_range.min().unwrap()).round() as i8;
         let mut rxvga1 =
             (rxvga1_range.scale().unwrap() * rxvga1_range.min().unwrap()).round() as i8;
@@ -370,7 +381,10 @@ impl BladeRf1 {
             (rxvga2_range.scale().unwrap() * rxvga2_range.min().unwrap()).round() as i8;
 
         // offset gain so that we can use it as a counter when apportioning gain
-        gain -= BLADERF1_RX_GAIN_OFFSET as i8 + lna + rxvga1 + rxvga2;
+        let mut gain = desired_gain - (BLADERF1_RX_GAIN_OFFSET as i8 + lna + rxvga1 + rxvga2);
+        log::trace!(
+            "gain={desired_gain} -> lna={lna} rxvga1={rxvga1} rxvga2={rxvga2} remainder={gain}"
+        );
 
         // apportion some gain to RXLNA (but only half of it for now)
         (lna, gain) = Self::_apportion_gain(&lna_range, lna, gain);
@@ -378,47 +392,57 @@ impl BladeRf1 {
             gain += lna - BLADERF_LNA_GAIN_MID_DB;
             lna = lna - (lna - BLADERF_LNA_GAIN_MID_DB);
         }
+        log::trace!(
+            "gain={desired_gain} -> lna={lna} rxvga1={rxvga1} rxvga2={rxvga2} remainder={gain}"
+        );
 
         // apportion gain to RXVGA1
         (rxvga1, gain) = Self::_apportion_gain(&rxvga1_range, rxvga1, gain);
+        log::trace!(
+            "gain={desired_gain} -> lna={lna} rxvga1={rxvga1} rxvga2={rxvga2} remainder={gain}"
+        );
 
         // apportion more gain to RXLNA
         (lna, gain) = Self::_apportion_gain(&lna_range, lna, gain);
+        log::trace!(
+            "gain={desired_gain} -> lna={lna} rxvga1={rxvga1} rxvga2={rxvga2} remainder={gain}"
+        );
 
         // apportion gain to RXVGA2
         (rxvga2, gain) = Self::_apportion_gain(&rxvga2_range, rxvga2, gain);
+        log::trace!(
+            "gain={desired_gain} -> lna={lna} rxvga1={rxvga1} rxvga2={rxvga2} remainder={gain}"
+        );
 
         // if we still have remaining gain, it's because rxvga2 has a step size of
         // 3 dB. Steal a few dB from rxvga1...
-        // In the original driver __unscale_int replaced by normal multiplications without rounding
-        if gain > 0
-            && rxvga1 >= (rxvga1_range.scale().unwrap() * rxvga1_range.max().unwrap()).round() as i8
-        {
-            // __unscale_int replaced by normal multiplications without rounding
-            rxvga1 -= (rxvga2_range.scale().unwrap() * rxvga2_range.step().unwrap()).round() as i8;
-            gain += (rxvga2_range.scale().unwrap() * rxvga2_range.step().unwrap()).round() as i8;
+        let rxvga1_max =
+            (rxvga1_range.scale().unwrap() * rxvga1_range.max().unwrap()).round() as i8;
+        let rxvga2_step =
+            (rxvga2_range.scale().unwrap() * rxvga2_range.step().unwrap()).round() as i8;
+
+        if gain > 0 && rxvga1 >= rxvga1_max {
+            rxvga1 -= rxvga2_step;
+            gain += rxvga2_step;
 
             (rxvga2, gain) = Self::_apportion_gain(&rxvga2_range, rxvga2, gain);
             (rxvga1, gain) = Self::_apportion_gain(&rxvga1_range, rxvga1, gain);
         }
+        log::trace!(
+            "gain={desired_gain} -> lna={lna} rxvga1={rxvga1} rxvga2={rxvga2} remainder={gain}"
+        );
 
         // verification
         if gain != 0 {
-            log::debug!("unable to achieve requested gain {orig_gain} (missed by {gain})\n");
+            log::debug!("unable to achieve requested gain {desired_gain} (missed by {gain})");
             log::debug!(
-                "gain={orig_gain} -> 1xvga1={rxvga1} lna={lna} rxvga2={rxvga2} remainder={gain}\n"
+                "gain={desired_gain} -> lna={lna} rxvga1={rxvga1} rxvga2={rxvga2} remainder={gain}"
             );
         }
 
         // that should do it. actually apply the changes:
-        self.lms.lna_set_gain(GainDb { db: lna })?; // Self::_convert_gain_to_lna_gain(lna)
-        // __scale_int(&rxvga1_range, rxvga1 as f32)
-        self.lms.rxvga1_set_gain(GainDb {
-            db: rxvga1 / rxvga1_range.scale().unwrap() as i8,
-        })?;
-        // __scale_int(&rxvga2_range, rxvga2 as f32)
-        self.lms.rxvga2_set_gain(GainDb {
-            db: rxvga2 / rxvga2_range.scale().unwrap() as i8,
-        })
+        self.lms.lna_set_gain(GainDb { db: lna })?;
+        self.lms.rxvga1_set_gain(GainDb { db: rxvga1 })?;
+        self.lms.rxvga2_set_gain(GainDb { db: rxvga2 })
     }
 }

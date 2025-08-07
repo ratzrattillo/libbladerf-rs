@@ -14,6 +14,8 @@ use bladerf_globals::{Txvga1GainCode, Txvga2GainCode};
 use bladerf_nios::NIOS_PKT_8X8_TARGET_LMS6;
 use bladerf_nios::packet_retune::Band;
 use nusb::Interface;
+use std::thread::sleep;
+use std::time::Duration;
 
 /// RX gain offset
 pub const BLADERF1_RX_GAIN_OFFSET: f32 = -6.0;
@@ -728,10 +730,10 @@ impl LMS6002D {
     /// (register 0x1B for TXPLL or 0x2B for RXPLL, bit 3) and reading the register
     /// 0x1A for TXPPLL or 0x2A for RXPLL, bits 7-6.
     /// Details can be found in the LMS6002 Programming and Calibration Guide.
-    pub fn get_vtune(&self, base: u8, _delay: u8) -> Result<u8> {
-        // if (delay != 0) {
-        //     VTUNE_BUSY_WAIT(delay);
-        // }
+    pub fn get_vtune(&self, base: u8, delay: u8) -> Result<u8> {
+        if delay != 0 {
+            sleep(Duration::from_micros(delay as u64));
+        }
 
         let vtune = self.read(base + 10)?;
         Ok(vtune >> 6)
@@ -1227,12 +1229,12 @@ impl LMS6002D {
             } else {
                 log::trace!("VTUNE was {vtune}. Waiting and retrying...");
 
-                // TODO: Impl busy wait
-                // VTUNE_BUSY_WAIT(10);
+                // Unneeded, due to USB transfer duration
+                sleep(Duration::from_micros(10));
             }
         }
 
-        log::trace!("Timed out while waiting for VTUNE={target_value}. Walking VCOCAP...\n");
+        log::trace!("Timed out while waiting for VTUNE={target_value}. Walking VCOCAP...");
 
         while *vcocap != limit {
             *vcocap = (*vcocap as i8 + inc) as u8;
@@ -1271,8 +1273,6 @@ impl LMS6002D {
         let mut vtune_high_limit: u8 = VCOCAP_MAX_VALUE;
         // Where VCOCAP puts use into VTUNE LOW region
         let mut vtune_low_limit: u8 = 0;
-
-        // RESET_BUSY_WAIT_COUNT();
 
         let mut vtune = self.get_vtune(base, VTUNE_DELAY_LARGE)?;
 
@@ -1358,8 +1358,6 @@ impl LMS6002D {
         self.write_vcocap(base, vcocap, vcocap_reg_state)?;
 
         vtune = self.get_vtune(base, VTUNE_DELAY_SMALL)?;
-
-        // PRINT_BUSY_WAIT_INFO();
 
         if vtune != VCO_NORM {
             log::error!("Final VCOCAP={vcocap} is not in VTUNE NORM region.");
@@ -1834,6 +1832,13 @@ impl LMS6002D {
                 // RX only has 6 bits of scale to work with, remove normalization
                 value >>= 5;
 
+                // value = value.clamp(-0x3f, 0x3f);
+                // if value < 0 {
+                //     value = value.abs();
+                //     // This register uses bit 6 to denote a negative value
+                //     value |= 1 << 6;
+                // }
+
                 if value < 0 {
                     if value <= -64 {
                         // Clamp
@@ -1858,6 +1863,14 @@ impl LMS6002D {
                 value >>= 4;
 
                 // LMS6002D 0x00 = -16, 0x80 = 0, 0xff = 15.9375
+                // let clamped = value.clamp(0x00, 0x7f);
+                // if value >= 0 {
+                //     // Assert bit 7 for positive numbers
+                //     Ok((clamped | (1 << 7)) as u8)
+                // } else {
+                //     Ok(clamped as u8)
+                // }
+
                 if value >= 0 {
                     let ret = (if value >= 128 { 0x7f } else { value & 0x7f }) as u8;
 
@@ -1866,6 +1879,55 @@ impl LMS6002D {
                 } else {
                     Ok((if value <= -128 { 0x00 } else { value & 0x7f }) as u8)
                 }
+            }
+            _ => {
+                log::error!("Invalid module selected!");
+                Err(Error::Invalid)
+            }
+        }
+    }
+
+    fn unscale_dc_offset(module: u8, mut regval: u8) -> Result<i16> {
+        match module {
+            BLADERF_MODULE_RX => {
+                // Mask out an unrelated control bit
+                regval &= 0x7f;
+
+                // Determine sign
+                let value = if regval & (1 << 6) != 0 {
+                    -((regval & 0x3f) as i16)
+                } else {
+                    (regval & 0x3f) as i16
+                };
+
+                // Renormalize to 2048
+                Ok(value << 5)
+
+                // // Mask out an unrelated control bit
+                // regval &= 0x7f;
+                // log::error!("{regval:#x} {regval:#b} {regval} [unrelated control bit masked]");
+                //
+                // let sign_bit = (regval as i16) & (1 << 6);
+                // log::error!("{sign_bit:#x} {sign_bit:#b} {sign_bit} [sign_bit mask]");
+                //
+                // let mut value = if sign_bit != 0 {
+                //     !(regval as i16)
+                // } else {
+                //     regval as i16
+                // };
+                // log::error!("{value:#x} {value:#b} {value} [bitflip if signed]");
+                //
+                // value |= sign_bit;
+                // log::error!("{value:#x} {value:#b} {value} [transform to signed value if required]");
+                //
+                // // Renormalize to 2048
+                // Ok(value << 5)
+            }
+            BLADERF_MODULE_TX => {
+                // LMS6002D 0x00 = -16, 0x80 = 0, 0xff = 15.9375
+                // Allow a range from -128 (-2048) until 127 (2032)
+                let value = -(0x80 - regval as i16);
+                Ok((value) << 4)
             }
             _ => {
                 log::error!("Invalid module selected!");
@@ -1889,6 +1951,7 @@ impl LMS6002D {
             }
         };
 
+        // log::error!("[set_dc_offset] addr: {addr:#x}, regval: {regval:#x}");
         self.write(addr, regval)
     }
 
@@ -1911,32 +1974,10 @@ impl LMS6002D {
     }
 
     fn get_dc_offset(&self, module: u8, addr: u8) -> Result<i16> {
-        let mut tmp = self.read(addr)?;
+        let regval = self.read(addr)?;
+        // log::error!("[get_dc_offset] addr: {addr:#x}, regval: {regval:#x}");
 
-        match module {
-            BLADERF_MODULE_RX => {
-                // Mask out an unrelated control bit
-                tmp &= 0x7f;
-
-                // Determine sign
-                let value = if tmp & (1 << 6) != 0 {
-                    -((tmp & 0x3f) as i16)
-                } else {
-                    (tmp & 0x3f) as i16
-                };
-
-                // Renormalize to 2048
-                Ok(value << 5)
-            }
-            BLADERF_MODULE_TX => {
-                // Renormalize to 2048
-                Ok((tmp as i16) << 4)
-            }
-            _ => {
-                log::error!("Invalid module selected!");
-                Err(Error::Invalid)
-            }
-        }
+        Self::unscale_dc_offset(module, regval)
     }
 
     pub fn get_dc_offset_i(&self, module: u8) -> Result<i16> {

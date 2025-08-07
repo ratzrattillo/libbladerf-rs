@@ -48,10 +48,8 @@ pub const BLADERF_FREQUENCY_MAX: u32 = 3800000000;
 // /// @ingroup FN_IMAGE
 // /// @defgroup BLADERF_FLASH_CONSTANTS Flash image format constants
 // ///
-// /// \note These apply to both the bladeRF1 and bladeRF2, but they are still in
+// /// note These apply to both the bladeRF1 and bladeRF2, but they are still in
 // ///       bladeRF1.h for the time being.
-// ///
-// /// @{
 
 /// Byte address of FX3 firmware
 pub const BLADERF_FLASH_ADDR_FIRMWARE: u32 = 0x00000000;

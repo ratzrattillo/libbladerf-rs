@@ -11,3 +11,9 @@
   than acquiring it once for the whole lifetime of the BladeRf1 session and accessing it via Mutex
 - Code Clarity could be increased with custom types for GainDb and GainCode. Because different parts of the code consume tha Gain in different Formats
   This might help to avoid confusion between the "From"-Traits impl for BladeRfLnaGain and functions like _convert_gain_to_lna_gain
+- How to doc comment parameters in Rust?
+- Search for \n in all files to stop having weird linebreaks
+- Adjusts the quadrature DC offset. Valid values are \[-2048, 2048\], which
+  are scaled to the available control bits.
+  DcoffQ, that's why they maybe just go until 2016?
+- Fix Error: Nusb(Error { kind: Busy, code: None, message: "endpoint already in use" }) when running tests...

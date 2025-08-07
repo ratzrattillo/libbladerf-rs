@@ -80,7 +80,7 @@ impl BladeRf1 {
     }
 
     pub fn xb300_init(&self) -> Result<()> {
-        log::debug!("Setting TRX path to TX\n");
+        log::debug!("Setting TRX path to TX");
         self.xb300_set_trx(BladeRfXb300Trx::Tx)
     }
 
@@ -124,7 +124,7 @@ impl BladeRf1 {
         //     case BladeRfXb300Trx::UNSET:
         //
         //     _:
-        //         log::debug!("Read back invalid TRX setting value: %d\n", *trx);
+        //         log::debug!("Read back invalid TRX setting value: %d", *trx);
         //         return Err(anyhow!("Invalid TRX option: %d"));
         // }
         //

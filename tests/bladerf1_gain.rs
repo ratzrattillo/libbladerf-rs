@@ -13,7 +13,7 @@ fn set_gain() -> Result<()> {
     // TODO: The definition of allowed gain rates is still wrong.
     // TODO: Intermediate steps are not allowed, only fixed values
 
-    for channel in [BLADERF_MODULE_RX, BLADERF_MODULE_TX] {
+    for channel in [BLADERF_MODULE_TX, BLADERF_MODULE_RX] {
         let supported_gains = BladeRf1::get_gain_range(channel);
 
         for range_item in supported_gains.items {

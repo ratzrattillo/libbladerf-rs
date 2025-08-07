@@ -251,7 +251,7 @@ impl BladeRf1 {
             } else {
                 "RX"
             };
-            log::trace!("Engaging {filter:?} band XB-200 {dir:?} filter\n");
+            log::trace!("Engaging {filter:?} band XB-200 {dir:?} filter");
 
             self.interface.nios_expansion_gpio_write(0xffffffff, val)?;
         }

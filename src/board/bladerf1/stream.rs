@@ -210,7 +210,7 @@ impl BladeRf1 {
 
         // status = requires_timestamps(format, &use_timestamps);
         // if (status != 0) {
-        //     log_debug("%s: Invalid format: %d\n", __FUNCTION__, format);
+        //     log_debug("%s: Invalid format: %d", __FUNCTION__, format);
         //     return status;
         // }
 
@@ -223,7 +223,7 @@ impl BladeRf1 {
         //     &other_using_timestamps);
 
         // if ((status == 0) && (other_using_timestamps != use_timestamps)) {
-        //     log_debug("Format conflict detected: RX=%d, TX=%d\n");
+        //     log_debug("Format conflict detected: RX=%d, TX=%d");
         //     return BLADERF_ERR_INVAL;
         // }
 
