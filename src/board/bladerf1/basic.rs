@@ -121,11 +121,9 @@ impl BladeRf1 {
 
     /// Return the devices' serial number
     pub fn serial(&self) -> Result<String> {
-        Ok(self
-            .get_string_descriptor(
-                NonZero::try_from(StringDescriptors::Serial as u8).map_err(|_| Error::Invalid)?,
-            )?
-            .replace("\"", ""))
+        self.get_string_descriptor(
+            NonZero::try_from(StringDescriptors::Serial as u8).map_err(|_| Error::Invalid)?,
+        )
     }
 
     /// Return the devices' manufacturer (Nuand)
