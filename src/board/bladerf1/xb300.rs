@@ -2,6 +2,7 @@ use crate::BladeRf1;
 use crate::nios::Nios;
 use crate::{Error, Result};
 use nusb::Interface;
+use std::sync::{Arc, Mutex};
 
 pub const BLADERF_XB_AUX_EN: u32 = 0x000002;
 pub const BLADERF_XB_TX_LED: u32 = 0x000010;
@@ -45,8 +46,8 @@ pub enum BladeRfXb300Amplifier {
 impl BladeRf1 {
     /// Trying to detect if XB300 is enabled by reading the LNA enablement status Flag,
     /// which is set in xb300_enable(). Might be not the best, or correct way.
-    pub fn xb300_is_enabled(interface: &Interface) -> Result<bool> {
-        Ok(interface.nios_expansion_gpio_dir_read()?
+    pub fn xb300_is_enabled(interface: &Arc<Mutex<Interface>>) -> Result<bool> {
+        Ok(interface.lock().unwrap().nios_expansion_gpio_dir_read()?
             & (BLADERF_XB_CS | BLADERF_XB_CSEL | BLADERF_XB_LNA_ENN)
             != 0)
     }
@@ -56,11 +57,11 @@ impl BladeRf1 {
         val |= BLADERF_XB_PA_EN | BLADERF_XB_LNA_ENN;
         val |= BLADERF_XB_CSEL | BLADERF_XB_SCLK | BLADERF_XB_CS;
 
-        self.interface
-            .nios_expansion_gpio_dir_write(0xffffffff, val)?;
+        let interface = self.interface.lock().unwrap();
+        interface.nios_expansion_gpio_dir_write(0xffffffff, val)?;
 
         val = BLADERF_XB_CS | BLADERF_XB_LNA_ENN;
-        self.interface.nios_expansion_gpio_write(0xffffffff, val)?;
+        interface.nios_expansion_gpio_write(0xffffffff, val)?;
 
         Ok(())
     }
@@ -72,7 +73,10 @@ impl BladeRf1 {
     pub fn xb300_enable(&self, _enable: bool) -> Result<()> {
         // TODO: Why? These values are already being set in xb300_attach()
         let val = BLADERF_XB_CS | BLADERF_XB_CSEL | BLADERF_XB_LNA_ENN;
-        self.interface.nios_expansion_gpio_write(0xffffffff, val)?;
+        self.interface
+            .lock()
+            .unwrap()
+            .nios_expansion_gpio_write(0xffffffff, val)?;
 
         let _pwr = self.xb300_get_output_power()?;
 
@@ -85,7 +89,7 @@ impl BladeRf1 {
     }
 
     pub fn xb300_set_trx(&self, trx: BladeRfXb300Trx) -> Result<()> {
-        let mut val = self.interface.nios_expansion_gpio_read()?;
+        let mut val = self.interface.lock().unwrap().nios_expansion_gpio_read()?;
         val &= !BLADERF_XB_TRX_MASK;
 
         match trx {
@@ -101,11 +105,14 @@ impl BladeRf1 {
             }
         }
 
-        self.interface.nios_expansion_gpio_write(0xffffffff, val)
+        self.interface
+            .lock()
+            .unwrap()
+            .nios_expansion_gpio_write(0xffffffff, val)
     }
 
     pub fn xb300_get_trx(&self) -> Result<BladeRfXb300Trx> {
-        let mut val = self.interface.nios_expansion_gpio_read()?;
+        let mut val = self.interface.lock().unwrap().nios_expansion_gpio_read()?;
         val &= BLADERF_XB_TRX_MASK;
 
         let trx = if val == 0 {
@@ -137,7 +144,7 @@ impl BladeRf1 {
         amp: BladeRfXb300Amplifier,
         enable: bool,
     ) -> Result<()> {
-        let mut val = self.interface.nios_expansion_gpio_read()?;
+        let mut val = self.interface.lock().unwrap().nios_expansion_gpio_read()?;
 
         match amp {
             BladeRfXb300Amplifier::Pa => {
@@ -171,11 +178,14 @@ impl BladeRf1 {
             }
         }
 
-        self.interface.nios_expansion_gpio_write(0xffffffff, val)
+        self.interface
+            .lock()
+            .unwrap()
+            .nios_expansion_gpio_write(0xffffffff, val)
     }
 
     pub fn xb300_get_amplifier_enable(&self, amp: BladeRfXb300Amplifier) -> Result<bool> {
-        let val = self.interface.nios_expansion_gpio_read()?;
+        let val = self.interface.lock().unwrap().nios_expansion_gpio_read()?;
 
         match amp {
             BladeRfXb300Amplifier::Pa => Ok(val & BLADERF_XB_PA_EN != 0),
@@ -191,21 +201,20 @@ impl BladeRf1 {
     pub fn xb300_get_output_power(&self) -> Result<f32> {
         let mut ret = 0;
 
-        let mut val = self.interface.nios_expansion_gpio_read()?;
+        let interface = self.interface.lock().unwrap();
+
+        let mut val = interface.nios_expansion_gpio_read()?;
 
         val &= !(BLADERF_XB_CS | BLADERF_XB_SCLK | BLADERF_XB_CSEL);
 
-        self.interface
-            .nios_expansion_gpio_write(0xffffffff, BLADERF_XB_SCLK | val)?;
-        self.interface
-            .nios_expansion_gpio_write(0xffffffff, BLADERF_XB_CS | BLADERF_XB_SCLK | val)?;
+        interface.nios_expansion_gpio_write(0xffffffff, BLADERF_XB_SCLK | val)?;
+        interface.nios_expansion_gpio_write(0xffffffff, BLADERF_XB_CS | BLADERF_XB_SCLK | val)?;
 
         for i in 1u32..=14u32 {
-            self.interface.nios_expansion_gpio_write(0xffffffff, val)?;
-            self.interface
-                .nios_expansion_gpio_write(0xffffffff, BLADERF_XB_SCLK | val)?;
+            interface.nios_expansion_gpio_write(0xffffffff, val)?;
+            interface.nios_expansion_gpio_write(0xffffffff, BLADERF_XB_SCLK | val)?;
 
-            let rval = self.interface.nios_expansion_gpio_read()?;
+            let rval = self.interface.lock().unwrap().nios_expansion_gpio_read()?;
 
             if (2..=11).contains(&i) {
                 ret |= (!!(rval & BLADERF_XB_DOUT)) << (11 - i);

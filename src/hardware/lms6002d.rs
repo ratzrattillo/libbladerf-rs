@@ -14,6 +14,7 @@ use bladerf_globals::{Txvga1GainCode, Txvga2GainCode};
 use bladerf_nios::NIOS_PKT_8X8_TARGET_LMS6;
 use bladerf_nios::packet_retune::Band;
 use nusb::Interface;
+use std::sync::{Arc, Mutex};
 use std::thread::sleep;
 use std::time::Duration;
 
@@ -672,7 +673,7 @@ pub struct LmsXcvrConfig {
 #[derive(Clone)]
 pub struct LMS6002D {
     /// The communication with the LMS6002D is done over an NUSB interface
-    interface: Interface,
+    interface: Arc<Mutex<Interface>>,
 }
 
 impl LMS6002D {
@@ -683,16 +684,17 @@ impl LMS6002D {
     /// # Examples
     ///
     /// ```no_run
+    /// use std::sync::{Arc, Mutex};
     /// use libbladerf_rs::{BladeRf1, Result, Error};
     /// use libbladerf_rs::hardware::lms6002d::LMS6002D;
     /// use nusb::MaybeFuture;
     ///
     /// let device = BladeRf1::list_bladerf1()?.next().ok_or(Error::NotFound)?.open().wait()?;
-    /// let interface = device.detach_and_claim_interface(0).wait()?;
+    /// let interface = Arc::new(Mutex::new(device.detach_and_claim_interface(0).wait()?));
     /// let lms = LMS6002D::new(interface);
     /// # Ok::<(), Error>(())
     /// ```
-    pub fn new(interface: Interface) -> Self {
+    pub fn new(interface: Arc<Mutex<Interface>>) -> Self {
         Self { interface }
     }
 
@@ -700,6 +702,8 @@ impl LMS6002D {
     /// of the configuration value to be read from.
     pub fn read(&self, addr: u8) -> Result<u8> {
         self.interface
+            .lock()
+            .unwrap()
             .nios_read::<u8, u8>(NIOS_PKT_8X8_TARGET_LMS6, addr)
     }
 
@@ -707,6 +711,8 @@ impl LMS6002D {
     /// of the configuration value to write to.
     pub fn write(&self, addr: u8, data: u8) -> Result<()> {
         self.interface
+            .lock()
+            .unwrap()
             .nios_write::<u8, u8>(NIOS_PKT_8X8_TARGET_LMS6, addr, data)
     }
 
@@ -1730,7 +1736,7 @@ impl LMS6002D {
             xb_gpio: 0,
         };
 
-        let val = self.interface.nios_expansion_gpio_read()?;
+        let val = self.interface.lock().unwrap().nios_expansion_gpio_read()?;
 
         // TODO: Test if the enablement check really works...
         // if self.xb200.is_some() {

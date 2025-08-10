@@ -8,6 +8,7 @@ use bladerf_globals::bladerf1::{
 use bladerf_globals::{BladeRf1RationalRate, bladerf_channel_rx, bladerf_channel_tx};
 use bladerf_nios::NIOS_PKT_8X8_TARGET_SI5338;
 use nusb::Interface;
+use std::sync::{Arc, Mutex};
 
 const SI5338_F_VCO: u64 = 38400000 * 66;
 const SI5338_EN_A: u8 = 0x01;
@@ -56,21 +57,25 @@ pub struct Si5338Multisynth {
 /// or 3.3 V core supply.
 #[derive(Clone)]
 pub struct SI5338 {
-    interface: Interface,
+    interface: Arc<Mutex<Interface>>,
 }
 
 impl SI5338 {
-    pub fn new(interface: Interface) -> Self {
+    pub fn new(interface: Arc<Mutex<Interface>>) -> Self {
         Self { interface }
     }
 
     pub fn read(&self, addr: u8) -> Result<u8> {
         self.interface
+            .lock()
+            .unwrap()
             .nios_read::<u8, u8>(NIOS_PKT_8X8_TARGET_SI5338, addr)
     }
 
     pub fn write(&self, addr: u8, data: u8) -> Result<()> {
         self.interface
+            .lock()
+            .unwrap()
             .nios_write::<u8, u8>(NIOS_PKT_8X8_TARGET_SI5338, addr, data)
     }
 

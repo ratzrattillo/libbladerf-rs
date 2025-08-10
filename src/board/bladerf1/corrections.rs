@@ -11,9 +11,17 @@ impl BladeRf1 {
         // CHECK_BOARD_STATE(STATE_INITIALIZED);
 
         match corr {
-            BladeRf1Correction::Phase => self.interface.nios_get_iq_phase_correction(ch),
+            BladeRf1Correction::Phase => self
+                .interface
+                .lock()
+                .unwrap()
+                .nios_get_iq_phase_correction(ch),
             BladeRf1Correction::Gain => {
-                let value = self.interface.nios_get_iq_gain_correction(ch)?;
+                let value = self
+                    .interface
+                    .lock()
+                    .unwrap()
+                    .nios_get_iq_gain_correction(ch)?;
 
                 // Undo the gain control offset
                 Ok(value - 4096)
@@ -31,10 +39,17 @@ impl BladeRf1 {
         // CHECK_BOARD_STATE(STATE_INITIALIZED);
 
         match corr {
-            BladeRf1Correction::Phase => self.interface.nios_set_iq_phase_correction(ch, value),
+            BladeRf1Correction::Phase => self
+                .interface
+                .lock()
+                .unwrap()
+                .nios_set_iq_phase_correction(ch, value),
             BladeRf1Correction::Gain => {
                 // Gain correction requires than an offset be applied
-                self.interface.nios_set_iq_gain_correction(ch, value + 4096)
+                self.interface
+                    .lock()
+                    .unwrap()
+                    .nios_set_iq_gain_correction(ch, value + 4096)
             }
             BladeRf1Correction::DcoffI => self.lms.set_dc_offset_i(ch, value),
             BladeRf1Correction::DcoffQ => self.lms.set_dc_offset_q(ch, value),

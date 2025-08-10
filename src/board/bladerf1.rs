@@ -20,6 +20,7 @@ use bladerf_globals::TuningMode;
 use nusb::io::{EndpointRead, EndpointWrite};
 use nusb::transfer::Bulk;
 use nusb::{Device, Interface};
+use std::sync::{Arc, Mutex};
 
 // TODO: The tuning mode should be read from the board config
 // In the packet captures, this is where the changes happen:
@@ -49,9 +50,7 @@ pub struct BladeRf1TxStreamer {
 #[derive(Clone)]
 pub struct BladeRf1 {
     device: Device,
-    pub interface: Interface,
-    // nios_ep_in: Endpoint<Bulk, In>,
-    // nios_ep_out: Endpoint<Bulk, Out>,
+    pub interface: Arc<Mutex<Interface>>,
     board_data: BoardData,
     lms: LMS6002D,
     si5338: SI5338,

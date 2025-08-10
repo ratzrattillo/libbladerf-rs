@@ -18,7 +18,7 @@ impl BladeRf1RxStreamer {
         num_transfers: Option<usize>,
         timeout: Option<Duration>,
     ) -> Result<Self> {
-        let endpoint = dev.interface.endpoint::<Bulk, In>(0x81)?;
+        let endpoint = dev.interface.lock().unwrap().endpoint::<Bulk, In>(0x81)?;
         log::trace!(
             "using endpoint 0x81 with buffer_size: {buffer_size}, num_transfers: {num_transfers:?}, timeout: {timeout:?}"
         );
@@ -108,7 +108,7 @@ impl BladeRf1TxStreamer {
         num_transfers: Option<usize>,
         timeout: Option<Duration>,
     ) -> Result<Self> {
-        let endpoint = dev.interface.endpoint::<Bulk, Out>(0x01)?;
+        let endpoint = dev.interface.lock().unwrap().endpoint::<Bulk, Out>(0x01)?;
         log::trace!(
             "using endpoint 0x01 with buffer_size: {buffer_size}, num_transfers: {num_transfers:?}, timeout: {timeout:?}"
         );
@@ -292,6 +292,8 @@ impl BladeRf1 {
         };
         let vec = self
             .interface
+            .lock()
+            .unwrap()
             .control_in(pkt, Duration::from_secs(5))
             .wait()?;
         log::debug!("Control Response Data: {vec:?}");

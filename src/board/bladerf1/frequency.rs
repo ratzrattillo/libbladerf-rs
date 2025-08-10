@@ -141,14 +141,14 @@ impl BladeRf1 {
             Tune::Normal
         };
 
-        self.interface.nios_retune(
+        self.interface.lock().unwrap().nios_retune(
             channel, timestamp, f.nint, f.nfrac, f.freqsel, f.vcocap, band, tune, f.xb_gpio,
         )?;
         Ok(f)
     }
 
     pub fn cancel_scheduled_retunes(&self, channel: u8) -> Result<()> {
-        self.interface.nios_retune(
+        self.interface.lock().unwrap().nios_retune(
             channel,
             NiosPktRetuneRequest::CLEAR_QUEUE,
             0,

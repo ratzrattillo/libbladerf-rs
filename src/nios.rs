@@ -76,8 +76,24 @@ impl Nios for Interface {
         timeout: Option<Duration>,
     ) -> Result<Vec<u8>> {
         // TODO: An endpoint handle should probably not be acquired on every call to nios_send!!
-        let mut ep_bulk_out = self.endpoint::<Bulk, Out>(ep_bulk_out_id)?;
-        let mut ep_bulk_in = self.endpoint::<Bulk, In>(ep_bulk_in_id)?;
+        // When running tests, this fails sometimes even for cargo test -- --test-threads=1 --no-capture
+        // let mut ep_bulk_out = self.endpoint::<Bulk, Out>(ep_bulk_out_id)?;
+        // let mut ep_bulk_in = self.endpoint::<Bulk, In>(ep_bulk_in_id)?;
+
+        // Endpoint might be in use, so we constantly retry...
+        // When running tests, this does not fail for cargo test -- --test-threads=1 --no-capture
+        // But it sometimes fails for parallel calls e.g:  cargo test -- --test-threads=12 --no-capture
+        // TODO: Find a fix, to allow concurrent nios commands...
+        let mut ep_bulk_out = loop {
+            if let Ok(e) = self.endpoint::<Bulk, Out>(ep_bulk_out_id) {
+                break e;
+            }
+        };
+        let mut ep_bulk_in = loop {
+            if let Ok(e) = self.endpoint::<Bulk, In>(ep_bulk_in_id) {
+                break e;
+            }
+        };
 
         // TODO: Nusb specifically requires the buffer to be a nonzero multiple of endpoint.max_packet_size()
         // TODO: This could be performance optimized, by leaving out these checks, if we can be sure,

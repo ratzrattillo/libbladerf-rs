@@ -2,10 +2,11 @@ use crate::Result;
 use crate::nios::Nios;
 use bladerf_nios::NIOS_PKT_8X16_TARGET_VCTCXO_DAC;
 use nusb::Interface;
+use std::sync::{Arc, Mutex};
 
 #[derive(Clone)]
 pub struct DAC161S055 {
-    interface: Interface,
+    interface: Arc<Mutex<Interface>>,
 }
 
 /// The DAC161S055 is a precision 16-bit, buffered
@@ -62,17 +63,16 @@ pub struct DAC161S055 {
 /// • Output Settling Time 5 μs (typ)
 /// • Power Consumption 5.5 mW at 5.25 V (max)
 impl DAC161S055 {
-    pub fn new(interface: Interface) -> Self {
+    pub fn new(interface: Arc<Mutex<Interface>>) -> Self {
         Self { interface }
     }
 
     pub fn write(&self, value: u16) -> Result<()> {
+        let interface = self.interface.lock().unwrap();
         // Ensure the device is in write-through mode
-        self.interface
-            .nios_write::<u8, u16>(NIOS_PKT_8X16_TARGET_VCTCXO_DAC, 0x28, 0x0)?;
+        interface.nios_write::<u8, u16>(NIOS_PKT_8X16_TARGET_VCTCXO_DAC, 0x28, 0x0)?;
 
         // Write DAC value to channel 0
-        self.interface
-            .nios_write::<u8, u16>(NIOS_PKT_8X16_TARGET_VCTCXO_DAC, 0x8, value)
+        interface.nios_write::<u8, u16>(NIOS_PKT_8X16_TARGET_VCTCXO_DAC, 0x8, value)
     }
 }

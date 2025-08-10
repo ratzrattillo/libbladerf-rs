@@ -3,6 +3,7 @@ use crate::nios::Nios;
 use crate::{Error, Result};
 use bladerf_globals::{bladerf_channel_rx, bladerf_channel_tx};
 use nusb::Interface;
+use std::sync::{Arc, Mutex};
 
 pub const BLADERF_XB_CONFIG_TX_PATH_MIX: u32 = 0x04;
 pub const BLADERF_XB_CONFIG_TX_PATH_BYPASS: u32 = 0x08;
@@ -101,8 +102,8 @@ pub enum Xb200Path {
 impl BladeRf1 {
     /// Trying to detect if XB200 is enabled by reading the BLADERF_XB_RF_ON gpio Flag,
     /// which is set in xb200_enable(). Might be not the best, or correct way.
-    pub fn xb200_is_enabled(interface: &Interface) -> Result<bool> {
-        Ok((interface.nios_expansion_gpio_read()? & BLADERF_XB_RF_ON) != 0)
+    pub fn xb200_is_enabled(interface: &Arc<Mutex<Interface>>) -> Result<bool> {
+        Ok((interface.lock().unwrap().nios_expansion_gpio_read()? & BLADERF_XB_RF_ON) != 0)
     }
     pub fn xb200_attach(&self) -> Result<()> {
         let muxout: usize = 6;
@@ -139,31 +140,30 @@ impl BladeRf1 {
         // Out: 43010100002f00008000000000000000 in original library!
         self.config_gpio_write(val)?;
 
-        self.interface
-            .nios_expansion_gpio_dir_write(0xffffffff, 0x3C00383E)?;
+        let interface = self.interface.lock().unwrap();
 
-        self.interface
-            .nios_expansion_gpio_write(0xffffffff, 0x800)?;
+        interface.nios_expansion_gpio_dir_write(0xffffffff, 0x3C00383E)?;
+        interface.nios_expansion_gpio_write(0xffffffff, 0x800)?;
 
         // Load ADF4351 registers via SPI
         // Refer to ADF4351 reference manual for register set
         // The LO is set to a Int-N 1248MHz +3dBm tone
         // Registers are written in order from 5 downto 0
-        self.interface.nios_xb200_synth_write(0x580005)?;
-        self.interface.nios_xb200_synth_write(0x99A16C)?;
-        self.interface.nios_xb200_synth_write(0xC004B3)?;
+        interface.nios_xb200_synth_write(0x580005)?;
+        interface.nios_xb200_synth_write(0x99A16C)?;
+        interface.nios_xb200_synth_write(0xC004B3)?;
 
         log::trace!("MUXOUT: {}", mux_lut[muxout]);
 
         let value = 0x60008E42 | (1 << 8) | ((muxout as u32) << 26);
-        self.interface.nios_xb200_synth_write(value)?;
+        interface.nios_xb200_synth_write(value)?;
 
-        self.interface.nios_xb200_synth_write(0x08008011)?;
+        interface.nios_xb200_synth_write(0x08008011)?;
 
         // Somehow here, actually the MUXOUT Bit should be set...
-        self.interface.nios_xb200_synth_write(0x00410000)?;
+        interface.nios_xb200_synth_write(0x00410000)?;
 
-        val = self.interface.nios_expansion_gpio_read()?;
+        val = interface.nios_expansion_gpio_read()?;
         log::trace!("[xb200_attach] expansion_gpio_read: {val}");
         if val & 0x1 != 0 {
             log::debug!("MUXOUT Bit set: OK")
@@ -171,8 +171,7 @@ impl BladeRf1 {
             log::debug!("MUXOUT Bit not set: FAIL");
         }
 
-        self.interface
-            .nios_expansion_gpio_write(0xffffffff, 0x3C000800)?;
+        interface.nios_expansion_gpio_write(0xffffffff, 0x3C000800)?;
 
         Ok(())
     }
@@ -182,7 +181,9 @@ impl BladeRf1 {
     }
 
     pub fn xb200_enable(&self, enable: bool) -> Result<()> {
-        let orig = self.interface.nios_expansion_gpio_read()?;
+        let interface = self.interface.lock().unwrap();
+
+        let orig = interface.nios_expansion_gpio_read()?;
         log::trace!("[xb200_enable] expansion_gpio_read: {orig}");
         let mut val = orig;
 
@@ -195,7 +196,7 @@ impl BladeRf1 {
         if val == orig {
             Ok(())
         } else {
-            self.interface.nios_expansion_gpio_write(0xffffffff, val)
+            interface.nios_expansion_gpio_write(0xffffffff, val)
         }
     }
 
@@ -220,7 +221,7 @@ impl BladeRf1 {
             return Err(Error::Invalid);
         }
 
-        let val = self.interface.nios_expansion_gpio_read()?;
+        let val = self.interface.lock().unwrap().nios_expansion_gpio_read()?;
         log::trace!("[xb200_get_filterbank] expansion_gpio_read: {val}");
 
         let shift = if ch == bladerf_channel_rx!(0) {
@@ -239,7 +240,8 @@ impl BladeRf1 {
             (BLADERF_XB_TX_MASK, BLADERF_XB_TX_SHIFT)
         };
 
-        let orig = self.interface.nios_expansion_gpio_read()?;
+        let interface = self.interface.lock().unwrap();
+        let orig = interface.nios_expansion_gpio_read()?;
         log::trace!("[set_filterbank_mux] expansion_gpio_read: {orig}");
 
         let mut val = orig & !mask;
@@ -253,7 +255,7 @@ impl BladeRf1 {
             };
             log::trace!("Engaging {filter:?} band XB-200 {dir:?} filter");
 
-            self.interface.nios_expansion_gpio_write(0xffffffff, val)?;
+            interface.nios_expansion_gpio_write(0xffffffff, val)?;
         }
 
         Ok(())
@@ -364,7 +366,7 @@ impl BladeRf1 {
 
         self.lms.write(0x5A, lval)?;
 
-        let mut val = self.interface.nios_expansion_gpio_read()?;
+        let mut val = self.interface.lock().unwrap().nios_expansion_gpio_read()?;
         log::trace!("[xb200_set_path] expansion_gpio_read: {val}");
 
         if (val & BLADERF_XB_RF_ON) == 0 {
@@ -392,11 +394,14 @@ impl BladeRf1 {
             val |= BLADERF_XB_CONFIG_TX_PATH_BYPASS;
         }
 
-        self.interface.nios_expansion_gpio_write(0xffffffff, val)
+        self.interface
+            .lock()
+            .unwrap()
+            .nios_expansion_gpio_write(0xffffffff, val)
     }
 
     pub fn xb200_get_path(&self, ch: u8) -> Result<Xb200Path> {
-        let val = self.interface.nios_expansion_gpio_read()?;
+        let val = self.interface.lock().unwrap().nios_expansion_gpio_read()?;
         log::trace!("[xb200_get_path] expansion_gpio_read: {val}");
 
         if ch == bladerf_channel_rx!(0) {

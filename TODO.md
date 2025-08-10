@@ -17,3 +17,12 @@
   are scaled to the available control bits.
   DcoffQ, that's why they maybe just go until 2016?
 - Fix Error: Nusb(Error { kind: Busy, code: None, message: "endpoint already in use" }) when running tests...
+  Problem: When claiming an endpoint on creation of the BladeRf, the endpoint cannot be found, as the bladerf has not yet been initialized.
+  Also, the endpoint becomes eventually unusable, if the underlying interface settings are changed...
+- Fix BladeRf being in weird state, where recieving e.g. via fm-receiver example, after running the tests, no proper output is produced.. (White noise only)
+- Fix locking the interface several times in the same method. One method should not acquire a lock to an interface several times...
+Me: is there a requirement for thread safety for Seify driver impls?
+Example: If at the same time two threads try to change the frequency of an SDR, would you expect it to error, because the usb endpoint is already claimed by the thread that came first, or should there be a Mutex around  that endpoint?
+
+Bastibl:
+seify is  a higher level abstract that does not deal with usb end points and it doesn't force to use mutex etc. if you set the frequency from two threads, it will result in either frequency but it shoudn't panic.

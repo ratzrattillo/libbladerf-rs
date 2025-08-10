@@ -19,6 +19,7 @@ use nusb::descriptors::ConfigurationDescriptor;
 use nusb::transfer::{ControlIn, ControlOut, ControlType, Recipient};
 use nusb::{Device, DeviceInfo, Speed};
 use std::num::NonZero;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 impl BladeRf1 {
@@ -29,15 +30,9 @@ impl BladeRf1 {
     }
 
     fn build(device: Device) -> Result<Self> {
-        let interface = device.detach_and_claim_interface(0).wait()?;
-        // TODO Have a reference to a backend instance that holds the endpoints needed
-        // TODO Give this reference to the individual Hardware...
-        // TODO: Fix this with RefCell<BackendTest> with interior mutability or Mutex?.
-        // Question:: Is it better to claim an endpoint from an interface in each method,
-        // where we need to write data or is it better to have the whole Backend behind a mutex?
+        let interface = Arc::new(Mutex::new(device.detach_and_claim_interface(0).wait()?));
 
         let board_data = BoardData {
-            // speed: device.speed().expect("Could not determine device speed!"),
             tuning_mode: TuningMode::Fpga,
         };
 
@@ -126,12 +121,11 @@ impl BladeRf1 {
 
     /// Return the devices' serial number
     pub fn serial(&self) -> Result<String> {
-        self.get_string_descriptor(
-            NonZero::try_from(StringDescriptors::Serial as u8).map_err(|_| Error::Invalid)?,
-        )
-
-        // TODO: Prettify output by stripping
-        // ?.strip_prefix('"').unwrap().strip_suffix('"').unwrap().to_owned()
+        Ok(self
+            .get_string_descriptor(
+                NonZero::try_from(StringDescriptors::Serial as u8).map_err(|_| Error::Invalid)?,
+            )?
+            .replace("\"", ""))
     }
 
     /// Return the devices' manufacturer (Nuand)
@@ -149,7 +143,7 @@ impl BladeRf1 {
     }
 
     pub fn fpga_version(&self) -> Result<String> {
-        let version = self.interface.nios_get_fpga_version()?;
+        let version = self.interface.lock().unwrap().nios_get_fpga_version()?;
         Ok(format!("{version}"))
     }
 
@@ -162,7 +156,7 @@ impl BladeRf1 {
 
     /// Read from the configuration GPIO register.
     pub(crate) fn config_gpio_read(&self) -> Result<u32> {
-        self.interface.nios_config_read()
+        self.interface.lock().unwrap().nios_config_read()
     }
 
     /// Write to the configuration GPIO register.
@@ -187,16 +181,20 @@ impl BladeRf1 {
         }
         log::trace!("[config_gpio_write] data after speedcheck: {data}");
 
-        self.interface.nios_config_write(data)
+        self.interface.lock().unwrap().nios_config_write(data)
     }
 
     /// Initialize device registers - required after power-up, but safe
     /// to call multiple times after power-up (e.g., multiple close and reopens)
     pub fn initialize(&self) -> Result<()> {
-        let alt_setting = self.interface.get_alt_setting();
+        let alt_setting = self.interface.lock().unwrap().get_alt_setting();
         log::trace!("[*] Init - Default Alt Setting {alt_setting}");
 
-        self.interface.set_alt_setting(0x01).wait()?;
+        self.interface
+            .lock()
+            .unwrap()
+            .set_alt_setting(0x01)
+            .wait()?;
         log::trace!("[*] Init - Set Alt Setting to 0x01");
 
         // Out: 43010000000000000000000000000000
@@ -371,11 +369,6 @@ impl BladeRf1 {
             // In:  42000300280000000000000000000000
             self.dac.write(0)?;
 
-            // status = dac161s055_write(dev, board_data->dac_trim);
-            // if (status != 0) {
-            //     return status;
-            // }
-
             // // Set the default gain mode
             // Out expected: 4200010008d1ab000000000000000000
             // Out actual:   42000100080000000000000000000000
@@ -388,7 +381,7 @@ impl BladeRf1 {
             // board_data->tuning_mode = tuning_get_default_mode(dev);
         }
 
-        // Check if we have an expansion board attached
+        // TODO: Check if we have an expansion board attached
         // let xb = self.expansion_get_attached();
 
         // // Update device state
@@ -437,6 +430,8 @@ impl BladeRf1 {
         };
         let vec = self
             .interface
+            .lock()
+            .unwrap()
             .control_in(pkt, Duration::from_secs(5))
             .wait()?;
 
@@ -451,17 +446,6 @@ impl BladeRf1 {
     /// Vendor command wrapper to get a 32-bit integer and supplies wValue
     /// TODO: Return u32 value
     fn vendor_cmd_int_wvalue(&self, cmd: u8, wvalue: u16) -> Result<u32> {
-        // struct bladerf_usb *usb = dev->backend_data;
-        //
-        // return usb->fn->control_transfer(usb->driver,
-        // USB_TARGET_DEVICE,
-        // USB_REQUEST_VENDOR,
-        // USB_DIR_DEVICE_TO_HOST,
-        // cmd, wvalue, 0,
-        // val, sizeof(uint32_t),
-        // CTRL_TIMEOUT_MS);
-        // }
-
         let pkt = ControlIn {
             control_type: ControlType::Vendor,
             recipient: Recipient::Device,
@@ -472,6 +456,8 @@ impl BladeRf1 {
         };
         let vec = self
             .interface
+            .lock()
+            .unwrap()
             .control_in(pkt, Duration::from_secs(5))
             .wait()?;
         // TODO: Examine return value and return it
@@ -495,6 +481,7 @@ impl BladeRf1 {
         };
 
         let _fx3_ret = self.vendor_cmd_int_wvalue(cmd, val)?;
+        // TODO:
         // if fx3_ret {
         //     log::trace!("FX3 reported error={fx3_ret:?} when {} RF {direction:?}", if enable {"enabling"} else { "disabling"});
         //
@@ -516,7 +503,12 @@ impl BladeRf1 {
     }
 
     pub fn change_setting(&self, setting: u8) -> Result<()> {
-        Ok(self.interface.set_alt_setting(setting).wait()?)
+        Ok(self
+            .interface
+            .lock()
+            .unwrap()
+            .set_alt_setting(setting)
+            .wait()?)
     }
     pub fn usb_set_firmware_loopback(&self, enable: bool) -> Result<()> {
         self.vendor_cmd_int_wvalue(BLADE_USB_CMD_SET_LOOPBACK, enable as u16)?;
@@ -639,6 +631,8 @@ impl BladeRf1 {
         // self.device.set_configuration(configuration)?;
         Ok(self
             .interface
+            .lock()
+            .unwrap()
             .control_out(
                 ControlOut {
                     control_type: ControlType::Standard,
@@ -656,12 +650,6 @@ impl BladeRf1 {
     /// Reset the BladeRF1
     /// TODO Find out if this is soft reset or hard reset?
     pub fn device_reset(&self) -> Result<()> {
-        // return usb->fn->control_transfer(usb->driver, USB_TARGET_DEVICE,
-        // USB_REQUEST_VENDOR,
-        // USB_DIR_HOST_TO_DEVICE,
-        // BLADE_USB_CMD_RESET,
-        // 0, 0, 0, 0, CTRL_TIMEOUT_MS);
-
         // TODO: Dont know what this is doing
         let pkt = ControlOut {
             control_type: ControlType::Vendor,
@@ -673,6 +661,8 @@ impl BladeRf1 {
         };
 
         self.interface
+            .lock()
+            .unwrap()
             .control_out(pkt, Duration::from_secs(100))
             .wait()?;
         // self.device.set_configuration(0).wait()?;
