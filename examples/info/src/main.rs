@@ -4,7 +4,6 @@ use bladerf_globals::BladeRf1Format::Sc16Q11;
 use bladerf_globals::bladerf1::BladeRf1Xb::Xb200;
 use bladerf_globals::{BLADERF_MODULE_RX, BLADERF_MODULE_TX};
 use libbladerf_rs::board::bladerf1::BladeRf1;
-use std::time::Duration;
 
 fn main() -> Result<()> {
     env_logger::builder()
