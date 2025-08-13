@@ -1,9 +1,18 @@
-use crate::NiosPktMagic;
-use crate::packet_base::GenericNiosPkt;
-use bladerf_globals::BladeRf1Direction;
-use bladerf_globals::bladerf_channel_is_tx;
+use crate::bladerf::bladerf_channel_is_tx;
+use crate::nios::NiosPktMagic;
+use crate::nios::packet_base::GenericNiosPkt;
 use std::fmt::{Debug, Formatter};
 
+///
+/// # Example
+/// ```rust,no_run
+/// use libbladerf_rs::BLADERF_MODULE_RX;
+/// use libbladerf_rs::nios::packet_retune2::NiosPktRetune2Request;
+///
+/// let pkt = NiosPktRetune2Request::new(BLADERF_MODULE_RX, u64::MIN, 0xffff, 0xff, 0xff, 0xff);
+/// let vec: Vec<u8> = pkt.into();
+/// log::info!("{vec:x?}");
+/// ```
 struct NiosPktRetune2 {
     pub buf: Vec<u8>,
 }
@@ -146,53 +155,53 @@ impl From<NiosPktRetune2> for Vec<u8> {
     }
 }
 
-/// This file defines the Host <-> FPGA (NIOS II) packet formats for
-/// retune2 messages. This packet is formatted, as follows. All values are
-/// little-endian.
-///
-///                              Request
-///                      ----------------------
-///
-/// +================+=========================================================+
-/// |  Byte offset   |                       Description                       |
-/// +================+=========================================================+
-/// |        0       | Magic Value                                             |
-/// +----------------+---------------------------------------------------------+
-/// |        1       | 64-bit timestamp denoting when to retune. (Note 1)      |
-/// +----------------+---------------------------------------------------------+
-/// |        9       | 16-bit Nios fast lock profile number to load (Note 2)   |
-/// +----------------+---------------------------------------------------------+
-/// |       11       | 8-bit RFFE fast lock profile slot to use                |
-/// +----------------+---------------------------------------------------------+
-/// |       12       | Bit  7:     RX bit (set if this is an RX profile        |
-/// |                | Bits 6:     TX output port selection                    |
-/// |                | Bits \[5:0\]: RX input port selection                     |
-/// +----------------+---------------------------------------------------------+
-/// |       13       | Bits \[7:6\]: External TX2 SPDT switch setting            |
-/// |                | Bits \[5:4\]: External TX1 SPDT switch setting            |
-/// |                | Bits \[3:2\]: External RX2 SPDT switch setting            |
-/// |                | Bits \[1:0\]: External RX1 SPDT switch setting            |
-/// +----------------+---------------------------------------------------------+
-/// |       14-15    | 8-bit reserved words. Should be set to 0x00.            |
-/// +----------------+---------------------------------------------------------+
-///
-/// (Note 1) Special Timestamp Values:
-///
-/// Tune "Now":          0x0000000000000000
-/// Clear Retune Queue:  0xffffffffffffffff
-///
-/// When the "Clear Retune Queue" value is used, all of the other tuning
-/// parameters are ignored.
-///
-/// (Note 2) Packed as follows:
-///
-/// +================+=======================+
-/// |   Byte offset  | (MSB)   Value    (LSB)|
-/// +================+=======================+
-/// |       0        |  NIOS_PROFILE\[7:0\]    |
-/// +----------------+-----------------------+
-/// |       1        |  NIOS_PROFILE\[15:8\]   |
-/// +----------------+-----------------------+
+// This file defines the Host <-> FPGA (NIOS II) packet formats for
+// retune2 messages. This packet is formatted, as follows. All values are
+// little-endian.
+//
+//                              Request
+//                      ----------------------
+//
+// +================+=========================================================+
+// |  Byte offset   |                       Description                       |
+// +================+=========================================================+
+// |        0       | Magic Value                                             |
+// +----------------+---------------------------------------------------------+
+// |        1       | 64-bit timestamp denoting when to retune. (Note 1)      |
+// +----------------+---------------------------------------------------------+
+// |        9       | 16-bit Nios fast lock profile number to load (Note 2)   |
+// +----------------+---------------------------------------------------------+
+// |       11       | 8-bit RFFE fast lock profile slot to use                |
+// +----------------+---------------------------------------------------------+
+// |       12       | Bit  7:     RX bit (set if this is an RX profile        |
+// |                | Bits 6:     TX output port selection                    |
+// |                | Bits \[5:0\]: RX input port selection                     |
+// +----------------+---------------------------------------------------------+
+// |       13       | Bits \[7:6\]: External TX2 SPDT switch setting            |
+// |                | Bits \[5:4\]: External TX1 SPDT switch setting            |
+// |                | Bits \[3:2\]: External RX2 SPDT switch setting            |
+// |                | Bits \[1:0\]: External RX1 SPDT switch setting            |
+// +----------------+---------------------------------------------------------+
+// |       14-15    | 8-bit reserved words. Should be set to 0x00.            |
+// +----------------+---------------------------------------------------------+
+//
+// (Note 1) Special Timestamp Values:
+//
+// Tune "Now":          0x0000000000000000
+// Clear Retune Queue:  0xffffffffffffffff
+//
+// When the "Clear Retune Queue" value is used, all of the other tuning
+// parameters are ignored.
+//
+// (Note 2) Packed as follows:
+//
+// +================+=======================+
+// |   Byte offset  | (MSB)   Value    (LSB)|
+// +================+=======================+
+// |       0        |  NIOS_PROFILE\[7:0\]    |
+// +----------------+-----------------------+
+// |       1        |  NIOS_PROFILE\[15:8\]   |
+// +----------------+-----------------------+
 pub struct NiosPktRetune2Request {
     pkt: NiosPktRetune2,
 }
@@ -309,47 +318,47 @@ impl Debug for NiosPktRetune2Request {
     }
 }
 
-///                             Response
-///                      ----------------------
-///
-/// +================+=========================================================+
-/// |  Byte offset   |                       Description                       |
-/// +================+=========================================================+
-/// |        0       | Magic Value                                             |
-/// +----------------+---------------------------------------------------------+
-/// |        1       | 64-bit duration denoting how long the operation took to |
-/// |                | complete, in units of timestamp ticks. (Note 1)         |
-/// +----------------+---------------------------------------------------------+
-/// |        9       | Status Flags (Note 2)                                   |
-/// +----------------+---------------------------------------------------------+
-/// |      10-15     | Reserved. All bits set to 0.                            |
-/// +----------------+---------------------------------------------------------+
-///
-/// (Note 1) This value will be zero if timestamps are not running for the
-///          associated module.
-///
-/// (Note 2) Description of Status Flags:
-///
-///  flags\[0\]:
-///   1 = Timestamp is valid. This is only the case for "Tune NOW"
-///   requests. It is not possible to return this information
-///   for scheduled retunes, as the event generally does not
-///   occur before the response is set.
-///
-///   0 = This was a scheduled retune. Timestamp fields should be ignored.
-///
-///  flags\[1\]:
-///   1 = Operation completed successfully.
-///   0 = Operation failed.
-///
-///   For "Tune NOW" requests, a failure may occur as the result
-///   of the tuning algorithm failing to occur, and such other
-///   unexpected failures.
-///
-///   The scheduled tune request will failure if the retune queue
-///   is full.
-///
-///  flags\[7:2\]    Reserved. Set to 0.
+//                             Response
+//                      ----------------------
+//
+// +================+=========================================================+
+// |  Byte offset   |                       Description                       |
+// +================+=========================================================+
+// |        0       | Magic Value                                             |
+// +----------------+---------------------------------------------------------+
+// |        1       | 64-bit duration denoting how long the operation took to |
+// |                | complete, in units of timestamp ticks. (Note 1)         |
+// +----------------+---------------------------------------------------------+
+// |        9       | Status Flags (Note 2)                                   |
+// +----------------+---------------------------------------------------------+
+// |      10-15     | Reserved. All bits set to 0.                            |
+// +----------------+---------------------------------------------------------+
+//
+// (Note 1) This value will be zero if timestamps are not running for the
+//          associated module.
+//
+// (Note 2) Description of Status Flags:
+//
+//  flags\[0\]:
+//   1 = Timestamp is valid. This is only the case for "Tune NOW"
+//   requests. It is not possible to return this information
+//   for scheduled retunes, as the event generally does not
+//   occur before the response is set.
+//
+//   0 = This was a scheduled retune. Timestamp fields should be ignored.
+//
+//  flags\[1\]:
+//   1 = Operation completed successfully.
+//   0 = Operation failed.
+//
+//   For "Tune NOW" requests, a failure may occur as the result
+//   of the tuning algorithm failing to occur, and such other
+//   unexpected failures.
+//
+//   The scheduled tune request will failure if the retune queue
+//   is full.
+//
+//  flags\[7:2\]    Reserved. Set to 0.
 pub struct NiosPktRetune2Response {
     pkt: NiosPktRetune2,
 }

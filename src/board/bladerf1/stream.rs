@@ -1,15 +1,263 @@
-use crate::Result;
-use crate::{BladeRf1, BladeRf1RxStreamer, BladeRf1TxStreamer, Error};
-use bladerf_globals::bladerf1::{
-    BLADERF_GPIO_PACKET, BLADERF_GPIO_TIMESTAMP, BLADERF_GPIO_TIMESTAMP_DIV2,
-};
-use bladerf_globals::{BLADERF_MODULE_RX, BLADERF_MODULE_TX, BladeRf1Direction, BladeRf1Format};
+use crate::bladerf::{BLADERF_MODULE_RX, BLADERF_MODULE_TX, Direction};
+use crate::board::bladerf1::{BladeRf1, BladeRf1RxStreamer, BladeRf1TxStreamer};
+use crate::{Error, Result};
 use num_complex::Complex32;
 use nusb::MaybeFuture;
 use nusb::transfer::{Bulk, ControlIn, ControlType, In, Out, Recipient};
 use std::io::{BufRead, Write};
 use std::thread::sleep;
 use std::time::Duration;
+
+///  Sample format
+#[derive(PartialEq)]
+pub enum SampleFormat {
+    ///  Signed, Complex 16-bit Q11. This is the native format of the DAC data.
+    ///
+    ///  Values in the range [-2048, 2048) are used to represent [-1.0, 1.0).
+    ///  Note that the lower bound here is inclusive, and the upper bound is
+    ///  exclusive. Ensure that provided samples stay within [-2048, 2047].
+    ///
+    ///  Samples consist of interleaved IQ value pairs, with I being the first
+    ///  value in the pair. Each value in the pair is a right-aligned,
+    ///  little-endian int16_t. The FPGA ensures that these values are
+    ///  sign-extended.
+    ///
+    ///  <pre>
+    ///   .--------------.--------------.
+    ///   | Bits 31...16 | Bits 15...0  |
+    ///   +--------------+--------------+
+    ///   |   Q[15..0]   |   I[15..0]   |
+    ///   `--------------`--------------`
+    ///  </pre>
+    ///
+    ///  When using this format the minimum required buffer size, in bytes, is:
+    ///
+    ///  \f$
+    ///   buffer\_size\_min = (2 \times num\_samples \times num\_channels \times
+    ///                       sizeof(int16\_t))
+    ///  \f$
+    ///
+    ///  For example, to hold 2048 samples for one channel, a buffer must be at
+    ///  least 8192 bytes large.
+    ///
+    ///  When a multi-channel ::bladerf_channel_layout is selected, samples
+    ///  will be interleaved per channel. For example, with ::BLADERF_RX_X2
+    ///  or ::BLADERF_TX_X2 (x2 MIMO), the buffer is structured like:
+    ///
+    ///  <pre>
+    ///   .-------------.--------------.--------------.------------------.
+    ///   | Byte offset | Bits 31...16 | Bits 15...0  |    Description   |
+    ///   +-------------+--------------+--------------+------------------+
+    ///   |    0x00     |     Q0[0]    |     I0[0]    |  Ch 0, sample 0  |
+    ///   |    0x04     |     Q1[0]    |     I1[0]    |  Ch 1, sample 0  |
+    ///   |    0x08     |     Q0[1]    |     I0[1]    |  Ch 0, sample 1  |
+    ///   |    0x0c     |     Q1[1]    |     I1[1]    |  Ch 1, sample 1  |
+    ///   |    ...      |      ...     |      ...     |        ...       |
+    ///   |    0xxx     |     Q0[n]    |     I0[n]    |  Ch 0, sample n  |
+    ///   |    0xxx     |     Q1[n]    |     I1[n]    |  Ch 1, sample n  |
+    ///   `-------------`--------------`--------------`------------------`
+    ///  </pre>
+    ///
+    ///  Per the `buffer_size_min` formula above, 2048 samples for two channels
+    ///  will generate 4096 total samples, and require at least 16384 bytes.
+    ///
+    ///  Implementors may use the interleaved buffers directly, or may use
+    ///  bladerf_deinterleave_stream_buffer() / bladerf_interleave_stream_buffer()
+    ///  if contiguous blocks of samples are desired.
+    Sc16Q11 = 0,
+
+    ///  This format is the same as the ::BLADERF_FORMAT_SC16_Q11 format, except
+    ///  the first 4 samples in every <i>block*</i> of samples are replaced with
+    ///  metadata organized as follows. All fields are little-endian byte order.
+    ///
+    ///  <pre>
+    ///   .-------------.------------.----------------------------------.
+    ///   | Byte offset |   Type     | Description                      |
+    ///   +-------------+------------+----------------------------------+
+    ///   |    0x00     | uint16_t   | Reserved                         |
+    ///   |    0x02     |  uint8_t   | Stream flags                     |
+    ///   |    0x03     |  uint8_t   | Meta version ID                  |
+    ///   |    0x04     | uint64_t   | 64-bit Timestamp                 |
+    ///   |    0x0c     | uint32_t   | BLADERF_META_FLAG_* flags        |
+    ///   |  0x10..end  |            | Payload                          |
+    ///   `-------------`------------`----------------------------------`
+    ///  </pre>
+    ///
+    ///  For IQ sample meta mode, the Meta version ID and Stream flags should
+    ///  currently be set to values 0x00 and 0x00, respectively.
+    ///
+    ///  <i>*</i>The number of samples in a <i>block</i> is dependent upon
+    ///  the USB speed being used:
+    ///   - USB 2.0 Hi-Speed: 256 samples
+    ///   - USB 3.0 SuperSpeed: 512 samples
+    ///
+    ///  When using the bladerf_sync_rx() and bladerf_sync_tx() functions, the
+    ///  above details are entirely transparent; the caller need not be concerned
+    ///  with these details. These functions take care of packing/unpacking the
+    ///  metadata into/from the underlying stream and convey this information
+    ///  through the ::bladerf_metadata structure.
+    ///
+    ///  However, when using the \ref FN_STREAMING_ASYNC interface, the user is
+    ///  responsible for manually packing/unpacking the above metadata into/from
+    ///  their samples.
+    ///
+    ///  @see STREAMING_FORMAT_METADATA
+    ///  @see The `src/streaming/metadata.h` header in the libbladeRF codebase.
+    Sc16Q11Meta = 1,
+
+    ///  This format is for exchanging packets containing digital payloads with
+    ///  the FPGA. A packet is generall a digital payload, that the FPGA then
+    ///  processes to either modulate, demodulate, filter, etc.
+    ///
+    ///  All fields are little-endian byte order.
+    ///
+    ///  <pre>
+    ///   .-------------.------------.----------------------------------.
+    ///   | Byte offset |   Type     | Description                      |
+    ///   +-------------+------------+----------------------------------+
+    ///   |    0x00     | uint16_t   | Packet length (in 32bit DWORDs)  |
+    ///   |    0x02     |  uint8_t   | Packet flags                     |
+    ///   |    0x03     |  uint8_t   | Packet core ID                   |
+    ///   |    0x04     | uint64_t   | 64-bit Timestamp                 |
+    ///   |    0x0c     | uint32_t   | BLADERF_META_FLAG_* flags        |
+    ///   |  0x10..end  |            | Payload                          |
+    ///   `-------------`------------`----------------------------------`
+    ///  </pre>
+    ///
+    ///  A target core (for example a modem) must be specified when calling the
+    ///  bladerf_sync_rx() and bladerf_sync_tx() functions.
+    ///
+    ///  When in packet mode, lengths for all functions and data formats are
+    ///  expressed in number of 32-bit DWORDs. As an example, a 12 byte packet
+    ///  is considered to be 3 32-bit DWORDs long.
+    ///
+    ///  This packet format does not send or receive raw IQ samples. The digital
+    ///  payloads contain configurations, and digital payloads that are specific
+    ///  to the digital core to which they are addressed. It is the FPGA core
+    ///  that should generate, interpret, and process the digital payloads.
+    ///
+    ///  With the exception of packet lenghts, no difference should exist between
+    ///  USB 2.0 Hi-Speed or USB 3.0 SuperSpeed for packets for this streaming
+    ///  format.
+    ///
+    ///  @see STREAMING_FORMAT_METADATA
+    ///  @see The `src/streaming/metadata.h` header in the libbladeRF codebase.
+    PacketMeta = 2,
+
+    ///  Signed, Complex 8-bit Q8. This is the native format of the DAC data.
+    ///
+    ///  Values in the range [-128, 128) are used to represent [-1.0, 1.0).
+    ///  Note that the lower bound here is inclusive, and the upper bound is
+    ///  exclusive. Ensure that provided samples stay within [-128, 127].
+    ///
+    ///  Samples consist of interleaved IQ value pairs, with I being the first
+    ///  value in the pair. Each value in the pair is a right-aligned int8_t.
+    ///  The FPGA ensures that these values are sign-extended.
+    ///
+    ///  <pre>
+    ///   .--------------.--------------.
+    ///   | Bits 15...8  | Bits  7...0  |
+    ///   +--------------+--------------+
+    ///   |    Q[7..0]   |    I[7..0]   |
+    ///   `--------------`--------------`
+    ///  </pre>
+    ///
+    ///  When using this format the minimum required buffer size, in bytes, is:
+    ///
+    ///  \f$
+    ///   buffer\_size\_min = (2 \times num\_samples \times num\_channels \times
+    ///                       sizeof(int8\_t))
+    ///  \f$
+    ///
+    ///  For example, to hold 2048 samples for one channel, a buffer must be at
+    ///  least 4096 bytes large.
+    ///
+    ///  When a multi-channel ::bladerf_channel_layout is selected, samples
+    ///  will be interleaved per channel. For example, with ::BLADERF_RX_X2
+    ///  or ::BLADERF_TX_X2 (x2 MIMO), the buffer is structured like:
+    ///
+    ///  <pre>
+    ///   .-------------.--------------.--------------.------------------.
+    ///   | Byte offset | Bits 15...8  | Bits  7...0  |    Description   |
+    ///   +-------------+--------------+--------------+------------------+
+    ///   |    0x00     |     Q0[0]    |     I0[0]    |  Ch 0, sample 0  |
+    ///   |    0x02     |     Q1[0]    |     I1[0]    |  Ch 1, sample 0  |
+    ///   |    0x04     |     Q0[1]    |     I0[1]    |  Ch 0, sample 1  |
+    ///   |    0x06     |     Q1[1]    |     I1[1]    |  Ch 1, sample 1  |
+    ///   |    ...      |      ...     |      ...     |        ...       |
+    ///   |    0xxx     |     Q0[n]    |     I0[n]    |  Ch 0, sample n  |
+    ///   |    0xxx     |     Q1[n]    |     I1[n]    |  Ch 1, sample n  |
+    ///   `-------------`--------------`--------------`------------------`
+    ///  </pre>
+    ///
+    ///  Per the `buffer_size_min` formula above, 2048 samples for two channels
+    ///  will generate 4096 total samples, and require at least 8192 bytes.
+    ///
+    ///  Implementors may use the interleaved buffers directly, or may use
+    ///  bladerf_deinterleave_stream_buffer() / bladerf_interleave_stream_buffer()
+    ///  if contiguous blocks of samples are desired.
+    Sc8Q7 = 3,
+
+    ///  This format is the same as the ::BLADERF_FORMAT_SC8_Q7 format, except
+    ///  the first 4 samples in every <i>block*</i> of samples are replaced with
+    ///  metadata organized as follows. All fields are little-endian byte order.
+    ///
+    ///  <pre>
+    ///   .-------------.------------.----------------------------------.
+    ///   | Byte offset |   Type     | Description                      |
+    ///   +-------------+------------+----------------------------------+
+    ///   |    0x00     | uint16_t   | Reserved                         |
+    ///   |    0x02     |  uint8_t   | Stream flags                     |
+    ///   |    0x03     |  uint8_t   | Meta version ID                  |
+    ///   |    0x04     | uint64_t   | 64-bit Timestamp                 |
+    ///   |    0x0c     | uint32_t   | BLADERF_META_FLAG_* flags        |
+    ///   |  0x10..end  |            | Payload                          |
+    ///   `-------------`------------`----------------------------------`
+    ///  </pre>
+    ///
+    ///  For IQ sample meta mode, the Meta version ID and Stream flags should
+    ///  currently be set to values 0x00 and 0x00, respectively.
+    ///
+    ///  <i>*</i>The number of samples in a <i>block</i> is dependent upon
+    ///  the USB speed being used:
+    ///   - USB 2.0 Hi-Speed: 256 samples
+    ///   - USB 3.0 SuperSpeed: 512 samples
+    ///
+    ///  When using the bladerf_sync_rx() and bladerf_sync_tx() functions, the
+    ///  above details are entirely transparent; the caller need not be concerned
+    ///  with these details. These functions take care of packing/unpacking the
+    ///  metadata into/from the underlying stream and convey this information
+    ///  through the ::bladerf_metadata structure.
+    ///
+    ///  However, when using the \ref FN_STREAMING_ASYNC interface, the user is
+    ///  responsible for manually packing/unpacking the above metadata into/from
+    ///  their samples.
+    ///
+    ///  @see STREAMING_FORMAT_METADATA
+    ///  @see The `src/streaming/metadata.h` header in the libbladeRF codebase.
+    Sc8Q7Meta = 4,
+}
+
+/// Enable Packet mode
+pub const BLADERF_GPIO_PACKET: u32 = 1 << 19;
+
+/// Enable-bit for timestamp counter in the FPGA
+pub const BLADERF_GPIO_TIMESTAMP: u32 = 1 << 16;
+
+/// Timestamp 2x divider control.
+///
+/// @note <b>Important</b>: This bit has no effect and is always enabled (1) in
+/// FPGA versions >= v0.3.0.
+///
+/// @note The remainder of the description of this bit is presented here for
+/// historical purposes only. It is only relevant to FPGA versions <= v0.1.2.
+///
+/// By default, (value = 0), the sample counter is incremented with I and Q,
+/// yielding two counts per sample.
+///
+/// Set this bit to 1 to enable a 2x timestamp divider, effectively achieving 1
+/// timestamp count per sample.
+pub const BLADERF_GPIO_TIMESTAMP_DIV2: u32 = 1 << 17;
 
 impl BladeRf1RxStreamer {
     pub fn new(
@@ -42,13 +290,13 @@ impl BladeRf1RxStreamer {
 
     pub fn activate(&mut self) -> Result<()> {
         self.dev
-            .perform_format_config(BladeRf1Direction::Rx, BladeRf1Format::Sc16Q11)?;
+            .perform_format_config(Direction::Rx, SampleFormat::Sc16Q11)?;
         self.dev.enable_module(BLADERF_MODULE_RX, true)?;
         self.dev.experimental_control_urb()
     }
 
     pub fn deactivate(&mut self) -> Result<()> {
-        self.dev.perform_format_deconfig(BladeRf1Direction::Rx)?;
+        self.dev.perform_format_deconfig(Direction::Rx)?;
         self.dev.enable_module(BLADERF_MODULE_RX, false)
     }
 
@@ -196,11 +444,7 @@ impl BladeRf1 {
     //      format  Format the channel is being configured for
     //
     // @return 0 on success, BLADERF_ERR_* on failure
-    pub fn perform_format_config(
-        &self,
-        dir: BladeRf1Direction,
-        format: BladeRf1Format,
-    ) -> Result<()> {
+    pub fn perform_format_config(&self, dir: Direction, format: SampleFormat) -> Result<()> {
         // BladeRf1Format::PacketMeta
         // struct bladerf1_board_data *board_data = dev->board_data;
 
@@ -215,8 +459,8 @@ impl BladeRf1 {
         // }
 
         let _other = match dir {
-            BladeRf1Direction::Rx => BladeRf1Direction::Tx,
-            BladeRf1Direction::Tx => BladeRf1Direction::Rx,
+            Direction::Rx => Direction::Tx,
+            Direction::Tx => Direction::Rx,
         };
 
         // status = requires_timestamps(board_data->module_format[other],
@@ -230,7 +474,7 @@ impl BladeRf1 {
         let mut gpio_val = self.config_gpio_read()?;
 
         log::debug!("gpio_val {gpio_val:#08x}");
-        if format == BladeRf1Format::PacketMeta {
+        if format == SampleFormat::PacketMeta {
             gpio_val |= BLADERF_GPIO_PACKET;
             use_timestamps = true;
             log::debug!("BladeRf1Format::PacketMeta");
@@ -266,11 +510,11 @@ impl BladeRf1 {
     ///    dir     Direction that is currently being deconfigured
     ///
     /// @return 0 on success, BLADERF_ERR_* on failure
-    pub fn perform_format_deconfig(&self, direction: BladeRf1Direction) -> Result<()> {
+    pub fn perform_format_deconfig(&self, direction: Direction) -> Result<()> {
         // struct bladerf1_board_data *board_data = dev->board_data;
 
         match direction {
-            BladeRf1Direction::Rx | BladeRf1Direction::Tx => {
+            Direction::Rx | Direction::Tx => {
                 // We'll reconfigure the HW when we call perform_format_config, so
                 // we just need to update our stored information
                 // board_data -> module_format[dir] = - 1;

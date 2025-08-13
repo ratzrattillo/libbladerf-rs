@@ -12,14 +12,11 @@ keywords = ["sdr", "rf", "bladerf"]
 categories = ["api-bindings"]
 
 [workspace]
-members = [".", "crates/bladerf-globals", "crates/bladerf-nios", "examples/info"]
+members = [".", "examples/info"]
 
 [dependencies]
 thiserror = "2.0"
-# nusb = { git = "https://github.com/kevinmehall/nusb", branch="main" }
 nusb = "0.2"
-bladerf-nios = { path= "crates/bladerf-nios" }
-bladerf-globals = { path= "crates/bladerf-globals" }
 log = "0.4"
 num-complex = "0.4"
 

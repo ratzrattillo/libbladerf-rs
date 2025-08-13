@@ -1,15 +1,20 @@
-use crate::BladeRf1;
+use crate::bladerf1::BladeRf1;
+use crate::board::bladerf1::xb::xb200::Xb200Path;
 use crate::hardware::lms6002d::{
-    BLADERF1_BAND_HIGH, LMS_FREQ_FLAGS_FORCE_VCOCAP, LMS_FREQ_FLAGS_LOW_BAND, LmsFreq,
+    BLADERF_FREQUENCY_MAX, BLADERF_FREQUENCY_MIN, BLADERF1_BAND_HIGH, Band,
+    LMS_FREQ_FLAGS_FORCE_VCOCAP, LMS_FREQ_FLAGS_LOW_BAND, LmsFreq, Tune,
 };
 use crate::nios::Nios;
-use crate::xb200::Xb200Path;
+use crate::nios::packet_retune::NiosPktRetuneRequest;
+use crate::range::{Range, RangeItem};
 use crate::{Error, Result};
-use bladerf_globals::bladerf1::{BLADERF_FREQUENCY_MAX, BLADERF_FREQUENCY_MIN};
-// use bladerf_globals::{SdrRange, TuningMode};
-use bladerf_globals::TuningMode;
-use bladerf_globals::range::{Range, RangeItem};
-use bladerf_nios::packet_retune::{Band, NiosPktRetuneRequest, Tune};
+
+#[derive(Clone)]
+pub enum TuningMode {
+    #[allow(dead_code)]
+    Host,
+    Fpga,
+}
 
 impl BladeRf1 {
     pub fn set_frequency(&self, channel: u8, mut frequency: u64) -> Result<()> {

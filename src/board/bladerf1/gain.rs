@@ -1,18 +1,19 @@
-use crate::BladeRf1;
+use crate::bladerf::{BLADERF_MODULE_RX, BLADERF_MODULE_TX, bladerf_channel_is_tx};
+use crate::bladerf1::BladeRf1;
 use crate::hardware::lms6002d::{
-    BLADERF_RXVGA1_GAIN_MAX, BLADERF_RXVGA1_GAIN_MIN, BLADERF_RXVGA2_GAIN_MAX,
-    BLADERF_RXVGA2_GAIN_MIN, BLADERF_TXVGA1_GAIN_MAX, BLADERF_TXVGA1_GAIN_MIN,
-    BLADERF_TXVGA2_GAIN_MAX, BLADERF_TXVGA2_GAIN_MIN, BLADERF1_RX_GAIN_OFFSET,
-    BLADERF1_TX_GAIN_OFFSET,
+    BLADERF_LNA_GAIN_MAX_DB, BLADERF_LNA_GAIN_MID_DB, BLADERF_RXVGA1_GAIN_MAX,
+    BLADERF_RXVGA1_GAIN_MIN, BLADERF_RXVGA2_GAIN_MAX, BLADERF_RXVGA2_GAIN_MIN,
+    BLADERF_TXVGA1_GAIN_MAX, BLADERF_TXVGA1_GAIN_MIN, BLADERF_TXVGA2_GAIN_MAX,
+    BLADERF_TXVGA2_GAIN_MIN, BLADERF1_RX_GAIN_OFFSET, BLADERF1_TX_GAIN_OFFSET, GainDb, GainMode,
 };
+use crate::range::{Range, RangeItem};
 use crate::{Error, Result};
-use bladerf_globals::bladerf1::BLADERF_GPIO_AGC_ENABLE;
-use bladerf_globals::range::{Range, RangeItem};
-use bladerf_globals::{
-    BLADERF_LNA_GAIN_MAX_DB, BLADERF_LNA_GAIN_MID_DB, BLADERF_MODULE_RX, BLADERF_MODULE_TX,
-    BladeRf1GainMode, bladerf_channel_is_tx,
-};
-use bladerf_globals::{BladeRf1Direction, GainDb};
+
+/// AGC enable control bit
+///
+/// @note This is set using bladerf_set_gain_mode().
+pub const BLADERF_GPIO_AGC_ENABLE: u32 = 1 << 18;
+
 // pub fn __scale(r: &SdrRange, v: f32) -> f32 {
 //     v / r.scale as f32
 // }
@@ -95,23 +96,23 @@ impl BladeRf1 {
         }
     }
 
-    pub fn get_gain_modes(&self, channel: u8) -> Result<Vec<BladeRf1GainMode>> {
+    pub fn get_gain_modes(&self, channel: u8) -> Result<Vec<GainMode>> {
         if bladerf_channel_is_tx!(channel) {
             log::error!("TX does not support gain modes");
             Err(Error::Invalid)
         } else {
-            Ok(vec![BladeRf1GainMode::Mgc, BladeRf1GainMode::Default])
+            Ok(vec![GainMode::Mgc, GainMode::Default])
         }
     }
 
-    pub fn set_gain_mode(&self, channel: u8, mode: BladeRf1GainMode) -> Result<()> {
+    pub fn set_gain_mode(&self, channel: u8, mode: GainMode) -> Result<()> {
         if bladerf_channel_is_tx!(channel) {
             log::error!("Setting gain mode for TX is not supported");
             return Err(Error::Invalid);
         }
 
         let mut config_gpio = self.config_gpio_read()?;
-        if mode == BladeRf1GainMode::Default {
+        if mode == GainMode::Default {
             // TODO:
             // Default mode is the same as Automatic mode
             // return Err(anyhow!("Todo: Implement AGC Table"));
@@ -141,20 +142,20 @@ impl BladeRf1 {
             //     return BLADERF_ERR_UNSUPPORTED;
             // }
             config_gpio |= BLADERF_GPIO_AGC_ENABLE;
-        } else if mode == BladeRf1GainMode::Mgc {
+        } else if mode == GainMode::Mgc {
             config_gpio &= !BLADERF_GPIO_AGC_ENABLE;
         }
 
         self.config_gpio_write(config_gpio)
     }
 
-    pub fn get_gain_mode(&self) -> Result<BladeRf1GainMode> {
+    pub fn get_gain_mode(&self) -> Result<GainMode> {
         let data = self.config_gpio_read()?;
 
         let gain_mode = if data & BLADERF_GPIO_AGC_ENABLE != 0 {
-            BladeRf1GainMode::Default
+            GainMode::Default
         } else {
-            BladeRf1GainMode::Mgc
+            GainMode::Mgc
         };
         Ok(gain_mode)
     }

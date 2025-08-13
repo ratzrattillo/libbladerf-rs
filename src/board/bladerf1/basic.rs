@@ -1,19 +1,19 @@
+use crate::bladerf::{
+    BLADE_USB_CMD_GET_LOOPBACK, BLADE_USB_CMD_RESET, BLADE_USB_CMD_RF_RX, BLADE_USB_CMD_RF_TX,
+    BLADE_USB_CMD_SET_LOOPBACK, BLADERF_MODULE_RX, BLADERF_MODULE_TX, DescriptorTypes, Direction,
+    StringDescriptors, TIMEOUT, USB_IF_NULL, USB_IF_RF_LINK, bladerf_channel_is_tx,
+    bladerf_channel_rx, bladerf_channel_tx,
+};
+use crate::bladerf1::frequency::TuningMode;
+use crate::bladerf1::{
+    BLADERF_GPIO_FEATURE_SMALL_DMA_XFER, BLADERF1_USB_PID, BLADERF1_USB_VID, BladeRf1,
+};
 use crate::board::bladerf1::BoardData;
 use crate::hardware::dac161s055::DAC161S055;
-use crate::hardware::lms6002d::LMS6002D;
+use crate::hardware::lms6002d::{Band, GainMode, LMS6002D};
 use crate::hardware::si5338::SI5338;
 use crate::nios::Nios;
-use crate::{BladeRf1, Error, Result};
-use bladerf_globals::bladerf1::{
-    BLADERF_GPIO_FEATURE_SMALL_DMA_XFER, BLADERF1_USB_PID, BLADERF1_USB_VID,
-};
-use bladerf_globals::{
-    BLADE_USB_CMD_GET_LOOPBACK, BLADE_USB_CMD_RESET, BLADE_USB_CMD_RF_RX, BLADE_USB_CMD_RF_TX,
-    BLADE_USB_CMD_SET_LOOPBACK, BLADERF_MODULE_RX, BLADERF_MODULE_TX, BladeRf1Direction,
-    BladeRf1GainMode, DescriptorTypes, StringDescriptors, TIMEOUT, TuningMode, USB_IF_NULL,
-    USB_IF_RF_LINK, bladerf_channel_is_tx, bladerf_channel_rx, bladerf_channel_tx,
-};
-use bladerf_nios::packet_retune::Band;
+use crate::{Error, Result};
 use nusb::MaybeFuture;
 use nusb::descriptors::ConfigurationDescriptor;
 use nusb::transfer::{ControlIn, ControlOut, ControlType, Recipient};
@@ -59,8 +59,9 @@ impl BladeRf1 {
     ///
     /// # Examples
     ///
-    /// ```no_run
-    /// use libbladerf_rs::{BladeRf1,Error};
+    /// ```rust,no_run
+    /// use libbladerf_rs::Error;
+    /// use libbladerf_rs::bladerf1::BladeRf1;
     ///
     /// let dev = BladeRf1::from_first()?;
     /// # Ok::<(), Error>(())
@@ -78,8 +79,9 @@ impl BladeRf1 {
     ///
     /// # Examples
     ///
-    /// ```no_run
-    /// use libbladerf_rs::{BladeRf1,Error};
+    /// ```rust,no_run
+    /// use libbladerf_rs::Error;
+    /// use libbladerf_rs::bladerf1::BladeRf1;
     ///
     /// let dev = BladeRf1::from_serial("0123456789abcdef")?;
     /// # Ok::<(), Error>(())
@@ -373,7 +375,7 @@ impl BladeRf1 {
             // In: expected: 4200030008d1ab000000000000000000
             // In actual:    42000300080000000000000000000000
             // Todo: Implement AGC table and set mode to BladeRf1GainDefault
-            self.set_gain_mode(bladerf_channel_rx!(0), BladeRf1GainMode::Mgc)?;
+            self.set_gain_mode(bladerf_channel_rx!(0), GainMode::Mgc)?;
         } else {
             log::trace!("[*] Init - Device already initialized: {cfg:#04x}");
             // board_data->tuning_mode = tuning_get_default_mode(dev);
@@ -469,10 +471,10 @@ impl BladeRf1 {
 
     /// Enable/Disable RF Module via the USB backend.
     /// This method should probably be moved to some USB backend dedicated source file.
-    fn usb_enable_module(&self, direction: BladeRf1Direction, enable: bool) -> Result<()> {
+    fn usb_enable_module(&self, direction: Direction, enable: bool) -> Result<()> {
         let val = enable as u16;
 
-        let cmd = if direction == BladeRf1Direction::Rx {
+        let cmd = if direction == Direction::Rx {
             BLADE_USB_CMD_RF_RX
         } else {
             BLADE_USB_CMD_RF_TX
@@ -526,9 +528,9 @@ impl BladeRf1 {
         // CHECK_BOARD_STATE(STATE_INITIALIZED);
 
         let direction = if bladerf_channel_is_tx!(module) {
-            BladeRf1Direction::Tx
+            Direction::Tx
         } else {
-            BladeRf1Direction::Rx
+            Direction::Rx
         };
 
         //

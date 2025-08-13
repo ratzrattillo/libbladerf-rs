@@ -1,8 +1,8 @@
 #[cfg(test)]
 mod tests {
-    use bladerf_globals::BLADERF_MODULE_RX;
-    use bladerf_nios::NiosPktMagic;
-    use bladerf_nios::packet_retune2::NiosPktRetune2Request;
+    use libbladerf_rs::BLADERF_MODULE_RX;
+    use libbladerf_rs::nios::NiosPktMagic;
+    use libbladerf_rs::nios::packet_retune2::NiosPktRetune2Request;
 
     #[test]
     fn packet_retune2_request() {

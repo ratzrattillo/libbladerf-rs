@@ -1,9 +1,7 @@
 use anyhow::Result;
-use bladerf_globals::BladeRf1Direction::Rx;
-use bladerf_globals::BladeRf1Format::Sc16Q11;
-use bladerf_globals::bladerf1::BladeRf1Xb::Xb200;
-use bladerf_globals::{BLADERF_MODULE_RX, BLADERF_MODULE_TX};
-use libbladerf_rs::board::bladerf1::BladeRf1;
+use libbladerf_rs::bladerf1::xb::ExpansionBoard;
+use libbladerf_rs::bladerf1::{BladeRf1, GainDb, SampleFormat};
+use libbladerf_rs::{BLADERF_MODULE_RX, BLADERF_MODULE_TX, Direction};
 
 fn main() -> Result<()> {
     env_logger::builder()
@@ -29,9 +27,7 @@ fn main() -> Result<()> {
     let xb = bladerf.expansion_get_attached();
     log::debug!("XB: {xb:?}");
 
-    // tokio::time::sleep(Duration::from_secs(10));
-
-    bladerf.expansion_attach(Xb200)?;
+    bladerf.expansion_attach(ExpansionBoard::Xb200)?;
 
     let xb = bladerf.expansion_get_attached();
     log::debug!("XB: {xb:?}");
@@ -50,15 +46,11 @@ fn main() -> Result<()> {
 
     let sample_rate_range = BladeRf1::get_sample_rate_range();
     log::debug!("Sample Rate: {sample_rate_range:?}");
-    //
-    // // Set Sample Rate to minimum Sample Rate
-    // bladerf
-    //     .set_sample_rate(BLADERF_MODULE_RX, sample_rate_range.min)
-    //     ?;
-    // bladerf
-    //     .set_sample_rate(BLADERF_MODULE_TX, sample_rate_range.min)
-    //     ?;
-    //
+
+    // Set Sample Rate to minimum Sample Rate
+    bladerf.set_sample_rate(BLADERF_MODULE_RX, sample_rate_range.min().unwrap() as u32)?;
+    bladerf.set_sample_rate(BLADERF_MODULE_TX, sample_rate_range.min().unwrap() as u32)?;
+
     let sample_rate_rx = bladerf.get_sample_rate(BLADERF_MODULE_RX)?;
     let sample_rate_tx = bladerf.get_sample_rate(BLADERF_MODULE_TX)?;
     log::debug!("Sample Rate RX: {}", sample_rate_rx);
@@ -66,15 +58,11 @@ fn main() -> Result<()> {
 
     let bandwidth_range = BladeRf1::get_bandwidth_range();
     log::debug!("Bandwidth: {bandwidth_range:?}");
-    //
-    // // Set Sample Rate to minimum Sample Rate
-    // bladerf
-    //     .set_bandwidth(BLADERF_MODULE_RX, bandwidth_range.min)
-    //     ?;
-    // bladerf
-    //     .set_bandwidth(BLADERF_MODULE_TX, bandwidth_range.min)
-    //     ?;
-    //
+
+    // Set Sample Rate to minimum Sample Rate
+    bladerf.set_bandwidth(BLADERF_MODULE_RX, bandwidth_range.min().unwrap() as u32)?;
+    bladerf.set_bandwidth(BLADERF_MODULE_TX, bandwidth_range.min().unwrap() as u32)?;
+
     let bandwidth_rx = bladerf.get_bandwidth(BLADERF_MODULE_RX)?;
     let bandwidth_tx = bladerf.get_bandwidth(BLADERF_MODULE_TX)?;
     log::debug!("Bandwidth RX: {}", bandwidth_rx);
@@ -89,41 +77,36 @@ fn main() -> Result<()> {
     let gain_range_tx = BladeRf1::get_gain_range(BLADERF_MODULE_TX);
     log::debug!("Gain Range RX: {gain_range_rx:?}");
     log::debug!("Gain Range TX: {gain_range_tx:?}");
-    //
-    // // Set Sample Rate to minimum Sample Rate
-    // bladerf
-    //     .set_gain(BLADERF_MODULE_RX, gain_range_rx.min)
-    //     ?;
-    // bladerf
-    //     .set_gain(BLADERF_MODULE_TX, gain_range_tx.min)
-    //     ?;
+
+    // Set Sample Rate to minimum Sample Rate
+    bladerf.set_gain(
+        BLADERF_MODULE_RX,
+        GainDb {
+            db: gain_range_rx.min().unwrap() as i8,
+        },
+    )?;
+    bladerf.set_gain(
+        BLADERF_MODULE_TX,
+        GainDb {
+            db: gain_range_tx.min().unwrap() as i8,
+        },
+    )?;
 
     let gain_rx = bladerf.get_gain(BLADERF_MODULE_RX)?;
     let gain_tx = bladerf.get_gain(BLADERF_MODULE_TX)?;
     log::debug!("Gain RX: {}", gain_rx.db);
     log::debug!("Gain TX: {}", gain_tx.db);
 
-    // bladerf.reset()?;
+    bladerf.perform_format_config(Direction::Rx, SampleFormat::Sc16Q11)?;
 
-    // Contains mostly setup of buffers and FW version checks...
-    // bladerf1_sync_config(
-    //      perform_format_config
-    //      int sync_init(
-    //          int sync_worker_init(struct bladerf_sync *s)
-    //              int async_init_stream(
-    //                  dev->backend->init_stream(lstream, num_transfers); -> static int lusb_init_stream( in /home/user/sdr/bladeRF/host/libraries/libbladeRF/src/backend/usb/libusb.c
-    // tokio::time::sleep(Duration::from_secs(1));
-    bladerf.perform_format_config(Rx, Sc16Q11)?;
-    // tokio::time::sleep(Duration::from_secs(1));
     bladerf.enable_module(BLADERF_MODULE_RX, true)?;
-    // tokio::time::sleep(Duration::from_secs(1));
 
     bladerf.experimental_control_urb()?;
 
-    // bladerf.async_run_stream()?;
+    // bladerf.run_stream()?;
 
-    bladerf.perform_format_deconfig(Rx)?;
-    // tokio::time::sleep(Duration::from_secs(1));
+    bladerf.perform_format_deconfig(Direction::Rx)?;
+
     bladerf.enable_module(BLADERF_MODULE_RX, false)?;
 
     Ok(())

@@ -2,9 +2,9 @@ mod common;
 
 use crate::common::*;
 
-use bladerf_globals::range::RangeItem;
-use bladerf_globals::{BLADERF_MODULE_RX, BLADERF_MODULE_TX, GainDb};
-use libbladerf_rs::{BladeRf1, Result};
+use libbladerf_rs::bladerf1::{BladeRf1, GainDb};
+use libbladerf_rs::range::RangeItem;
+use libbladerf_rs::{BLADERF_MODULE_RX, BLADERF_MODULE_TX, Result};
 
 #[test]
 fn set_gain() -> Result<()> {

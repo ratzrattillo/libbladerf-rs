@@ -2,14 +2,9 @@ mod common;
 
 use crate::common::*;
 
-use bladerf_globals::range::RangeItem;
-use bladerf_globals::{BLADERF_MODULE_RX, BLADERF_MODULE_TX};
-use libbladerf_rs::{BladeRf1, Result};
-
-// #[test]
-// fn enable_logging() {
-//     logging_init("bladerf1_bandwidth");
-// }
+use libbladerf_rs::bladerf1::BladeRf1;
+use libbladerf_rs::range::RangeItem;
+use libbladerf_rs::{BLADERF_MODULE_RX, BLADERF_MODULE_TX, Result};
 
 #[test]
 fn bandwidth() -> Result<()> {

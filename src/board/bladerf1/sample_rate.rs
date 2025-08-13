@@ -1,8 +1,7 @@
-use crate::BladeRf1;
 use crate::Result;
-use bladerf_globals::BladeRf1RationalRate;
-use bladerf_globals::bladerf1::{BLADERF_SAMPLERATE_MIN, BLADERF_SAMPLERATE_REC_MAX};
-use bladerf_globals::range::{Range, RangeItem};
+use crate::bladerf1::BladeRf1;
+use crate::hardware::si5338::{BLADERF_SAMPLERATE_MIN, BLADERF_SAMPLERATE_REC_MAX, RationalRate};
+use crate::range::{Range, RangeItem};
 
 impl BladeRf1 {
     pub fn set_sample_rate(&self, channel: u8, rate: u32) -> Result<u32> {
@@ -29,13 +28,13 @@ impl BladeRf1 {
     pub fn set_rational_sample_rate(
         &self,
         channel: u8,
-        rate: &mut BladeRf1RationalRate,
-    ) -> Result<BladeRf1RationalRate> {
+        rate: &mut RationalRate,
+    ) -> Result<RationalRate> {
         // CHECK_BOARD_STATE(STATE_INITIALIZED);
         self.si5338.set_rational_sample_rate(channel, rate)
     }
 
-    pub fn get_rational_sample_rate(&self, channel: u8) -> Result<BladeRf1RationalRate> {
+    pub fn get_rational_sample_rate(&self, channel: u8) -> Result<RationalRate> {
         // CHECK_BOARD_STATE(STATE_INITIALIZED);
         self.si5338.get_rational_sample_rate(channel)
     }

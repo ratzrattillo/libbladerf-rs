@@ -2,12 +2,9 @@ mod common;
 
 use common::*;
 
-use bladerf_globals::bladerf1::{BLADERF1_USB_PID, BLADERF1_USB_VID};
-use libbladerf_rs::{BladeRf1, Error, Result};
+use libbladerf_rs::bladerf1::{BLADERF1_USB_PID, BLADERF1_USB_VID, BladeRf1};
+use libbladerf_rs::{Error, Result};
 use nusb::MaybeFuture;
-// use std::sync::LazyLock;
-
-// pub static LOGGING: LazyLock<()> = LazyLock::new(|| logging_init("bladerf1_open"));
 
 #[test]
 fn from_first() -> Result<()> {
@@ -31,13 +28,13 @@ fn from_bus_addr() -> Result<()> {
     }
 }
 
-#[test]
-fn from_serial() -> Result<()> {
-    logging_init("bladerf1_open");
-    let serial = "0617f60964e8f3efcbf78adc8ed94c26";
-    BladeRf1::from_serial(serial)?;
-    Ok(())
-}
+// #[test]
+// fn from_serial() -> Result<()> {
+//     logging_init("bladerf1_open");
+//     let serial = "0123456789abcdef";
+//     BladeRf1::from_serial(serial)?;
+//     Ok(())
+// }
 
 // #[test]
 // fn from_fd() -> Result<()> {

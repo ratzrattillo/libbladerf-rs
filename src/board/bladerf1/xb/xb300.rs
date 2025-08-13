@@ -1,21 +1,21 @@
-use crate::BladeRf1;
+use crate::bladerf1::BladeRf1;
 use crate::nios::Nios;
 use crate::{Error, Result};
 use nusb::Interface;
 use std::sync::{Arc, Mutex};
 
-pub const BLADERF_XB_AUX_EN: u32 = 0x000002;
-pub const BLADERF_XB_TX_LED: u32 = 0x000010;
-pub const BLADERF_XB_RX_LED: u32 = 0x000020;
-pub const BLADERF_XB_TRX_TXN: u32 = 0x000040;
-pub const BLADERF_XB_TRX_RXN: u32 = 0x000080;
-pub const BLADERF_XB_TRX_MASK: u32 = 0x0000c0;
-pub const BLADERF_XB_PA_EN: u32 = 0x000200;
-pub const BLADERF_XB_LNA_ENN: u32 = 0x000400;
-pub const BLADERF_XB_CS: u32 = 0x010000;
-pub const BLADERF_XB_CSEL: u32 = 0x040000;
-pub const BLADERF_XB_DOUT: u32 = 0x100000;
-pub const BLADERF_XB_SCLK: u32 = 0x400000;
+pub(crate) const BLADERF_XB_AUX_EN: u32 = 0x000002;
+pub(crate) const BLADERF_XB_TX_LED: u32 = 0x000010;
+pub(crate) const BLADERF_XB_RX_LED: u32 = 0x000020;
+pub(crate) const BLADERF_XB_TRX_TXN: u32 = 0x000040;
+pub(crate) const BLADERF_XB_TRX_RXN: u32 = 0x000080;
+pub(crate) const BLADERF_XB_TRX_MASK: u32 = 0x0000c0;
+pub(crate) const BLADERF_XB_PA_EN: u32 = 0x000200;
+pub(crate) const BLADERF_XB_LNA_ENN: u32 = 0x000400;
+pub(crate) const BLADERF_XB_CS: u32 = 0x010000;
+pub(crate) const BLADERF_XB_CSEL: u32 = 0x040000;
+pub(crate) const BLADERF_XB_DOUT: u32 = 0x100000;
+pub(crate) const BLADERF_XB_SCLK: u32 = 0x400000;
 
 /// XB-300 TRX setting
 #[derive(Debug)]

@@ -2,15 +2,14 @@ mod common;
 
 use crate::common::*;
 
-use bladerf_globals::bladerf1::BladeRf1Correction;
-use bladerf_globals::{BLADERF_MODULE_RX, BLADERF_MODULE_TX};
-use libbladerf_rs::Result;
+use libbladerf_rs::bladerf1::Correction;
+use libbladerf_rs::{BLADERF_MODULE_RX, BLADERF_MODULE_TX, Result};
 
 #[test]
 fn gain_correction() -> Result<()> {
     logging_init("bladerf1_correction");
 
-    let correction_type = &BladeRf1Correction::Gain;
+    let correction_type = &Correction::Gain;
 
     for channel in [BLADERF_MODULE_RX, BLADERF_MODULE_TX] {
         for desired in [-4096, 4096] {
@@ -35,7 +34,7 @@ fn gain_correction() -> Result<()> {
 fn phase_correction() -> Result<()> {
     logging_init("bladerf1_correction");
 
-    let correction_type = &BladeRf1Correction::Phase;
+    let correction_type = &Correction::Phase;
 
     for channel in [BLADERF_MODULE_RX, BLADERF_MODULE_TX] {
         for desired in [-4096, 4096] {
@@ -95,7 +94,7 @@ fn iq_correction() -> Result<()> {
             [-2032, -2016, -2000, 0, 2000, 2016, 2032]
         };
 
-        for correction_type in &[BladeRf1Correction::DcoffI, BladeRf1Correction::DcoffQ] {
+        for correction_type in &[Correction::DcoffI, Correction::DcoffQ] {
             for desired in desired_arr {
                 // TODO: What channels are supported?
                 let current = BLADERF.get_correction(channel, correction_type)?;

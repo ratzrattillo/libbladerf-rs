@@ -2,10 +2,10 @@ mod common;
 
 use crate::common::*;
 
-use bladerf_globals::bladerf1::BladeRf1RxMux::{
+use libbladerf_rs::Result;
+use libbladerf_rs::bladerf1::RxMux::{
     Mux12BitCounter, Mux32BitCounter, MuxBaseband, MuxDigitalLoopback,
 };
-use libbladerf_rs::Result;
 
 #[test]
 fn rx_mux() -> Result<()> {

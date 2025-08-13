@@ -3,7 +3,8 @@ mod common;
 use crate::common::*;
 use num_complex::Complex32;
 
-use libbladerf_rs::{BladeRf1RxStreamer, BladeRf1TxStreamer, Result};
+use libbladerf_rs::Result;
+use libbladerf_rs::bladerf1::{BladeRf1RxStreamer, BladeRf1TxStreamer};
 
 #[test]
 fn rx_stream() -> Result<()> {

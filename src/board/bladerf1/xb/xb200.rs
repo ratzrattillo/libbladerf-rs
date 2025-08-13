@@ -1,37 +1,37 @@
-use crate::BladeRf1;
+use crate::bladerf::{bladerf_channel_rx, bladerf_channel_tx};
+use crate::bladerf1::BladeRf1;
 use crate::nios::Nios;
 use crate::{Error, Result};
-use bladerf_globals::{bladerf_channel_rx, bladerf_channel_tx};
 use nusb::Interface;
 use std::sync::{Arc, Mutex};
 
-pub const BLADERF_XB_CONFIG_TX_PATH_MIX: u32 = 0x04;
-pub const BLADERF_XB_CONFIG_TX_PATH_BYPASS: u32 = 0x08;
-pub const BLADERF_XB_CONFIG_TX_BYPASS: u32 = 0x04;
-pub const BLADERF_XB_CONFIG_TX_BYPASS_N: u32 = 0x08;
-pub const BLADERF_XB_CONFIG_TX_BYPASS_MASK: u32 = 0x0C;
-pub const BLADERF_XB_CONFIG_RX_PATH_MIX: u32 = 0x10;
-pub const BLADERF_XB_CONFIG_RX_PATH_BYPASS: u32 = 0x20;
-pub const BLADERF_XB_CONFIG_RX_BYPASS: u32 = 0x10;
-pub const BLADERF_XB_CONFIG_RX_BYPASS_N: u32 = 0x20;
-pub const BLADERF_XB_CONFIG_RX_BYPASS_MASK: u32 = 0x30;
+pub(crate) const BLADERF_XB_CONFIG_TX_PATH_MIX: u32 = 0x04;
+pub(crate) const BLADERF_XB_CONFIG_TX_PATH_BYPASS: u32 = 0x08;
+pub(crate) const BLADERF_XB_CONFIG_TX_BYPASS: u32 = 0x04;
+// pub (crate) const BLADERF_XB_CONFIG_TX_BYPASS_N: u32 = 0x08;
+pub(crate) const BLADERF_XB_CONFIG_TX_BYPASS_MASK: u32 = 0x0C;
+pub(crate) const BLADERF_XB_CONFIG_RX_PATH_MIX: u32 = 0x10;
+pub(crate) const BLADERF_XB_CONFIG_RX_PATH_BYPASS: u32 = 0x20;
+pub(crate) const BLADERF_XB_CONFIG_RX_BYPASS: u32 = 0x10;
+// pub (crate) const BLADERF_XB_CONFIG_RX_BYPASS_N: u32 = 0x20;
+pub(crate) const BLADERF_XB_CONFIG_RX_BYPASS_MASK: u32 = 0x30;
 
-pub const BLADERF_XB_RF_ON: u32 = 0x0800;
-pub const BLADERF_XB_TX_ENABLE: u32 = 0x1000;
-pub const BLADERF_XB_RX_ENABLE: u32 = 0x2000;
+pub(crate) const BLADERF_XB_RF_ON: u32 = 0x0800;
+pub(crate) const BLADERF_XB_TX_ENABLE: u32 = 0x1000;
+pub(crate) const BLADERF_XB_RX_ENABLE: u32 = 0x2000;
 
-pub const BLADERF_XB_TX_RF_SW2: u32 = 0x04000000;
-pub const BLADERF_XB_TX_RF_SW1: u32 = 0x08000000;
-pub const BLADERF_XB_TX_MASK: u32 = 0x0C000000;
-pub const BLADERF_XB_TX_SHIFT: u32 = 26;
+// pub (crate) const BLADERF_XB_TX_RF_SW2: u32 = 0x04000000;
+// pub (crate) const BLADERF_XB_TX_RF_SW1: u32 = 0x08000000;
+pub(crate) const BLADERF_XB_TX_MASK: u32 = 0x0C000000;
+pub(crate) const BLADERF_XB_TX_SHIFT: u32 = 26;
 
-pub const BLADERF_XB_RX_RF_SW2: u32 = 0x10000000;
-pub const BLADERF_XB_RX_RF_SW1: u32 = 0x20000000;
-pub const BLADERF_XB_RX_MASK: u32 = 0x30000000;
-pub const BLADERF_XB_RX_SHIFT: u32 = 28;
+// pub (crate) const BLADERF_XB_RX_RF_SW2: u32 = 0x10000000;
+// pub (crate) const BLADERF_XB_RX_RF_SW1: u32 = 0x20000000;
+pub(crate) const BLADERF_XB_RX_MASK: u32 = 0x30000000;
+pub(crate) const BLADERF_XB_RX_SHIFT: u32 = 28;
 
-pub const LMS_RX_SWAP: u8 = 0x40;
-pub const LMS_TX_SWAP: u8 = 0x08;
+pub(crate) const LMS_RX_SWAP: u8 = 0x40;
+pub(crate) const LMS_TX_SWAP: u8 = 0x08;
 
 /// XB-200 filter selection options
 #[derive(PartialEq, Debug, Clone)]

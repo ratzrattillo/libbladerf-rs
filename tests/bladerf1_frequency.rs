@@ -2,9 +2,8 @@ mod common;
 
 use crate::common::*;
 
-use bladerf_globals::range::RangeItem;
-use bladerf_globals::{BLADERF_MODULE_RX, BLADERF_MODULE_TX};
-use libbladerf_rs::Result;
+use libbladerf_rs::range::RangeItem;
+use libbladerf_rs::{BLADERF_MODULE_RX, BLADERF_MODULE_TX, Result};
 // use libbladerf_rs::hardware::lms6002d::LmsFreq;
 
 // #[test]

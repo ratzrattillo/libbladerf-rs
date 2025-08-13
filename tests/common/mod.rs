@@ -1,7 +1,7 @@
+use libbladerf_rs::bladerf1::BladeRf1;
 /// This module has been created using mod.rs in a subfolder, instead of just creating a common.rs under tests
 /// This is due to the test runner then not searching for runnable tests in mod.rs
 /// https://doc.rust-lang.org/rust-by-example/testing/integration_testing.html
-use libbladerf_rs::BladeRf1;
 use std::sync::LazyLock;
 
 #[allow(dead_code)]

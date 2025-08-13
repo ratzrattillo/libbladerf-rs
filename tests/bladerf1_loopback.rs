@@ -1,8 +1,8 @@
 mod common;
 
 use crate::common::*;
+use libbladerf_rs::bladerf1::Loopback;
 
-use bladerf_globals::BladeRf1Loopback;
 use libbladerf_rs::Result;
 
 #[test]
@@ -10,15 +10,15 @@ fn rx_mux() -> Result<()> {
     logging_init("bladerf1_loopback");
 
     for desired in [
-        BladeRf1Loopback::None,
-        BladeRf1Loopback::Firmware,
-        BladeRf1Loopback::BbTxlpfRxlpf,
-        BladeRf1Loopback::BbTxlpfRxvga2,
-        BladeRf1Loopback::BbTxvga1Rxlpf,
-        BladeRf1Loopback::BbTxvga1Rxvga2,
-        BladeRf1Loopback::Lna1,
-        BladeRf1Loopback::Lna2,
-        BladeRf1Loopback::Lna3,
+        Loopback::None,
+        Loopback::Firmware,
+        Loopback::BbTxlpfRxlpf,
+        Loopback::BbTxlpfRxvga2,
+        Loopback::BbTxvga1Rxlpf,
+        Loopback::BbTxvga1Rxvga2,
+        Loopback::Lna1,
+        Loopback::Lna2,
+        Loopback::Lna3,
     ] {
         let current = BLADERF.get_loopback()?;
         log::trace!("Loopback (CURRENT):\t{current:?}");

@@ -9,14 +9,15 @@
 //! [libbladeRF]: https://github.com/Nuand/bladeRF
 //! [libbladerf-rs]: https://github.com/ratzrattillo/libbladerf-rs
 //!
+//!
 //! ## Usage overview
 //!
 //! After a BladeRF is connected via USB (High or SuperSpeed USB port required) and fully booted,
-//! an instance to a BladeRF can be opened using [`BladeRf1::from_first`]. A handle to a specific BladeRF
-//! can also be obtained by its [`BladeRf1::from_bus_addr`] or its [`BladeRf1::from_serial`] or
-//! [`BladeRf1::from_fd`] on Android.
+//! an instance to a BladeRF can be opened using [`bladerf1::BladeRf1::from_first`]. A handle to a specific BladeRF
+//! can also be obtained by its [`bladerf1::BladeRf1::from_bus_addr`] or its [`bladerf1::BladeRf1::from_serial`] or
+//! [`bladerf1::BladeRf1::from_fd`] on Android.
 //!
-//! After obtaining an instance of a [`BladeRf1`], you can set basic parameters like Gain, Frequency
+//! After obtaining an instance of a [`bladerf1::BladeRf1`], you can set basic parameters like Gain, Frequency
 //! and Sample Rate or Bandwidth.
 //!
 //! ## Examples
@@ -42,11 +43,8 @@
 //! - Support for BladeRF2
 //! - Support for Firmware and FPGA flashing/validation
 //! - Support for different I/Q sample formats and timestamps
-//! - Logging with adjustable levels (e.g. with log crate)
 //! - DC calibration table support
-//! - Board Data structure to retain current configuration and state.
 //! - Usage from both async and blocking contexts (currently sync only)
-//! - Structured and consistent error messages (e.g. with thiserror crate)
 //! - Extensive documentation
 //! - AGC enablement
 //!
@@ -88,13 +86,34 @@
 //! ### DAC161S055
 //! [DAC Datasheet](https://www.ti.com/lit/ds/symlink/dac161s055.pdf?ts=1739140548819&ref_url=https%253A%252F%252Fwww.ti.com%252Fproduct%252Fde-de%252FDAC161S055)
 
-pub mod board;
-pub mod hardware;
+mod bladerf;
+mod board;
+mod hardware;
 pub mod nios;
+pub mod range;
 
-pub use board::bladerf1::*;
+pub use bladerf::{BLADERF_MODULE_RX, BLADERF_MODULE_TX, Direction};
+pub use board::bladerf1;
+pub use hardware::lms6002d::{Band, Tune};
 
-pub use bladerf_globals::*;
+use std::fmt::{Display, Formatter};
+
+/// Version structure for FPGA, firmware, libbladeRF, and associated utilities
+#[derive(Debug)]
+pub struct SemanticVersion {
+    /// Major version
+    pub major: u16,
+    /// Minor version
+    pub minor: u16,
+    /// Patch version
+    pub patch: u16,
+}
+
+impl Display for SemanticVersion {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!("{}.{}.{}", self.major, self.minor, self.patch))
+    }
+}
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -106,24 +125,24 @@ pub enum Error {
     /// USB transfer error.
     #[error("transfer")]
     Transfer(#[from] nusb::transfer::TransferError),
-    /// Transfer truncated.
-    #[error("transfer truncated")]
-    TransferTruncated {
-        /// Actual amount of bytes transferred.
-        actual: usize,
-        /// Expected number of bytes transferred.
-        expected: usize,
-    },
-    /// An API call is not supported by your hardware.
-    ///
-    /// Try updating the firmware on your device.
-    #[error("no api")]
-    NoApi {
-        /// Current device version.
-        device: String,
-        /// Minimum version required.
-        min: String,
-    },
+    // /// Transfer truncated.
+    // #[error("transfer truncated")]
+    // TransferTruncated {
+    //     /// Actual amount of bytes transferred.
+    //     actual: usize,
+    //     /// Expected number of bytes transferred.
+    //     expected: usize,
+    // },
+    // /// An API call is not supported by your hardware.
+    // ///
+    // /// Try updating the firmware on your device.
+    // #[error("no api")]
+    // NoApi {
+    //     /// Current device version.
+    //     device: String,
+    //     /// Minimum version required.
+    //     min: String,
+    // },
     /// Invalid argument provided.
     #[error("{0}")]
     Argument(&'static str),

@@ -1,9 +1,9 @@
 mod common;
 
 use crate::common::*;
-use bladerf_globals::bladerf1::BladeRf1Xb::Xb200;
-use libbladerf_rs::{BladeRf1, Result};
-
+use libbladerf_rs::Result;
+use libbladerf_rs::bladerf1::BladeRf1;
+use libbladerf_rs::bladerf1::xb::ExpansionBoard;
 // TODO: Detect attachable expansion board for testing!
 // TODO: Currently XB200 is hardcoded!
 
@@ -30,7 +30,7 @@ fn xb200_enabled() -> Result<()> {
     let enabled = BladeRf1::xb200_is_enabled(&BLADERF.interface)?;
     log::trace!("XB200 enabled:\t{enabled}");
     // assert_eq!(enabled, false);
-    BLADERF.expansion_attach(Xb200)?;
+    BLADERF.expansion_attach(ExpansionBoard::Xb200)?;
     let enabled = BladeRf1::xb200_is_enabled(&BLADERF.interface)?;
     log::trace!("XB200 enabled:\t{enabled}");
     assert!(enabled);
