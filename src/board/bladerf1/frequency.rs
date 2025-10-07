@@ -9,6 +9,10 @@ use crate::nios::packet_retune::NiosPktRetuneRequest;
 use crate::range::{Range, RangeItem};
 use crate::{Error, Result};
 
+/// BladeRF allows for two tuning modes in which commands to tune to a specific frequency are sent to the BladeRF:
+/// - Host: Commands sent via USB.
+/// - FPGA: Commands sent from the FPGA.
+/// FPGA Tuning might allow for more accurate tuning at specific timestamps (No USB delays).
 #[derive(Clone)]
 pub enum TuningMode {
     #[allow(dead_code)]
@@ -17,6 +21,11 @@ pub enum TuningMode {
 }
 
 impl BladeRf1 {
+    /// Set the freqeuncy on a specific channel. The frequency must lie in the supported
+    /// frequency range of the BladeRF1. If an XB200 Expansion Board is attached, the lower
+    /// frequencies provided by that board are automatically supported.
+    /// Both Host- and FPGA-TuningModes are supported depending on the config option set in the
+    /// BladeRFs BoardData.
     pub fn set_frequency(&self, channel: u8, mut frequency: u64) -> Result<()> {
         // let dc_cal = if channel == bladerf_channel_rx!(0) { cal_dc.rx } else { cal.dc_tx };
 
@@ -55,6 +64,7 @@ impl BladeRf1 {
         Ok(())
     }
 
+    /// Get the frequency that the BladeRF1 is tuned to on a specific channel.
     pub fn get_frequency(&self, channel: u8) -> Result<u64> {
         let f = self.lms.get_frequency(channel)?;
         if f.x == 0 {
@@ -80,6 +90,8 @@ impl BladeRf1 {
         Ok(frequency_hz)
     }
 
+    /// Get the supported frequency range of the BladeRFF1
+    /// A wider frequency range is returned if the XB200 is being attached and enabled.
     pub fn get_frequency_range(&self) -> Result<Range> {
         if BladeRf1::xb200_is_enabled(&self.interface)? {
             Ok(Range {
@@ -102,6 +114,8 @@ impl BladeRf1 {
         }
     }
 
+    // TODO: Does this method have to be exposed externally?
+    /// Select the High Band for Frequencies above 1.5GHz, otehrwise Low Band
     pub fn select_band(&self, channel: u8, frequency: u32) -> Result<()> {
         // CHECK_BOARD_STATE(STATE_INITIALIZED);
 
@@ -114,6 +128,9 @@ impl BladeRf1 {
         self.band_select(channel, band)
     }
 
+    // TODO: Better Express semantics by using "Either" for frequency and quick_tune.
+    /// Schedule a retune at a specific point in time. the retune operation is handled by the FPGA
+    /// Allows to provide a quick_tune parameter with precalculated tuning parameters for increased speed.
     pub fn schedule_retune(
         &self,
         channel: u8,
@@ -152,6 +169,7 @@ impl BladeRf1 {
         Ok(f)
     }
 
+    /// Cancel currently outstanding scheduled retunes
     pub fn cancel_scheduled_retunes(&self, channel: u8) -> Result<()> {
         self.interface.lock().unwrap().nios_retune(
             channel,

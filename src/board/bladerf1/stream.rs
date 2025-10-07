@@ -260,6 +260,7 @@ pub const BLADERF_GPIO_TIMESTAMP: u32 = 1 << 16;
 pub const BLADERF_GPIO_TIMESTAMP_DIV2: u32 = 1 << 17;
 
 impl BladeRf1RxStreamer {
+    /// Create new instance of an RX Streamer to receive I/Q samples.
     pub fn new(
         dev: BladeRf1,
         buffer_size: usize,
@@ -288,6 +289,7 @@ impl BladeRf1RxStreamer {
         Ok(self.buffer_size)
     }
 
+    /// Activate RX frontend and enable receiving of samples with predefined sample format: `SampleFormat::Sc16Q11`.
     pub fn activate(&mut self) -> Result<()> {
         self.dev
             .perform_format_config(Direction::Rx, SampleFormat::Sc16Q11)?;
@@ -295,11 +297,13 @@ impl BladeRf1RxStreamer {
         self.dev.experimental_control_urb()
     }
 
+    /// Disable receiving samples and shut down RX frontend.
     pub fn deactivate(&mut self) -> Result<()> {
         self.dev.perform_format_deconfig(Direction::Rx)?;
         self.dev.enable_module(BLADERF_MODULE_RX, false)
     }
 
+    /// Read I/Q samples into a slice of buffers with configurable timeout.
     pub fn read_sync(
         &mut self,
         buffers: &mut [&mut [Complex32]],
@@ -350,6 +354,7 @@ impl BladeRf1RxStreamer {
 }
 
 impl BladeRf1TxStreamer {
+    /// Create new instance of an TX Streamer to transmit I/Q samples.
     pub fn new(
         dev: BladeRf1,
         buffer_size: usize,
@@ -378,6 +383,7 @@ impl BladeRf1TxStreamer {
         Ok(self.buffer_size)
     }
 
+    // Activate TX frontend.
     pub fn activate(&mut self) -> Result<()> {
         // self.dev.perform_format_config(BladeRfDirection::Rx, Format::Sc16Q11)
         //    ?;
@@ -385,11 +391,13 @@ impl BladeRf1TxStreamer {
         // dev.experimental_control_urb()
     }
 
+    /// Shut down TX frontend
     pub fn deactivate(&mut self) -> Result<()> {
         //  self.dev.perform_format_deconfig(BladeRfDirection::Rx)?;
         self.dev.enable_module(BLADERF_MODULE_TX, false)
     }
 
+    /// TODO:
     pub fn write(
         &mut self,
         _buffers: &[&[Complex32]],
@@ -402,6 +410,8 @@ impl BladeRf1TxStreamer {
         todo!()
     }
 
+    /// Get I/Q samples from a slice of buffers with configurable timeout and wubmit them to the BladeRF1 for transmission.
+    /// A delay can be defined in the form of a timestamp when transmission should start.
     pub fn write_all(
         &mut self,
         buffers: &[&[Complex32]],
@@ -435,15 +445,15 @@ impl BladeRf1TxStreamer {
 }
 
 impl BladeRf1 {
-    // Perform the neccessary device configuration for the specified format
-    // (e.g., enabling/disabling timestamp support), first checking that the
-    // requested format would not conflict with the other stream direction.
-    //
-    //      dev     Device handle
-    //      dir     Direction that is currently being configured
-    //      format  Format the channel is being configured for
-    //
-    // @return 0 on success, BLADERF_ERR_* on failure
+    /// Perform the necessary device configuration for the specified format
+    /// (e.g., enabling/disabling timestamp support), first checking that the
+    /// requested format would not conflict with the other stream direction.
+    ///
+    ///      dev     Device handle
+    ///      dir     Direction that is currently being configured
+    ///      format  Format the channel is being configured for
+    ///
+    /// @return 0 on success, BLADERF_ERR_* on failure
     pub fn perform_format_config(&self, dir: Direction, format: SampleFormat) -> Result<()> {
         // BladeRf1Format::PacketMeta
         // struct bladerf1_board_data *board_data = dev->board_data;
@@ -524,6 +534,7 @@ impl BladeRf1 {
         Ok(())
     }
 
+    /// Investigate: This is required to set the BladeRF1 into a mode where receiving and transmitting I/Q samples is possible.
     pub fn experimental_control_urb(&self) -> Result<()> {
         // TODO: Dont know what this is doing
         let pkt = ControlIn {

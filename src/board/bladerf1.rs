@@ -93,6 +93,8 @@ pub const BLADERF_GPIO_FEATURE_SMALL_DMA_XFER: u16 = 1 << 7;
 // -  Packet No. 317 in rx-BladeRFTest-unix-filtered.pcapng
 // -  Packet No. 230 in rx-rusttool-filtered.pcapng
 // This is maybe due to the tuning mode being FPGA and not Host
+/// BoardData struct contains information on the current state and settings of the
+/// BladeRF. Data should only be stored in this structure if it cannot be determined during runtime.
 #[derive(Clone)]
 struct BoardData {
     // speed: Speed,
@@ -100,12 +102,14 @@ struct BoardData {
     tuning_mode: TuningMode,
 }
 
+/// TX Streamer to receive samples with the BladeRF1
 pub struct BladeRf1RxStreamer {
     dev: BladeRf1,
     reader: EndpointRead<Bulk>,
     buffer_size: usize,
 }
 
+/// TX Streamer to transmit samples with the BladeRF1
 pub struct BladeRf1TxStreamer {
     dev: BladeRf1,
     writer: EndpointWrite<Bulk>,

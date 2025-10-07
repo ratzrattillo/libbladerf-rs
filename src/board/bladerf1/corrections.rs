@@ -28,10 +28,7 @@ pub enum Correction {
 }
 
 impl BladeRf1 {
-    /****************************************************************************/
-    /* DC/Phase/Gain Correction */
-    /****************************************************************************/
-
+    /// Return the currently applied correction values for either DC, Phase or Gain.
     pub fn get_correction(&self, ch: u8, corr: &Correction) -> Result<i16> {
         // CHECK_BOARD_STATE(STATE_INITIALIZED);
 
@@ -60,6 +57,7 @@ impl BladeRf1 {
         }
     }
 
+    /// Apply correction values for either DC, Phase or Gain.
     pub fn set_correction(&self, ch: u8, corr: &Correction, value: i16) -> Result<()> {
         // CHECK_BOARD_STATE(STATE_INITIALIZED);
 

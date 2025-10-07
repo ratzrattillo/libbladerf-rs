@@ -63,6 +63,9 @@ impl BladeRf1 {
         (stage_gain + allotment, gain - allotment)
     }
 
+    /// Get the supported absolute gain range on a specific channel.
+    ///The absolute gain is composed of the individual gains of specific stages, namely
+    /// TXVGA1 and TXVGA2 for TX and RXVGA1, RXVGA2 and LNA for RX.
     pub fn get_gain_range(channel: u8) -> Range {
         if bladerf_channel_is_tx!(channel) {
             // Overall TX gain range
@@ -96,6 +99,8 @@ impl BladeRf1 {
         }
     }
 
+    /// Get the supported gain modes of the selected channel.
+    /// Supported are `GainMode::Mgc` and `GainMode::Default`.
     pub fn get_gain_modes(&self, channel: u8) -> Result<Vec<GainMode>> {
         if bladerf_channel_is_tx!(channel) {
             log::error!("TX does not support gain modes");
@@ -105,6 +110,8 @@ impl BladeRf1 {
         }
     }
 
+    /// Set the desired gain mode to one of the options provided by `GainMode`.
+    /// Supported are `GainMode::Mgc` and `GainMode::Default`.
     pub fn set_gain_mode(&self, channel: u8, mode: GainMode) -> Result<()> {
         if bladerf_channel_is_tx!(channel) {
             log::error!("Setting gain mode for TX is not supported");
@@ -149,6 +156,7 @@ impl BladeRf1 {
         self.config_gpio_write(config_gpio)
     }
 
+    /// Get the current gain mode of the BladeRF1.
     pub fn get_gain_mode(&self) -> Result<GainMode> {
         let data = self.config_gpio_read()?;
 
@@ -160,6 +168,10 @@ impl BladeRf1 {
         Ok(gain_mode)
     }
 
+    // TODO: "stage" parameter could be enum instead of string.
+    // TODO: "stage" indirectly determines the channel, thus we could scratch the channel parameter.
+    /// Retrieve the gain of an individual stage. The absolute gain is composed of the gain of the individual stages.
+    /// Supported stages are "txvga1" and "txvga2" for TX and "rxvga1", "rxvga2" and "lna" for RX.
     pub fn get_gain_stage(&self, channel: u8, stage: &str) -> Result<GainDb> {
         // CHECK_BOARD_STATE(STATE_INITIALIZED);
         if channel == BLADERF_MODULE_TX {
@@ -187,6 +199,8 @@ impl BladeRf1 {
         }
     }
 
+    /// Set the gain of a specific stage on a specific channel.
+    /// Supported stages are "txvga1" and "txvga2" for TX and "rxvga1", "rxvga2" and "lna" for RX.
     pub fn set_gain_stage(&self, channel: u8, stage: &str, gain: GainDb) -> Result<()> {
         // CHECK_BOARD_STATE(STATE_INITIALIZED);
 
@@ -216,6 +230,7 @@ impl BladeRf1 {
         }
     }
 
+    /// Returns the names of supported gain stages of a channel.
     pub fn get_gain_stages(channel: u8) -> Vec<String> {
         if bladerf_channel_is_tx!(channel) {
             vec!["txvga1".to_string(), "txvga2".to_string()]
@@ -228,11 +243,12 @@ impl BladeRf1 {
         }
     }
 
-    /// Use bladerf_get_gain_range(), bladerf_set_gain(), and
-    /// bladerf_get_gain() to control total system gain. For direct
-    /// control of individual gain stages, use bladerf_get_gain_stages(),
-    /// bladerf_get_gain_stage_range(), bladerf_set_gain_stage(), and
-    /// bladerf_get_gain_stage().
+    /// Retrieve the supported gain values of a specific stage on a specific channel.
+    /// Use `bladerf_get_gain_range()`, `bladerf_set_gain()`, and
+    /// `bladerf_get_gain()` to control total system gain. For direct
+    /// control of individual gain stages, use `bladerf_get_gain_stages()`,
+    /// `bladerf_get_gain_stage_range()`, `bladerf_set_gain_stage()`, and
+    /// `bladerf_get_gain_stage()`.
     pub fn get_gain_stage_range(channel: u8, stage: &str) -> Result<Range> {
         if channel == BLADERF_MODULE_RX {
             match stage {
@@ -291,6 +307,7 @@ impl BladeRf1 {
         }
     }
 
+    /// Get the absolute gain of the TX channel.
     fn get_tx_gain(&self) -> Result<GainDb> {
         let txvga1 = self.lms.txvga1_get_gain()?;
         let txvga2 = self.lms.txvga2_get_gain()?;
@@ -300,6 +317,7 @@ impl BladeRf1 {
         })
     }
 
+    /// Get the absolute gain of the RX channel.
     fn get_rx_gain(&self) -> Result<GainDb> {
         let lna_gain_db = self.lms.lna_get_gain()?;
         let rxvga1_gain_db = self.lms.rxvga1_get_gain()?;
@@ -313,6 +331,7 @@ impl BladeRf1 {
         })
     }
 
+    /// Get the absolute gain of the specified channel.
     pub fn get_gain(&self, channel: u8) -> Result<GainDb> {
         // CHECK_BOARD_STATE(STATE_INITIALIZED);
 
@@ -323,6 +342,7 @@ impl BladeRf1 {
         }
     }
 
+    /// Set the absolute gain on a specific channel.
     pub fn set_gain(&self, channel: u8, gain: GainDb) -> Result<()> {
         // CHECK_BOARD_STATE(STATE_INITIALIZED);
 
@@ -333,6 +353,7 @@ impl BladeRf1 {
         }
     }
 
+    /// Set the absolute gain on the TX channel.
     pub fn set_tx_gain(&self, gain_db: GainDb) -> Result<()> {
         let desired_gain = gain_db.db;
 
@@ -367,6 +388,7 @@ impl BladeRf1 {
         self.lms.txvga2_set_gain(GainDb { db: txvga2 })
     }
 
+    /// Set the absolute gain on the RX channel.
     pub fn set_rx_gain(&self, gain_db: GainDb) -> Result<()> {
         let desired_gain = gain_db.db;
 

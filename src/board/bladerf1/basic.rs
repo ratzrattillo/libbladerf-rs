@@ -23,12 +23,14 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 impl BladeRf1 {
+    /// List all encountered BladeRF1 devices currently attached via USB.
     pub fn list_bladerf1() -> Result<impl Iterator<Item = DeviceInfo>> {
         Ok(nusb::list_devices().wait()?.filter(|dev| {
             dev.vendor_id() == BLADERF1_USB_VID && dev.product_id() == BLADERF1_USB_PID
         }))
     }
 
+    /// Create a new BladeRF1 instance, without running any initialization routines.
     fn build(device: Device) -> Result<Self> {
         let interface = Arc::new(Mutex::new(device.detach_and_claim_interface(0).wait()?));
 
@@ -109,6 +111,7 @@ impl BladeRf1 {
     /// on Android devices, as listing USB devices etc. is not possible.
     /// This method does not check, if the file descriptor really belongs to a BladeRf1.
     /// Undefined behaviour is expected, if a file descriptor to a device is given, that is not a BladeRf1.
+    /// REMARK: The Android support was removed from nusb recently.
     pub fn from_fd(fd: std::os::fd::OwnedFd) -> Result<Self> {
         let device = Device::from_fd(fd).wait()?;
         // TODO: Do check on device, if it really is a bladerf
@@ -142,6 +145,7 @@ impl BladeRf1 {
         )
     }
 
+    /// Return the version of the FPGA firmware.
     pub fn fpga_version(&self) -> Result<String> {
         let version = self.interface.lock().unwrap().nios_get_fpga_version()?;
         Ok(format!("{version}"))
@@ -418,7 +422,7 @@ impl BladeRf1 {
     //         ?)
     // }
 
-    // Vendor command that gets a 32-bit integer value
+    /// Vendor command that gets a 32-bit integer value
     fn get_vendor_cmd_int(&self, cmd: u8) -> Result<u32> {
         let pkt = ControlIn {
             control_type: ControlType::Vendor,
@@ -502,6 +506,7 @@ impl BladeRf1 {
         Ok(())
     }
 
+    /// Change USB Alternate Setting
     pub fn change_setting(&self, setting: u8) -> Result<()> {
         Ok(self
             .interface
@@ -510,6 +515,8 @@ impl BladeRf1 {
             .set_alt_setting(setting)
             .wait()?)
     }
+
+    /// TODO:
     pub fn usb_set_firmware_loopback(&self, enable: bool) -> Result<()> {
         self.vendor_cmd_int_wvalue(BLADE_USB_CMD_SET_LOOPBACK, enable as u16)?;
         self.change_setting(USB_IF_NULL)?;
@@ -517,6 +524,7 @@ impl BladeRf1 {
         Ok(())
     }
 
+    /// TODO:
     pub fn usb_get_firmware_loopback(&self) -> Result<bool> {
         let result = self.get_vendor_cmd_int(BLADE_USB_CMD_GET_LOOPBACK)?;
 
@@ -552,7 +560,7 @@ impl BladeRf1 {
         self.usb_enable_module(direction.clone(), enable)
     }
 
-    /// FPGA Band Selection
+    /// FPGA Band Selection on a specific channel.
     pub fn band_select(&self, module: u8, band: Band) -> Result<()> {
         let band_value = match band {
             Band::Low => 2,
