@@ -105,6 +105,8 @@ impl BladeRf1 {
     pub fn xb200_is_enabled(interface: &Arc<Mutex<Interface>>) -> Result<bool> {
         Ok((interface.lock().unwrap().nios_expansion_gpio_read()? & BLADERF_XB_RF_ON) != 0)
     }
+
+    /// Attach the XB200 expansion board.
     pub fn xb200_attach(&self) -> Result<()> {
         let muxout: usize = 6;
 
@@ -176,10 +178,12 @@ impl BladeRf1 {
         Ok(())
     }
 
+    /// This method does not do anything. Detach-operations are not required/supported for XB200.
     pub fn xb200_detach(&self) -> Result<()> {
         Ok(())
     }
 
+    /// The XB200 expansion board has to be enabled after attaching in order to be used.
     pub fn xb200_enable(&self, enable: bool) -> Result<()> {
         let interface = self.interface.lock().unwrap();
 
@@ -200,6 +204,7 @@ impl BladeRf1 {
         }
     }
 
+    /// Initialize the XB200 to defaults for filters and paths
     pub fn xb200_init(&self) -> Result<()> {
         log::trace!("Setting RX path");
         self.xb200_set_path(bladerf_channel_rx!(0), &Xb200Path::Bypass)?;
@@ -233,6 +238,7 @@ impl BladeRf1 {
         Xb200Filter::try_from((val >> shift) & 3)
     }
 
+    /// Set the mux filterbank to be used for a specific channel.
     pub fn set_filterbank_mux(&self, ch: u8, filter: Xb200Filter) -> Result<()> {
         let (mask, shift) = if ch == bladerf_channel_rx!(0) {
             (BLADERF_XB_RX_MASK, BLADERF_XB_RX_SHIFT)
@@ -261,6 +267,7 @@ impl BladeRf1 {
         Ok(())
     }
 
+    /// Set the filterbank to be used for a specific channel.
     pub fn xb200_set_filterbank(&self, ch: u8, filter: Xb200Filter) -> Result<()> {
         if ch != bladerf_channel_rx!(0) && ch != bladerf_channel_tx!(0) {
             log::error!("invalid channel");
@@ -294,6 +301,7 @@ impl BladeRf1 {
         }
     }
 
+    /// Automatically select the appropriate filter for a specific channel and frequency.
     pub fn xb200_auto_filter_selection(&self, ch: u8, frequency: u64) -> Result<()> {
         if frequency >= 300000000 {
             return Ok(());
@@ -341,6 +349,7 @@ impl BladeRf1 {
         Ok(())
     }
 
+    /// Set the signal path to be taken within the XB200.
     pub fn xb200_set_path(&self, ch: u8, path: &Xb200Path) -> Result<()> {
         if ch != bladerf_channel_rx!(0) && ch != bladerf_channel_tx!(0) {
             log::error!("invalid channel!");
@@ -400,6 +409,7 @@ impl BladeRf1 {
             .nios_expansion_gpio_write(0xffffffff, val)
     }
 
+    /// Get the currently configured Path on a specific channel.
     pub fn xb200_get_path(&self, ch: u8) -> Result<Xb200Path> {
         let val = self.interface.lock().unwrap().nios_expansion_gpio_read()?;
         log::trace!("[xb200_get_path] expansion_gpio_read: {val}");

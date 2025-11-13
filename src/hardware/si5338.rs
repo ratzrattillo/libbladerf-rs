@@ -36,8 +36,8 @@ pub const BLADERF_SMB_FREQUENCY_MAX: u32 = 200000000;
 /// Minimum output frequency on SMB connector, if no expansion board attached.
 pub const BLADERF_SMB_FREQUENCY_MIN: u32 = (38400000 * 66) / (32 * 567);
 
-/// This is used set or recreate the si5338 frequency
-/// Each si5338 multisynth module can be set independently
+/// This is used set or recreate the si5338 frequency.
+/// Each si5338 multisynth module can be set independently,
 #[derive(Clone, Default)]
 pub struct Multisynth {
     // Multisynth to program (0-3)
@@ -83,10 +83,15 @@ pub struct SI5338 {
 }
 
 impl SI5338 {
+    /// Create a new instance of an SI5338 Clock Generator
+    ///
+    /// Expects a handle to an NUSB interface to the BladeRF1.
     pub fn new(interface: Arc<Mutex<Interface>>) -> Self {
         Self { interface }
     }
 
+    /// Read configuration of the SI5338 by specifying
+    /// the address of the configuration value that should be read.
     pub fn read(&self, addr: u8) -> Result<u8> {
         self.interface
             .lock()
@@ -94,6 +99,8 @@ impl SI5338 {
             .nios_read::<u8, u8>(NIOS_PKT_8X8_TARGET_SI5338, addr)
     }
 
+    /// Write the SI5338 configuration by specifying the address
+    /// of the configuration value to write to.
     pub fn write(&self, addr: u8, data: u8) -> Result<()> {
         self.interface
             .lock()
@@ -107,6 +114,7 @@ impl SI5338 {
     }
 
     // TODO: Use normal gcd from gcd crate
+    /// Calculate the greatest common divisor
     fn gcd(mut a: u64, mut b: u64) -> u64 {
         let mut t: u64;
         while b != 0 {
@@ -117,6 +125,7 @@ impl SI5338 {
         a
     }
 
+    /// Reduce fraction and integer part of rational sample rate.
     pub fn rational_reduce(r: &mut RationalRate) {
         if (r.den > 0) && (r.num >= r.den) {
             // Get whole number
@@ -133,12 +142,16 @@ impl SI5338 {
         }
     }
 
-    pub fn rational_double(r: &mut RationalRate) {
+    /// Double the rational rate by doubling the integer and the numerator, then
+    /// apply the reduce method. Only used internally.
+    fn rational_double(r: &mut RationalRate) {
         r.integer *= 2;
         r.num *= 2;
         Self::rational_reduce(r);
     }
 
+    // TODO: Why not return RationalRate instead of taking it as argument?
+    /// Calculate the rational rate from MultiSynth.
     pub fn calculate_ms_freq(ms: &mut Multisynth, rate: &mut RationalRate) {
         let abc = RationalRate {
             integer: ms.a as u64,
@@ -226,6 +239,8 @@ impl SI5338 {
         ms.b = temp as u32;
     }
 
+    // TODO: Why not return Multisynth?
+    /// Read the multisynth parameters.
     pub fn read_multisynth(&self, ms: &mut Multisynth) -> Result<()> {
         // Read the enable bits
         let mut val = self.read(36 + ms.index)?;
@@ -252,6 +267,7 @@ impl SI5338 {
         Ok(())
     }
 
+    /// Write the multisynth parameters.
     pub fn write_multisynth(&self, ms: &Multisynth) -> Result<()> {
         let mut val = self.read(36 + ms.index)?;
         val |= ms.enable;
@@ -281,6 +297,8 @@ impl SI5338 {
         self.write(ms.index + 31, val)
     }
 
+    // TODO: Inspect what to return and what to supply as parameter
+    /// Calculate multisynth values
     pub fn calculate_multisynth(ms: &mut Multisynth, rate: &RationalRate) {
         // Don't mess with the users data
         let mut req = RationalRate {
@@ -353,6 +371,8 @@ impl SI5338 {
         Self::pack_regs(ms);
     }
 
+    /// Configure a multisynth for either the RX/TX sample clocks (index=1 or 2)
+    /// or for the SMB output (index=3).
     pub fn set_rational_multisynth(
         &self,
         index: u8,
@@ -385,6 +405,15 @@ impl SI5338 {
             den: actual.den,
         })
     }
+
+    /// Set the rational sample rate of the specified channel.
+    ///
+    ///  @param       dev     Device handle
+    ///  @param[in]   ch      Channel
+    ///  @param[in]   rate    Rational rate requested
+    ///  @param[out]  actual  Rational rate actually set
+    ///
+    ///  @return 0 on success, BLADERF_ERR_* value on failure
     pub fn set_rational_sample_rate(
         &self,
         ch: u8,
@@ -409,6 +438,13 @@ impl SI5338 {
         self.set_rational_multisynth(index, channel, rate_reduced)
     }
 
+    /// Set the integral sample rate of the specified channel.
+    ///
+    ///  @param       dev     Device handle
+    ///  @param[in]   ch      Channel
+    ///  @param[in]   rate    Integral rate requested
+    ///  @param[out]  actual  Integral rate actually set
+    ///  @return 0 on success, BLADERF_ERR_* value on failure
     pub fn set_sample_rate(&self, channel: u8, rate_requested: u32) -> Result<u32> {
         let mut req = RationalRate {
             integer: rate_requested as u64,
@@ -430,6 +466,13 @@ impl SI5338 {
         Ok(act.integer as u32)
     }
 
+    /// Get the rational sample rate of the specified channel.
+    ///
+    ///  @param       dev     Device handle
+    ///  @param[in]   ch      Channel
+    ///  @param[out]  rate    Rational rate
+    ///
+    ///  @return 0 on success, BLADERF_ERR_* value on failure
     pub fn get_rational_sample_rate(&self, channel: u8) -> Result<RationalRate> {
         // Select the multisynth we want to read
         let mut ms = Multisynth {
@@ -452,6 +495,13 @@ impl SI5338 {
         Ok(rate)
     }
 
+    /// Get the integral sample rate of the specified channel.
+    ///
+    ///  @param       dev     Device handle
+    ///  @param[in]   ch      Channel
+    ///  @param[out]  rate    Integral rate
+    ///
+    ///  @return 0 on success, BLADERF_ERR_* value on failure
     pub fn get_sample_rate(&self, channel: u8) -> Result<u32> {
         let actual = self.get_rational_sample_rate(channel)?;
 
@@ -463,6 +513,12 @@ impl SI5338 {
         Ok(actual.integer as u32)
     }
 
+    /// Set the rational frequency of the external SMB port.
+    ///
+    ///  @param       dev     Device handle
+    ///  @param[in]   rate    Rational rate requested
+    ///  @param[out]  actual  Rational rate actually set
+    ///  @return 0 on success, BLADERF_ERR_* value on failure
     pub fn set_rational_smb_freq(&self, rate: &RationalRate) -> Result<RationalRate> {
         let mut rate_reduced = rate.clone();
 
@@ -480,6 +536,12 @@ impl SI5338 {
         self.set_rational_multisynth(3, SI5338_EN_A, rate_reduced)
     }
 
+    /// Set the integral sample rate of the external SMB port.
+    ///  @param       dev     Device handle
+    ///  @param[in]   rate    Integral rate requested
+    ///  @param[out]  actual  Integral rate actually set
+    ///
+    ///  @return 0 on success, BLADERF_ERR_* value on failure
     pub fn set_smb_freq(&self, rate: u32) -> Result<u32> {
         let mut req = RationalRate::default();
         log::trace!("Setting integer SMB frequency: {rate}");
@@ -500,6 +562,11 @@ impl SI5338 {
         Ok(act.integer as u32)
     }
 
+    /// Get the rational sample rate of the external SMB port.
+    ///
+    ///  @param       dev     Device handle
+    ///  @param[out]  rate    Rational rate
+    ///  @return 0 on success, BLADERF_ERR_* value on failure
     pub fn get_rational_smb_freq(&self) -> Result<RationalRate> {
         let mut ms = Multisynth::default();
         let mut rate = RationalRate::default();
@@ -515,6 +582,10 @@ impl SI5338 {
         Ok(rate)
     }
 
+    /// Get the integral sample rate of the external SMB port.
+    ///  @param       dev     Device handle
+    ///  @param[out]  rate    Integral rate
+    ///  @return 0 on success, BLADERF_ERR_* value on failure
     pub fn get_smb_freq(&self) -> Result<u32> {
         let actual = self.get_rational_smb_freq()?;
 

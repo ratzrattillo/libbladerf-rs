@@ -3,6 +3,8 @@ use crate::bladerf1::BladeRf1;
 use crate::hardware::lms6002d::Loopback;
 
 impl BladeRf1 {
+    /// Set the loopback config to one of the supported `BladeRf1::hardware::lms6002d::Loopback` modes
+    /// this is usually only required for testing purposes.
     pub fn set_loopback(&self, lb: Loopback) -> Result<()> {
         // CHECK_BOARD_STATE(STATE_INITIALIZED);
 
@@ -31,6 +33,7 @@ impl BladeRf1 {
         }
     }
 
+    /// Get the currently active loopback mode
     pub fn get_loopback(&self) -> Result<Loopback> {
         // CHECK_BOARD_STATE(STATE_INITIALIZED);
 
@@ -48,6 +51,7 @@ impl BladeRf1 {
         Ok(lb)
     }
 
+    /// Check if the specified loopback mode is supported on the BladerRf1
     pub fn is_loopback_mode_supported(&self, lb: Loopback) -> bool {
         let supported_modes = [
             Loopback::None,

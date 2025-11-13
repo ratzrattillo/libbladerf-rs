@@ -28,14 +28,17 @@ impl BladeRf1 {
         Ok((interface.lock().unwrap().nios_expansion_gpio_read()? & mask) != 0)
     }
 
+    /// This method does not do anything. Attach-operations are not required for XB100.
     pub fn xb100_attach(&self) -> Result<()> {
         Ok(())
     }
 
+    /// This method does not do anything. Detach-operations are not required for XB100.
     pub fn xb100_detach(&self) -> Result<()> {
         Ok(())
     }
 
+    /// Enable the XB100 expansion board
     pub fn xb100_enable(&self, enable: bool) -> Result<()> {
         let mask: u32 = (BLADERF_XB100_LED_D1
             | BLADERF_XB100_LED_D2
@@ -59,6 +62,7 @@ impl BladeRf1 {
         Ok(())
     }
 
+    /// This method does not do anything. Init-operations are not required for XB100.
     pub fn xb100_init(&self) -> Result<()> {
         Ok(())
     }

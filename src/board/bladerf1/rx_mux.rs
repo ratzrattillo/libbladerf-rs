@@ -1,7 +1,11 @@
 use crate::bladerf1::BladeRf1;
 use crate::{Error, Result};
 
-/// RX mux modes
+/// "RX Mux" Receiver Multiplexer (Mux) is used to allow a single receiver to capture signals
+/// from multiple antennas or frequencies by combining multiple signals into one.
+/// It allows to "listen" to more than one source at a time through a single or
+/// a set of high-performance Analog-to-Digital Converters (ADCs).
+/// The following RX mux modes exit for the BladeRf1:
 #[derive(PartialEq, Debug, Clone)]
 pub enum RxMux {
     MuxInvalid = -1,
@@ -36,6 +40,7 @@ impl BladeRf1 {
     /* Sample RX FPGA Mux */
     /******************************************************************************/
 
+    /// Set the RX Mux mode
     pub fn set_rx_mux(&self, mode: RxMux) -> Result<()> {
         // CHECK_BOARD_STATE(STATE_INITIALIZED);
 
@@ -56,6 +61,7 @@ impl BladeRf1 {
         }
     }
 
+    /// Get the RX Mux mode
     pub fn get_rx_mux(&self) -> Result<RxMux> {
         // CHECK_BOARD_STATE(STATE_INITIALIZED);
 

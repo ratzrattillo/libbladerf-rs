@@ -1013,7 +1013,12 @@ pub enum LmsPa {
     PaNone,
 }
 
-/// Loopback options
+/// SDR (Software-Defined Radio) loopback modes are configurations that route a signal from
+/// the transmitter back to the receiver for testing and self-diagnosis.
+/// This can be done physically by cabling a transmit port to a receive port, or digitally by
+/// routing signals between the digital transmit and receive stages within the device.
+/// These modes allow users to test the radio's functionality, like validating signal processing
+/// or calibrating components, without using external antennas or an over-the-air connection.
 #[derive(PartialEq, Debug, Clone)]
 #[repr(u8)]
 pub enum Loopback {
@@ -1259,6 +1264,7 @@ impl LMS6002D {
         self.write(base + 9, vcocap | vcocap_reg_state)
     }
 
+    /// Set the loopback path.
     pub fn loopback_path(&self, mode: &Loopback) -> Result<()> {
         let mut loopbben = self.read(0x46)?;
         let mut lben_lbrf = self.read(0x08)?;
@@ -1303,6 +1309,7 @@ impl LMS6002D {
         self.write(0x08, lben_lbrf)
     }
 
+    /// Get the LowPassFilter mode for a specific channel.
     pub fn lpf_get_mode(&self, channel: u8) -> Result<LpfMode> {
         let reg: u8 = if channel == BLADERF_MODULE_RX {
             0x54
@@ -1328,6 +1335,7 @@ impl LMS6002D {
         }
     }
 
+    /// Set the LowPassFilter mode for a specific channel.
     pub fn lpf_set_mode(&self, channel: u8, mode: LpfMode) -> Result<()> {
         let reg: u8 = if channel == BLADERF_MODULE_RX {
             0x54
@@ -1464,6 +1472,7 @@ impl LMS6002D {
         }
     }
 
+    /// Configure TX-side of loopback
     pub fn loopback_tx(&self, mode: &Loopback) -> Result<()> {
         match mode {
             Loopback::None => {
@@ -1488,6 +1497,7 @@ impl LMS6002D {
         }
     }
 
+    /// Set the Loopback mode.
     pub fn set_loopback_mode(&self, mode: Loopback) -> Result<()> {
         // Verify a valid mode is provided before shutting anything down
         match mode {
@@ -1507,7 +1517,6 @@ impl LMS6002D {
         self.select_lna(LmsLna::LnaNone)?;
 
         // Disconnect loopback paths while we re-configure blocks
-
         self.loopback_path(&Loopback::None)?;
 
         // Configure the RX side of the loopback path
@@ -1520,6 +1529,7 @@ impl LMS6002D {
         self.loopback_path(&mode)
     }
 
+    /// Get the currently selected Loopback mode.
     pub fn get_loopback_mode(&self) -> Result<Loopback> {
         let mut loopback = Loopback::None;
 
@@ -1560,12 +1570,14 @@ impl LMS6002D {
         Ok(loopback)
     }
 
+    /// Check if the looback mode is enabled (Loopback mode is not None)
     pub fn is_loopback_enabled(&self) -> Result<bool> {
         let loopback = self.get_loopback_mode()?;
 
         Ok(loopback != Loopback::None)
     }
 
+    /// Write PhaseLockedLoop configuration
     pub fn write_pll_config(&self, module: u8, freqsel: u8, low_band: bool) -> Result<()> {
         let addr = if module == BLADERF_MODULE_TX {
             0x15
@@ -1638,6 +1650,7 @@ impl LMS6002D {
         Err(Error::Invalid)
     }
 
+    
     pub fn vtune_low_to_norm(&self, base: u8, mut vcocap: u8, vcocap_reg_state: u8) -> Result<u8> {
         for _ in 0..VTUNE_MAX_ITERATIONS {
             if vcocap == 0 {
@@ -1826,6 +1839,9 @@ impl LMS6002D {
         Ok(vcocap)
     }
 
+    /// Set the frequency using an already existing LmsFreq struct with precalculated values.
+    /// This can allow for faster retuning, as the parameters to fill the LmsFreq struct do
+    /// not have to be calculated on the fly.
     pub fn set_precalculated_frequency(&self, module: u8, f: &mut LmsFreq) -> Result<()> {
         //  Select the base address based on which PLL we are configuring
         let base: u8 = if module == BLADERF_MODULE_RX {
@@ -1901,12 +1917,14 @@ impl LMS6002D {
         Ok(())
     }
 
+    /// Turn off Delta sigma digital core supply (1.8V)
     pub fn turn_off_dsms(&self) -> Result<()> {
         let mut data = self.read(0x09)?;
         data &= !0x05;
         self.write(0x09, data)
     }
 
+    /// Power up or power down LNAs.
     pub fn enable_lna_power(&self, enable: bool) -> Result<()> {
         // Magic test register to power down LNAs
         let mut regval = self.read(0x7d)?;
@@ -1931,6 +1949,7 @@ impl LMS6002D {
         self.write(0x70, regval)
     }
 
+    /// Select Power Amplifiers of the LMS
     pub fn select_pa(&self, pa: LmsPa) -> Result<()> {
         let mut data = self.read(0x44)?;
 
@@ -1972,6 +1991,9 @@ impl LMS6002D {
         self.write(0x75, data)
     }
 
+    /// Select which band (Low or High) should be enabled.
+    /// Depending on the selected module/channel, the correct LowNoiseAmplifiers or PowerAmplifiers
+    /// will be selected.
     pub fn select_band(&self, module: u8, band: Band) -> Result<()> {
         // If loopback mode disabled, avoid changing the PA or LNA selection,
         // as these need to remain powered down or disabled
@@ -1997,6 +2019,8 @@ impl LMS6002D {
         }
     }
 
+    /// Set the frequency on a specific channel. The correct parameters for tuning are calculated
+    /// on the fly.
     pub fn set_frequency(&self, channel: u8, frequency: u64) -> Result<()> {
         let mut f = frequency.try_into()?;
         log::trace!("{f:?}");
@@ -2004,6 +2028,7 @@ impl LMS6002D {
         self.set_precalculated_frequency(channel, &mut f)
     }
 
+    /// Get teh frequency on a specific channel.
     pub fn get_frequency(&self, module: u8) -> Result<LmsFreq> {
         let mut f = LmsFreq::default();
         let base: u8 = if module == BLADERF_MODULE_RX {
@@ -2042,6 +2067,7 @@ impl LMS6002D {
     //     (((LMS_REFERENCE_HZ as u64 * pll_coeff) + (div >> 1)) / div) as u32
     // }
 
+    /// Set the LNA gain in dB.
     pub fn lna_set_gain(&self, gain: GainDb) -> Result<()> {
         // Set the gain on the LNA
         let mut data = self.read(0x75)?;
@@ -2055,6 +2081,7 @@ impl LMS6002D {
         self.write(0x75, data)
     }
 
+    /// Get the LNA gain in dB.
     pub fn lna_get_gain(&self) -> Result<GainDb> {
         let mut data = self.read(0x75)?;
         data >>= 6;
@@ -2064,11 +2091,13 @@ impl LMS6002D {
         Ok(lna_gain_code.into())
     }
 
+    /// Get the currently selected LNA.
     pub fn get_lna(&self) -> Result<LmsLna> {
         let data = self.read(0x75)?;
         LmsLna::try_from((data >> 4) & 0x3)
     }
 
+    /// Enable the first Variable Gain Amplifier after the antenna.
     pub fn rxvga1_enable(&self, enable: bool) -> Result<()> {
         // Enable bit is in reserved register documented in this thread:
         // https://groups.google.com/forum/#!topic/limemicro-opensource/8iTannzlfzg
@@ -2081,6 +2110,7 @@ impl LMS6002D {
         self.write(0x7d, data)
     }
 
+    /// Set the gain of the first Variable Gain Amplifier after the RX antenna.
     pub fn rxvga1_set_gain(&self, gain_db: GainDb) -> Result<()> {
         // Set the RFB_TIA_RXFE mixer gain
         // let gain_db = gain.clamp(BLADERF_RXVGA1_GAIN_MIN, BLADERF_RXVGA1_GAIN_MAX);
@@ -2089,6 +2119,8 @@ impl LMS6002D {
         let code: Rxvga1GainCode = gain_db.into();
         self.write(0x76, code.code)
     }
+
+    /// Get the gain of the first Variable Gain Amplifier after the RX antenna.
     pub fn rxvga1_get_gain(&self) -> Result<GainDb> {
         let mut data = self.read(0x76)?;
 
@@ -2109,6 +2141,7 @@ impl LMS6002D {
         Ok(rxvga1_gain_code.into())
     }
 
+    /// Enable the second Variable Gain Amplifier after the RX antenna.
     pub fn rxvga2_enable(&self, enable: bool) -> Result<()> {
         // Enable RXVGA2
         let mut data = self.read(0x64)?;
@@ -2129,6 +2162,8 @@ impl LMS6002D {
         let code: Rxvga2GainCode = gain_db.into();
         self.write(0x65, code.code)
     }
+
+    /// Get the gain of the second Variable Gain Amplifier after the RX antenna.
     pub fn rxvga2_get_gain(&self) -> Result<GainDb> {
         let rxvga2_gain_code = Rxvga2GainCode {
             code: self.read(0x65)?,
@@ -2137,6 +2172,7 @@ impl LMS6002D {
         Ok(rxvga2_gain_code.into())
     }
 
+    /// Get the gain of the first Variable Gain Amplifier before the TX antenna.
     pub fn txvga1_get_gain(&self) -> Result<GainDb> {
         let txvga1_gain_code = Txvga1GainCode {
             code: self.read(0x41)?,
@@ -2144,6 +2180,7 @@ impl LMS6002D {
         Ok(txvga1_gain_code.into())
     }
 
+    /// Get the gain of the second Variable Gain Amplifier before the TX antenna.
     pub fn txvga2_get_gain(&self) -> Result<GainDb> {
         let txvga2_gain_code = Txvga2GainCode {
             code: self.read(0x45)?,
@@ -2151,12 +2188,14 @@ impl LMS6002D {
         Ok(txvga2_gain_code.into())
     }
 
+    /// Set the gain of the first Variable Gain Amplifier before the TX antenna.
     pub fn txvga1_set_gain(&self, gain: GainDb) -> Result<()> {
         let txvga1_gain_code: Txvga1GainCode = gain.into();
         // Since 0x41 is only VGA1GAIN, we don't need to RMW
         self.write(0x41, txvga1_gain_code.code)
     }
 
+    /// Set the gain of the second Variable Gain Amplifier before the TX antenna.
     pub fn txvga2_set_gain(&self, gain: GainDb) -> Result<()> {
         // 0x45 is not only VGA2GAIN, thus we have to RMW to not accidentally overwrite ENVD setting
         let mut data = self.read(0x45)?;
@@ -2167,6 +2206,8 @@ impl LMS6002D {
         self.write(0x45, data)
     }
 
+    /// Enable peak detection to localize the strongest signals (peak) in the monitored
+    /// frequency spectrum.
     pub fn peakdetect_enable(&self, enable: bool) -> Result<()> {
         let mut data = self.read(0x44)?;
         if enable {
@@ -2177,6 +2218,7 @@ impl LMS6002D {
         self.write(0x44, data)
     }
 
+    /// Get quicktune parameters of the specified channel.
     pub fn get_quick_tune(&self, module: u8) -> Result<QuickTune> {
         let f = &self.get_frequency(module)?;
 
@@ -2221,6 +2263,7 @@ impl LMS6002D {
         Ok(quick_tune)
     }
 
+    /// Enable or disable LowPassFilter on selected channel.
     pub fn lpf_enable(&self, channel: u8, enable: bool) -> Result<()> {
         let addr = if channel == BLADERF_MODULE_RX {
             0x54
@@ -2267,6 +2310,7 @@ impl LMS6002D {
         self.write(addr, data)
     }
 
+    /// Get the bandwidth of the LMS6002D Transceiver
     pub fn get_bandwidth(&self, channel: u8) -> Result<LmsBw> {
         let addr = if channel == BLADERF_MODULE_RX {
             0x54
@@ -2285,6 +2329,7 @@ impl LMS6002D {
         Ok(LmsBw::from_index(data))
     }
 
+    /// Scale the DC offset on specified channel.
     fn scale_dc_offset(module: u8, mut value: i16) -> Result<u8> {
         match module {
             BLADERF_MODULE_RX => {
@@ -2346,6 +2391,7 @@ impl LMS6002D {
         }
     }
 
+    /// Unscale the DC offset on specified channel.
     fn unscale_dc_offset(module: u8, mut regval: u8) -> Result<i16> {
         match module {
             BLADERF_MODULE_RX => {
@@ -2395,6 +2441,7 @@ impl LMS6002D {
         }
     }
 
+    /// Set the DC offset on specified channel and address.
     fn set_dc_offset(&self, module: u8, addr: u8, value: i16) -> Result<()> {
         let regval = match module {
             BLADERF_MODULE_RX => {
@@ -2414,6 +2461,7 @@ impl LMS6002D {
         self.write(addr, regval)
     }
 
+    /// Set the DC offset on specified channel for the imaginary part.
     pub fn set_dc_offset_i(&self, module: u8, value: i16) -> Result<()> {
         let addr = if module == BLADERF_MODULE_TX {
             0x42
@@ -2423,6 +2471,7 @@ impl LMS6002D {
         self.set_dc_offset(module, addr, value)
     }
 
+    /// Set the DC offset on specified channel for the real part.
     pub fn set_dc_offset_q(&self, module: u8, value: i16) -> Result<()> {
         let addr = if module == BLADERF_MODULE_TX {
             0x43
@@ -2432,6 +2481,7 @@ impl LMS6002D {
         self.set_dc_offset(module, addr, value)
     }
 
+    /// Get the DC offset on specified channel on the supplied address.
     fn get_dc_offset(&self, module: u8, addr: u8) -> Result<i16> {
         let regval = self.read(addr)?;
         // log::error!("[get_dc_offset] addr: {addr:#x}, regval: {regval:#x}");
@@ -2439,6 +2489,7 @@ impl LMS6002D {
         Self::unscale_dc_offset(module, regval)
     }
 
+    /// Get the DC offset on specified channel for the imaginary part.
     pub fn get_dc_offset_i(&self, module: u8) -> Result<i16> {
         let addr = if module == BLADERF_MODULE_TX {
             0x42
@@ -2448,6 +2499,7 @@ impl LMS6002D {
         self.get_dc_offset(module, addr)
     }
 
+    /// Get the DC offset on specified channel for the real part.
     pub fn get_dc_offset_q(&self, module: u8) -> Result<i16> {
         let addr = if module == BLADERF_MODULE_TX {
             0x43

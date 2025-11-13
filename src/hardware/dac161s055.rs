@@ -62,10 +62,12 @@ pub struct DAC161S055 {
 /// • Output Settling Time 5 μs (typ)
 /// • Power Consumption 5.5 mW at 5.25 V (max)
 impl DAC161S055 {
+    /// Instantiate the DAC161S055 digital analog converter
     pub fn new(interface: Arc<Mutex<Interface>>) -> Self {
         Self { interface }
     }
 
+    /// Write a 16bit value to the VCTCXO DAC
     pub fn write(&self, value: u16) -> Result<()> {
         let interface = self.interface.lock().unwrap();
         // Ensure the device is in write-through mode
