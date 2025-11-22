@@ -1,8 +1,6 @@
 use anyhow::Result;
 use libbladerf_rs::bladerf1::xb::ExpansionBoard;
-use libbladerf_rs::bladerf1::{
-    BladeRf1, BladeRf1RxStreamer, BladeRf1TxStreamer, GainDb, SampleFormat,
-};
+use libbladerf_rs::bladerf1::{BladeRf1, BladeRf1RxStreamer, BladeRf1TxStreamer, SampleFormat};
 use libbladerf_rs::{BLADERF_MODULE_RX, BLADERF_MODULE_TX, Direction};
 use num_complex::Complex32;
 use std::thread::sleep;
@@ -29,8 +27,8 @@ fn main() -> Result<()> {
     //
     // log::debug!("FPGA: {}", bladerf.fpga_version()?);
     //
-    // let xb = bladerf.expansion_get_attached();
-    // log::debug!("XB: {xb:?}");
+    let xb = bladerf.expansion_get_attached();
+    log::debug!("XB: {xb:?}");
 
     bladerf.expansion_attach(ExpansionBoard::Xb200)?;
 
@@ -105,7 +103,7 @@ fn main() -> Result<()> {
     // log::debug!("Gain TX: {}", gain_tx.db);
 
     // RX
-    fn do_rx(bladerf: BladeRf1) -> Result<()> {
+    fn _do_rx(bladerf: BladeRf1) -> Result<()> {
         bladerf.perform_format_config(Direction::Rx, SampleFormat::Sc16Q11)?;
         bladerf.enable_module(BLADERF_MODULE_RX, true)?;
         bladerf.experimental_control_urb()?;
