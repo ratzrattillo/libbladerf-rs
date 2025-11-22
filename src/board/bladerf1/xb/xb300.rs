@@ -47,9 +47,23 @@ impl BladeRf1 {
     /// Trying to detect if XB300 is enabled by reading the LNA enablement status Flag,
     /// which is set in xb300_enable(). Might be not the best, or correct way.
     pub fn xb300_is_enabled(interface: &Arc<Mutex<Interface>>) -> Result<bool> {
-        Ok(interface.lock().unwrap().nios_expansion_gpio_dir_read()?
-            & (BLADERF_XB_CS | BLADERF_XB_CSEL | BLADERF_XB_LNA_EN)
-            != 0)
+        // The original libbladerf from Nuand saves the state of attached boards in a
+        // separate structure. We try to determine the attached XB300 board ONLY by reading
+        // the NIOS_PKT_32X32_TARGET_EXP_DIR register. It seems like this register is
+        // initialized to 0x0 when no board is attached at all. Thus, we return
+        // "false", if the register is 0x0.
+        // TODO: Verify, if this is really the case, as for now it is an assumption.
+        let xb_gpio_dir = interface.lock().unwrap().nios_expansion_gpio_dir_read()?;
+        // println!("xb300_is_enabled: {}", xb_gpio_dir);
+        // seems like
+        // if xb_gpio_dir == 0 {
+        //     return Ok(false);
+        // }
+        Ok((xb_gpio_dir & &(BLADERF_XB_CS | BLADERF_XB_CSEL | BLADERF_XB_LNA_EN)) != 0)
+
+        // Ok(interface.lock().unwrap().nios_expansion_gpio_dir_read()?
+        //     & (BLADERF_XB_CS | BLADERF_XB_CSEL | BLADERF_XB_LNA_EN)
+        //     != 0)
     }
 
     /// Attach the XB300 expansion board

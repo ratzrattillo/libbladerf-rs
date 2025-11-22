@@ -3,6 +3,7 @@ pub(crate) mod xb200;
 pub(crate) mod xb300;
 
 use crate::bladerf1::BladeRf1;
+use crate::nios::Nios;
 use crate::{Error, Result};
 
 /// Expansion boards
@@ -289,6 +290,16 @@ impl BladeRf1 {
     // Expansion support
     /******************************************************************************/
     pub fn expansion_get_attached(&self) -> Result<ExpansionBoard> {
+        // The original libbladerf from Nuand saves the state of attached boards in a
+        // separate structure. We try to determine the attached boards ONLY by reading
+        // the NIOS_PKT_32X32_TARGET_EXP register. It seems like this register is
+        // initialized to 0xffffffff when no board is attached at all. Thus, we return
+        // XbNone, if the register is 0xffffffff.
+        // TODO: Verify, if this is really the case, as for now it is an assumption.
+        if self.interface.lock().unwrap().nios_expansion_gpio_read()? == 0xffffffff {
+            return Ok(ExpansionBoard::XbNone);
+        }
+
         // CHECK_BOARD_STATE(STATE_FPGA_LOADED);
         if BladeRf1::xb100_is_enabled(&self.interface)? {
             Ok(ExpansionBoard::Xb100)

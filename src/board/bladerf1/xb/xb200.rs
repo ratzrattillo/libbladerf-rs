@@ -103,7 +103,18 @@ impl BladeRf1 {
     /// Trying to detect if XB200 is enabled by reading the BLADERF_XB_RF_ON gpio Flag,
     /// which is set in xb200_enable(). Might be not the best, or correct way.
     pub fn xb200_is_enabled(interface: &Arc<Mutex<Interface>>) -> Result<bool> {
-        Ok((interface.lock().unwrap().nios_expansion_gpio_read()? & BLADERF_XB_RF_ON) != 0)
+        // The original libbladerf from Nuand saves the state of attached boards in a
+        // separate structure. We try to determine the attached XB200 board ONLY by reading
+        // the NIOS_PKT_32X32_TARGET_EXP register. It seems like this register is
+        // initialized to 0xffffffff when no board is attached at all. Thus, we return
+        // "false", if the register is 0xffffffff.
+        // TODO: Verify, if this is really the case, as for now it is an assumption.
+        let xb_gpio = interface.lock().unwrap().nios_expansion_gpio_read()?;
+        if xb_gpio == 0xffffffff {
+            return Ok(false);
+        }
+        Ok((xb_gpio & BLADERF_XB_RF_ON) != 0)
+        // Ok((interface.lock().unwrap().nios_expansion_gpio_read()? & BLADERF_XB_RF_ON) != 0)
     }
 
     /// Attach the XB200 expansion board.
@@ -159,15 +170,12 @@ impl BladeRf1 {
 
         let value = 0x60008E42 | (1 << 8) | ((muxout as u32) << 26);
         interface.nios_xb200_synth_write(value)?;
-
         interface.nios_xb200_synth_write(0x08008011)?;
-
-        // Somehow here, actually the MUXOUT Bit should be set...
         interface.nios_xb200_synth_write(0x00410000)?;
 
         val = interface.nios_expansion_gpio_read()?;
         log::trace!("[xb200_attach] expansion_gpio_read: {val}");
-        if val & 0x1 != 0 {
+        if (val & 0x1) != 0 {
             log::debug!("MUXOUT Bit set: OK")
         } else {
             log::debug!("MUXOUT Bit not set: FAIL");

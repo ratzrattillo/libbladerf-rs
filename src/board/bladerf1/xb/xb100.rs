@@ -25,7 +25,19 @@ impl BladeRf1 {
             | BLADERF_XB100_TLED_GREEN
             | BLADERF_XB100_TLED_BLUE) as u32;
 
-        Ok((interface.lock().unwrap().nios_expansion_gpio_read()? & mask) != 0)
+        // The original libbladerf from Nuand saves the state of attached boards in a
+        // separate structure. We try to determine the attached XB100 ONLY by reading
+        // the NIOS_PKT_32X32_TARGET_EXP register. It seems like this register is
+        // initialized to 0xffffffff when no board is attached at all. Thus, we return
+        // "false", if the register is 0xffffffff.
+        // TODO: Verify, if this is really the case, as for now it is an assumption.
+        let xb_gpio = interface.lock().unwrap().nios_expansion_gpio_read()?;
+        if xb_gpio == 0xffffffff {
+            return Ok(false);
+        }
+        Ok((xb_gpio & mask) != 0)
+
+        // Ok((interface.lock().unwrap().nios_expansion_gpio_read()? & mask) != 0)
     }
 
     /// This method does not do anything. Attach-operations are not required for XB100.

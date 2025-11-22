@@ -32,6 +32,7 @@ impl BladeRf1 {
         log::trace!("Setting Frequency on channel {channel} to {frequency}Hz");
 
         if BladeRf1::xb200_is_enabled(&self.interface)? {
+            println!("set_frequency - xb200_is_enabled!");
             if frequency < BLADERF_FREQUENCY_MIN as u64 {
                 log::debug!("Setting path to Mix");
                 self.xb200_set_path(channel, &Xb200Path::Mix)?;
@@ -79,6 +80,7 @@ impl BladeRf1 {
 
         // if self.xb200.is_some() {
         if BladeRf1::xb200_is_enabled(&self.interface)? {
+            println!("XB200 is enabled!");
             let path = self.xb200_get_path(channel)?;
 
             if path == Xb200Path::Mix {
