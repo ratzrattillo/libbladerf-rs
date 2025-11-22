@@ -397,20 +397,42 @@ impl BladeRf1TxStreamer {
         self.dev.enable_module(BLADERF_MODULE_TX, false)
     }
 
-    /// TODO:
+    /// TODO: https://github.com/FutureSDR/seify/blob/main/src/streamer.rs#L127
     pub fn write(
         &mut self,
-        _buffers: &[&[Complex32]],
-        _at_ns: Option<i64>,
-        _end_burst: bool,
-        _timeout_us: i64,
+        buffers: &[&[Complex32]],
+        at_ns: Option<i64>,
+        end_burst: bool,
+        timeout_us: i64,
     ) -> Result<usize> {
         // TODO: Revisit for correctness
         // https://doc.rust-lang.org/nightly/std/io/trait.Write.html#tymethod.write
-        todo!()
+        // TODO, find out how to implement write_all
+        // https://doc.rust-lang.org/nightly/std/io/trait.Write.html#method.write_all
+        self.writer
+            .set_write_timeout(Duration::from_micros(timeout_us as u64));
+        if let Some(t) = at_ns {
+            sleep(Duration::from_nanos(t as u64));
+        }
+        let mut sent = 0;
+        for (n, (re, im)) in buffers[0]
+            .iter()
+            .enumerate()
+            // .map(|c| ((c.re * 2047.5) as i16, (c.im * 2047.5) as i16))
+            .map(|(n, c)| (n, (c.re as i16, c.im as i16)))
+        {
+            let _ = self.writer.write(re.to_le_bytes().as_slice())?;
+            let _ = self.writer.write(im.to_le_bytes().as_slice())?;
+            sent = n;
+        }
+        if end_burst {
+            self.writer.submit();
+        }
+        Ok(sent)
+        // Ok(())
     }
 
-    /// Get I/Q samples from a slice of buffers with configurable timeout and wubmit them to the BladeRF1 for transmission.
+    /// Get I/Q samples from a slice of buffers with configurable timeout and submit them to the BladeRF1 for transmission.
     /// A delay can be defined in the form of a timestamp when transmission should start.
     pub fn write_all(
         &mut self,
@@ -419,27 +441,7 @@ impl BladeRf1TxStreamer {
         end_burst: bool,
         timeout_us: i64,
     ) -> Result<()> {
-        // TODO, find out how to implement write_all
-        // https://doc.rust-lang.org/nightly/std/io/trait.Write.html#method.write_all
-        self.writer
-            .set_write_timeout(Duration::from_micros(timeout_us as u64));
-        if let Some(t) = at_ns {
-            sleep(Duration::from_nanos(t as u64));
-        }
-        // let mut sent = 0;
-        for (re, im) in buffers[0]
-            .iter()
-            // .map(|c| ((c.re * 2047.5) as i16, (c.im * 2047.5) as i16))
-            .map(|c| (c.re as i16, c.im as i16))
-        {
-            let _ = self.writer.write(re.to_le_bytes().as_slice())?;
-            let _ = self.writer.write(im.to_le_bytes().as_slice())?;
-            // sent += 2 * size_of::<i16>();
-        }
-        if end_burst {
-            self.writer.submit();
-        }
-        // Ok(sent)
+        self.write(&buffers, at_ns, end_burst, timeout_us)?;
         Ok(())
     }
 }
@@ -554,6 +556,27 @@ impl BladeRf1 {
         log::debug!("Control Response Data: {vec:?}");
         Ok(())
     }
+
+    // /// Investigate:
+    // pub fn experimental_control_urb2(&self) -> Result<()> {
+    //     // TODO: Dont know what this is doing
+    //     let pkt = ControlIn {
+    //         control_type: ControlType::Vendor,
+    //         recipient: Recipient::Device,
+    //         request: 0x1,
+    //         value: 0x1,
+    //         index: 0,
+    //         length: 0x4,
+    //     };
+    //     let vec = self
+    //         .interface
+    //         .lock()
+    //         .unwrap()
+    //         .control_in(pkt, Duration::from_secs(5))
+    //         .wait()?;
+    //     log::debug!("Control Response Data: {vec:?}");
+    //     Ok(())
+    // }
 
     // pub fn write_all_sync(
     //     &mut self,

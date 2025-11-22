@@ -120,7 +120,7 @@ pub const BLADERF_TXVGA2_GAIN_MIN: i8 = 0;
 /// \deprecated Use bladerf_get_gain_stage_range()
 pub const BLADERF_TXVGA2_GAIN_MAX: i8 = 25;
 
-/// Gain in dB of the LNA at mid setting
+/// Gain in dB of the LNA at mid-setting
 ///
 /// \deprecated Use bladerf_get_gain_stage_range()
 pub const BLADERF_LNA_GAIN_MID_DB: i8 = 3;
@@ -1015,7 +1015,7 @@ pub enum LmsPa {
 
 /// SDR (Software-Defined Radio) loopback modes are configurations that route a signal from
 /// the transmitter back to the receiver for testing and self-diagnosis.
-/// This can be done physically by cabling a transmit port to a receive port, or digitally by
+/// This can be done physically by cabling a transmit-port to a receive-port, or digitally by
 /// routing signals between the digital transmit and receive stages within the device.
 /// These modes allow users to test the radio's functionality, like validating signal processing
 /// or calibrating components, without using external antennas or an over-the-air connection.
@@ -1025,7 +1025,7 @@ pub enum Loopback {
     /// Disables loopback and returns to normal operation.
     None = 0,
 
-    /// Firmware loopback inside of the FX3
+    /// Firmware loopback in the FX3
     Firmware,
 
     /// Baseband loopback. TXLPF output is connected to the RXVGA2 input.
@@ -1650,7 +1650,6 @@ impl LMS6002D {
         Err(Error::Invalid)
     }
 
-    
     pub fn vtune_low_to_norm(&self, base: u8, mut vcocap: u8, vcocap_reg_state: u8) -> Result<u8> {
         for _ in 0..VTUNE_MAX_ITERATIONS {
             if vcocap == 0 {
