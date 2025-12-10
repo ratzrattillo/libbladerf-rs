@@ -2,8 +2,13 @@ mod common;
 
 use common::*;
 
-use libbladerf_rs::bladerf1::{BLADERF1_USB_PID, BLADERF1_USB_VID, BladeRf1};
-use libbladerf_rs::{Error, Result};
+#[cfg(target_os = "linux")]
+use libbladerf_rs::Error;
+use libbladerf_rs::Result;
+use libbladerf_rs::bladerf1::BladeRf1;
+#[cfg(target_os = "linux")]
+use libbladerf_rs::bladerf1::{BLADERF1_USB_PID, BLADERF1_USB_VID};
+#[cfg(target_os = "linux")]
 use nusb::MaybeFuture;
 
 #[test]
@@ -14,6 +19,7 @@ fn from_first() -> Result<()> {
 }
 
 #[test]
+#[cfg(target_os = "linux")]
 fn from_bus_addr() -> Result<()> {
     logging_init("bladerf1_open");
     let bladerf = nusb::list_devices()

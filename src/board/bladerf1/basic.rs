@@ -30,7 +30,7 @@ impl BladeRf1 {
         }))
     }
 
-    /// Create a new BladeRF1 instance, without running any initialization routines.
+    /// Create a new BladeRF1 instance without running any initialization routines.
     fn build(device: Device) -> Result<Self> {
         let interface = Arc::new(Mutex::new(device.detach_and_claim_interface(0).wait()?));
 
@@ -98,6 +98,7 @@ impl BladeRf1 {
     }
 
     /// Opens a BladeRf1 identified by its USB bus address
+    #[cfg(target_os = "linux")]
     pub fn from_bus_addr(bus_number: u8, bus_addr: u8) -> Result<Self> {
         let device = Self::list_bladerf1()?
             .find(|dev| dev.busnum() == bus_number && dev.device_address() == bus_addr)
@@ -109,9 +110,10 @@ impl BladeRf1 {
 
     /// Opens a BladeRf1 from a file descriptor. This method is the only available option
     /// on Android devices, as listing USB devices etc. is not possible.
-    /// This method does not check, if the file descriptor really belongs to a BladeRf1.
-    /// Undefined behaviour is expected, if a file descriptor to a device is given, that is not a BladeRf1.
+    /// This method does not check if the file descriptor really belongs to a BladeRf1.
+    /// Undefined behavior is expected if a file descriptor to a device is given, that is not a BladeRf1.
     /// REMARK: The Android support was removed from nusb recently.
+    #[cfg(target_os = "linux")]
     pub fn from_fd(fd: std::os::fd::OwnedFd) -> Result<Self> {
         let device = Device::from_fd(fd).wait()?;
         // TODO: Do check on device, if it really is a bladerf
@@ -183,7 +185,7 @@ impl BladeRf1 {
                 return Err(Error::Invalid);
             }
         }
-        log::trace!("[config_gpio_write] data after speedcheck: {data}");
+        log::trace!("[config_gpio_write] data after speed check: {data}");
 
         self.interface.lock().unwrap().nios_config_write(data)
     }
@@ -312,7 +314,7 @@ impl BladeRf1 {
             // In:  41000300284300000000000000000000
             self.lms.config_charge_pumps(BLADERF_MODULE_RX)?;
 
-            log::trace!("[*] Init - Set TX Samplerate");
+            log::trace!("[*] Init - Set TX SampleRate");
             // Out: 41010000260000000000000000000000
             // In:  41010200260000000000000000000000
             // Out: 41010100260300000000000000000000
@@ -343,14 +345,14 @@ impl BladeRf1 {
                 .si5338
                 .set_sample_rate(bladerf_channel_tx!(0), 1000000)?;
 
-            log::trace!("[*] Init - Set RX Samplerate");
+            log::trace!("[*] Init - Set RX SampleRate");
             // Out: As above but slightly different (Matches original packets)
             // In:  As above but slightly different (Matches original packets)
             let _actual_rx = self
                 .si5338
                 .set_sample_rate(bladerf_channel_rx!(0), 1000000)?;
 
-            // SI5338 Packet: Magic: 0x54, 8x 0xff, Channel (int), 4Byte Frequency
+            // SI5338 Packet: Magic: 0x54, 8x 0xff, Channel (int), 4 Byte Frequency
             // With TX Channel: {0x54, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x0, 0x0, 0x0, 0x0, 0x40, 0x0, 0x0};
             // With RX Channel: {0x54, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x0, 0x0, 0x0, 0x0, 0x80, 0x0, 0x0};
             // Basically  nios_si5338_read == nios 8x8 read
@@ -617,7 +619,7 @@ impl BladeRf1 {
         Ok(descriptor)
     }
 
-    /// Get a list of supported languages of the BladeRF1. Retuns a Vector with Language codes.
+    /// Get a list of supported languages of the BladeRF1. Returns a Vector with Language codes.
     /// TODO: How can these language codes be translated to a str representation? nusb offers something?
     pub fn get_supported_languages(&self) -> Result<Vec<u16>> {
         let languages = self
