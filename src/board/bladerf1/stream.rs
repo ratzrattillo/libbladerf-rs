@@ -451,9 +451,9 @@ impl BladeRf1 {
     /// (e.g., enabling/disabling timestamp support), first checking that the
     /// requested format would not conflict with the other stream direction.
     ///
-    /// dev     Device handle
-    /// dir     Direction that is currently being configured
-    /// format  Format the channel is being configured for
+    /// dev: Device handle
+    /// dir: Direction that is currently being configured
+    /// format: Format the channel is being configured for
     ///
     /// @return 0 on success, BLADERF_ERR_* on failure
     pub fn perform_format_config(&self, dir: Direction, format: SampleFormat) -> Result<()> {
