@@ -1,8 +1,7 @@
 use crate::bladerf::{
     BLADE_USB_CMD_GET_LOOPBACK, BLADE_USB_CMD_RESET, BLADE_USB_CMD_RF_RX, BLADE_USB_CMD_RF_TX,
-    BLADE_USB_CMD_SET_LOOPBACK, BLADERF_MODULE_RX, BLADERF_MODULE_TX, DescriptorTypes, Direction,
-    StringDescriptors, TIMEOUT, USB_IF_NULL, USB_IF_RF_LINK, bladerf_channel_is_tx,
-    bladerf_channel_rx, bladerf_channel_tx,
+    BLADE_USB_CMD_SET_LOOPBACK, Channel, DescriptorTypes, Direction, StringDescriptors, TIMEOUT,
+    USB_IF_NULL, USB_IF_RF_LINK,
 };
 use crate::bladerf1::frequency::TuningMode;
 use crate::bladerf1::{
@@ -218,15 +217,15 @@ impl BladeRf1 {
             // In:  41000200400200000000000000000000
             // Out: 41000100400000000000000000000000
             // In:  41000300400000000000000000000000
-            self.lms.enable_rffe(BLADERF_MODULE_TX, false)?;
-            log::trace!("{BLADERF_MODULE_TX}");
+            self.lms.enable_rffe(Channel::Tx, false)?;
+            log::trace!("Channel::Tx");
 
             // Out: 41000000700000000000000000000000
             // In:  41000200700200000000000000000000
             // Out: 41000100700000000000000000000000
             // In:  41000300700000000000000000000000
-            self.lms.enable_rffe(BLADERF_MODULE_RX, false)?;
-            log::trace!("{BLADERF_MODULE_RX}");
+            self.lms.enable_rffe(Channel::Rx, false)?;
+            log::trace!("Channel::Rx");
 
             // Set the internal LMS register to enable RX and TX
             log::trace!("[*] Init - Set LMS register to enable RX and TX");
@@ -296,7 +295,7 @@ impl BladeRf1 {
             // In:  41000200184000000000000000000000
             // Out: 41000100184300000000000000000000
             // In:  41000300184300000000000000000000
-            self.lms.config_charge_pumps(BLADERF_MODULE_TX)?;
+            self.lms.config_charge_pumps(Channel::Tx)?;
             log::trace!("[*] Init - Configure RX charge pump current offsets");
 
             // Out: 41000000260000000000000000000000
@@ -311,7 +310,7 @@ impl BladeRf1 {
             // In:  41000200284000000000000000000000
             // Out: 41000100184300000000000000000000
             // In:  41000300284300000000000000000000
-            self.lms.config_charge_pumps(BLADERF_MODULE_RX)?;
+            self.lms.config_charge_pumps(Channel::Rx)?;
 
             log::trace!("[*] Init - Set TX SampleRate");
             // Out: 41010000260000000000000000000000
@@ -340,16 +339,12 @@ impl BladeRf1 {
             // In:  41010300540000000000000000000000
             // Out: 4101010021c800000000000000000000
             // In : 4101030021c800000000000000000000
-            let _actual_tx = self
-                .si5338
-                .set_sample_rate(bladerf_channel_tx!(0), 1000000)?;
+            let _actual_tx = self.si5338.set_sample_rate(Channel::Tx, 1000000)?;
 
             log::trace!("[*] Init - Set RX SampleRate");
             // Out: As above but slightly different (Matches original packets)
             // In:  As above but slightly different (Matches original packets)
-            let _actual_rx = self
-                .si5338
-                .set_sample_rate(bladerf_channel_rx!(0), 1000000)?;
+            let _actual_rx = self.si5338.set_sample_rate(Channel::Rx, 1000000)?;
 
             // SI5338 Packet: Magic: 0x54, 8x 0xff, Channel (int), 4 Byte Frequency
             // With TX Channel: {0x54, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x0, 0x0, 0x0, 0x0, 0x40, 0x0, 0x0};
@@ -358,15 +353,15 @@ impl BladeRf1 {
 
             // board_data->tuning_mode = tuning_get_default_mode(dev);
 
-            log::trace!("self.set_frequency(bladerf_channel_tx!(0), 2447000000)?;");
+            log::trace!("self.set_frequency(Channel::Tx, 2447000000)?;");
             // Out: 5400000000000000003fb95555ac1f00
             // In:  5400000000000000001e030000000000
-            self.set_frequency(bladerf_channel_tx!(0), 2447000000)?;
+            self.set_frequency(Channel::Tx, 2447000000)?;
 
-            log::trace!("self.set_frequency(bladerf_channel_rx!(0), 2484000000)?;");
+            log::trace!("self.set_frequency(Channel::Rx, 2484000000)?;");
             // Out: 54000000000000000040b000006c2300
             // In:  54000000000000000021030000000000
-            self.set_frequency(bladerf_channel_rx!(0), 2484000000)?;
+            self.set_frequency(Channel::Rx, 2484000000)?;
 
             // // Set the calibrated VCTCXO DAC value
             // TODO: board_data.dac_trim instead of 0
@@ -380,7 +375,7 @@ impl BladeRf1 {
             // In: expected: 4200030008d1ab000000000000000000
             // In actual:    42000300080000000000000000000000
             // Todo: Implement AGC table and set mode to BladeRf1GainDefault
-            self.set_gain_mode(bladerf_channel_rx!(0), GainMode::Mgc)?;
+            self.set_gain_mode(Channel::Rx, GainMode::Mgc)?;
         } else {
             log::trace!("[*] Init - Device already initialized: {cfg:#04x}");
             // board_data->tuning_mode = tuning_get_default_mode(dev);
@@ -533,10 +528,10 @@ impl BladeRf1 {
     }
 
     /// Enable/Disable RF Module
-    pub fn enable_module(&self, module: u8, enable: bool) -> Result<()> {
+    pub fn enable_module(&self, channel: Channel, enable: bool) -> Result<()> {
         // CHECK_BOARD_STATE(STATE_INITIALIZED);
 
-        let direction = if bladerf_channel_is_tx!(module) {
+        let direction = if channel.is_tx() {
             Direction::Tx
         } else {
             Direction::Rx
@@ -553,16 +548,16 @@ impl BladeRf1 {
 
         if !enable {
             // sync_deinit(&board_data->sync[ch]);
-            self.perform_format_deconfig(direction.clone())?;
+            self.perform_format_deconfig(direction)?;
         }
 
-        self.lms.enable_rffe(module, enable)?;
+        self.lms.enable_rffe(channel, enable)?;
 
-        self.usb_enable_module(direction.clone(), enable)
+        self.usb_enable_module(direction, enable)
     }
 
     /// FPGA Band Selection on a specific channel.
-    pub fn band_select(&self, module: u8, band: Band) -> Result<()> {
+    pub fn band_select(&self, channel: Channel, band: Band) -> Result<()> {
         let band_value = match band {
             Band::Low => 2,
             Band::High => 1,
@@ -570,18 +565,18 @@ impl BladeRf1 {
 
         log::trace!("Selecting %s band. {band:?}");
 
-        self.lms.select_band(module, band)?;
+        self.lms.select_band(channel, band)?;
 
         let mut gpio = self.config_gpio_read()?;
 
-        let shift = if module == BLADERF_MODULE_TX {
+        let shift = if channel == Channel::Tx {
             3 << 3
         } else {
             3 << 5
         };
         gpio &= !shift;
 
-        let shift = if module == BLADERF_MODULE_TX {
+        let shift = if channel == Channel::Tx {
             band_value << 3
         } else {
             band_value << 5

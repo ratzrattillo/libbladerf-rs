@@ -1,4 +1,5 @@
 use crate::Result;
+use crate::bladerf::Channel;
 use crate::bladerf1::BladeRf1;
 use crate::hardware::lms6002d::{
     BLADERF_BANDWIDTH_MAX, BLADERF_BANDWIDTH_MIN, LmsBw, UINT_BANDWIDTHS,
@@ -9,7 +10,7 @@ impl BladeRf1 {
     /// Set the bandwidth for a specific channel.
     /// The bandwidth is automatically clamped to supported values, which
     /// can also be determined by calling `get_bandwidth_range()`.
-    pub fn set_bandwidth(&self, channel: u8, mut bandwidth: u32) -> Result<()> {
+    pub fn set_bandwidth(&self, channel: Channel, mut bandwidth: u32) -> Result<()> {
         // CHECK_BOARD_STATE(STATE_INITIALIZED);
 
         // TODO: Can we use get_bandwidth_range here for clamping?
@@ -25,7 +26,7 @@ impl BladeRf1 {
     }
 
     /// Get the current bandwidth on a specific channel
-    pub fn get_bandwidth(&self, channel: u8) -> Result<u32> {
+    pub fn get_bandwidth(&self, channel: Channel) -> Result<u32> {
         // CHECK_BOARD_STATE(STATE_INITIALIZED);
 
         let bw: LmsBw = self.lms.get_bandwidth(channel)?;

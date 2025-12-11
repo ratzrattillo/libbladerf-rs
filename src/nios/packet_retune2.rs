@@ -1,4 +1,4 @@
-use crate::bladerf::bladerf_channel_is_tx;
+use crate::Channel;
 use crate::nios::NiosPktMagic;
 use crate::nios::packet_base::GenericNiosPkt;
 use std::fmt::{Debug, Formatter};
@@ -6,10 +6,10 @@ use std::fmt::{Debug, Formatter};
 ///
 /// # Example
 /// ```rust,no_run
-/// use libbladerf_rs::BLADERF_MODULE_RX;
+/// use libbladerf_rs::Channel;
 /// use libbladerf_rs::nios::packet_retune2::NiosPktRetune2Request;
 ///
-/// let pkt = NiosPktRetune2Request::new(BLADERF_MODULE_RX, u64::MIN, 0xffff, 0xff, 0xff, 0xff);
+/// let pkt = NiosPktRetune2Request::new(Channel::Rx, u64::MIN, 0xffff, 0xff, 0xff, 0xff);
 /// let vec: Vec<u8> = pkt.into();
 /// log::info!("{vec:x?}");
 /// ```
@@ -35,7 +35,7 @@ impl NiosPktRetune2 {
 
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        module: u8,
+        channel: Channel,
         timestamp: u64,
         nios_profile: u16,
         rffe_profile: u8,
@@ -43,14 +43,14 @@ impl NiosPktRetune2 {
         spdt: u8,
     ) -> Self {
         let mut pkt: NiosPktRetune2 = vec![0u8; 16].into();
-        pkt.set(module, timestamp, nios_profile, rffe_profile, port, spdt);
+        pkt.set(channel, timestamp, nios_profile, rffe_profile, port, spdt);
         pkt
     }
 
     #[allow(clippy::too_many_arguments)]
     pub fn set(
         &mut self,
-        module: u8,
+        channel: Channel,
         timestamp: u64,
         nios_profile: u16,
         rffe_profile: u8,
@@ -61,7 +61,7 @@ impl NiosPktRetune2 {
             .set_timestamp(timestamp)
             .set_nios_profile(nios_profile)
             .set_rffe_profile(rffe_profile)
-            .set_port(port, module)
+            .set_port(port, channel)
             .set_spdt(spdt)
     }
 
@@ -86,12 +86,12 @@ impl NiosPktRetune2 {
         self
     }
 
-    pub fn set_port(&mut self, port: u8, module: u8) -> &mut Self {
+    pub fn set_port(&mut self, port: u8, channel: Channel) -> &mut Self {
         // Clear the IS_RX bit of the port parameter
         let mut pkt_port = port & !Self::MASK_PORT_IS_RX;
 
         // Set the IS_RX bit (if needed)
-        pkt_port |= if bladerf_channel_is_tx!(module) {
+        pkt_port |= if channel.is_tx() {
             0x0
         } else {
             Self::MASK_PORT_IS_RX
@@ -209,7 +209,7 @@ pub struct NiosPktRetune2Request {
 impl NiosPktRetune2Request {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        module: u8,
+        channel: Channel,
         timestamp: u64,
         nios_profile: u16,
         rffe_profile: u8,
@@ -217,14 +217,14 @@ impl NiosPktRetune2Request {
         spdt: u8,
     ) -> Self {
         Self {
-            pkt: NiosPktRetune2::new(module, timestamp, nios_profile, rffe_profile, port, spdt),
+            pkt: NiosPktRetune2::new(channel, timestamp, nios_profile, rffe_profile, port, spdt),
         }
     }
 
     #[allow(clippy::too_many_arguments)]
     pub fn set(
         &mut self,
-        module: u8,
+        channel: Channel,
         timestamp: u64,
         nios_profile: u16,
         rffe_profile: u8,
@@ -232,7 +232,7 @@ impl NiosPktRetune2Request {
         spdt: u8,
     ) -> &mut Self {
         self.pkt
-            .set(module, timestamp, nios_profile, rffe_profile, port, spdt);
+            .set(channel, timestamp, nios_profile, rffe_profile, port, spdt);
         self
     }
 
@@ -256,8 +256,8 @@ impl NiosPktRetune2Request {
         self
     }
 
-    pub fn set_port(&mut self, port: u8, module: u8) -> &mut Self {
-        self.pkt.set_port(port, module);
+    pub fn set_port(&mut self, port: u8, channel: Channel) -> &mut Self {
+        self.pkt.set_port(port, channel);
         self
     }
 

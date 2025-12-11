@@ -2,7 +2,7 @@ use anyhow::Result;
 use libbladerf_rs::bladerf1::xb::ExpansionBoard;
 use libbladerf_rs::bladerf1::xb::ExpansionBoard::XbNone;
 use libbladerf_rs::bladerf1::{BladeRf1, BladeRf1RxStreamer, BladeRf1TxStreamer, SampleFormat};
-use libbladerf_rs::{BLADERF_MODULE_RX, BLADERF_MODULE_TX, Direction};
+use libbladerf_rs::{Channel, Direction};
 use num_complex::Complex32;
 use std::thread::sleep;
 use std::time::Duration;
@@ -10,7 +10,7 @@ use std::time::Duration;
 // RX
 fn do_rx(bladerf: &BladeRf1) -> Result<()> {
     bladerf.perform_format_config(Direction::Rx, SampleFormat::Sc16Q11)?;
-    bladerf.enable_module(BLADERF_MODULE_RX, true)?;
+    bladerf.enable_module(Channel::Rx, true)?;
     bladerf.experimental_control_urb()?;
     let mut rx_streamer = BladeRf1RxStreamer::new(bladerf.clone(), 65536, Some(8), None)?;
 
@@ -20,7 +20,7 @@ fn do_rx(bladerf: &BladeRf1) -> Result<()> {
     println!("Read into buffers");
 
     bladerf.perform_format_deconfig(Direction::Rx)?;
-    bladerf.enable_module(BLADERF_MODULE_RX, false)?;
+    bladerf.enable_module(Channel::Rx, false)?;
 
     println!("{:x?}", buffer);
     Ok(())
@@ -33,8 +33,8 @@ fn do_tx(bladerf: &BladeRf1) -> Result<()> {
     bladerf.perform_format_config(Direction::Tx, SampleFormat::Sc16Q11)?;
     println!("called perform_format_config(Direction::Tx, SampleFormat::Sc16Q11)");
     sleep(Duration::from_millis(5000));
-    bladerf.enable_module(BLADERF_MODULE_TX, true)?;
-    println!("called enable_module(BLADERF_MODULE_TX, true)");
+    bladerf.enable_module(Channel::Tx, true)?;
+    println!("called enable_module(Channel::Tx, true)");
     sleep(Duration::from_millis(5000));
     // bladerf.experimental_control_urb()?;
     // println!("experimental_control_urb");
@@ -54,8 +54,8 @@ fn do_tx(bladerf: &BladeRf1) -> Result<()> {
     bladerf.perform_format_deconfig(Direction::Tx)?;
     println!("called perform_format_deconfig(Direction::Tx)");
     sleep(Duration::from_millis(5000));
-    bladerf.enable_module(BLADERF_MODULE_TX, false)?;
-    println!("called enable_module(BLADERF_MODULE_TX, false)");
+    bladerf.enable_module(Channel::Tx, false)?;
+    println!("called enable_module(Channel::Tx, false)");
     // bladerf.experimental_control_urb2()?;
     // println!("experimental_control_urb2()");
 
@@ -80,7 +80,7 @@ fn main() -> Result<()> {
         log::debug!("XB: {xb:?}");
     }
 
-    bladerf.set_frequency(BLADERF_MODULE_TX, 1000000000)?;
+    bladerf.set_frequency(Channel::Tx, 1000000000)?;
 
     do_rx(&bladerf)?;
 

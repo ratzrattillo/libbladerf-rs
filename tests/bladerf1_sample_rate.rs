@@ -4,7 +4,7 @@ use crate::common::*;
 
 use libbladerf_rs::bladerf1::BladeRf1;
 use libbladerf_rs::range::RangeItem;
-use libbladerf_rs::{BLADERF_MODULE_RX, BLADERF_MODULE_TX, Result};
+use libbladerf_rs::{Channel, Result};
 
 #[test]
 fn sample_rate() -> Result<()> {
@@ -27,17 +27,17 @@ fn sample_rate() -> Result<()> {
         let mut desired = min.round() as u32;
         while desired <= max.round() as u32 {
             // TODO: What channels are supported?
-            for channel in [BLADERF_MODULE_RX, BLADERF_MODULE_TX] {
+            for channel in [Channel::Rx, Channel::Tx] {
                 let current = BLADERF.get_sample_rate(channel)?;
-                log::trace!("Channel {channel} Sample Rate (CURRENT):\t{current}");
-                log::trace!("Channel {channel} Sample Rate (DESIRED):\t{desired}");
+                log::trace!("Channel {channel:?} Sample Rate (CURRENT):\t{current}");
+                log::trace!("Channel {channel:?} Sample Rate (DESIRED):\t{desired}");
 
                 BLADERF.set_sample_rate(channel, desired)?;
                 // Give enough time for the OS to release the USB endpoint
                 // sleep(Duration::from_millis(1000));
 
                 let new = BLADERF.get_sample_rate(channel)?;
-                log::trace!("Channel {channel} Sample Rate (NEW):\t\t{new}");
+                log::trace!("Channel {channel:?} Sample Rate (NEW):\t\t{new}");
                 assert_eq!(new, desired);
             }
 

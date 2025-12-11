@@ -1,13 +1,13 @@
+use crate::bladerf::Channel;
 use crate::hardware::lms6002d::{Band, Tune};
 use crate::nios::NiosPktMagic;
 use crate::nios::packet_base::GenericNiosPkt;
-use crate::{BLADERF_MODULE_RX, BLADERF_MODULE_TX};
 use std::fmt::{Debug, Formatter};
 
 /// # Example
 /// ```rust,no_run
 /// use libbladerf_rs::nios::packet_retune::NiosPktRetuneRequest;
-/// use libbladerf_rs::{BLADERF_MODULE_TX, Band, Tune};
+/// use libbladerf_rs::{Channel, Band, Tune};
 ///
 /// let plain_vec = vec![
 ///     0x54, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x3f, 0xb9, 0x55, 0x55, 0xac, 0x1f,
@@ -19,7 +19,7 @@ use std::fmt::{Debug, Formatter};
 /// log::info!("{from_plain_vec:?}");
 ///
 /// let from_new = NiosPktRetuneRequest::new(
-///     BLADERF_MODULE_TX,
+///     Channel::Tx,
 ///     0,
 ///     0x3FB,
 ///     0x4AAAAB,
@@ -61,7 +61,7 @@ impl NiosPktRetune {
 
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        module: u8,
+        channel: Channel,
         timestamp: u64,
         nint: u16,
         nfrac: u32,
@@ -73,7 +73,7 @@ impl NiosPktRetune {
     ) -> Self {
         let mut pkt: NiosPktRetune = vec![0u8; 16].into();
         pkt.set(
-            module, timestamp, nint, nfrac, freqsel, vcocap, band, tune, xb_gpio,
+            channel, timestamp, nint, nfrac, freqsel, vcocap, band, tune, xb_gpio,
         );
         pkt
     }
@@ -81,7 +81,7 @@ impl NiosPktRetune {
     #[allow(clippy::too_many_arguments)]
     pub fn set(
         &mut self,
-        module: u8,
+        channel: Channel,
         timestamp: u64,
         nint: u16,
         nfrac: u32,
@@ -95,7 +95,7 @@ impl NiosPktRetune {
             .set_timestamp(timestamp)
             .set_nint(nint)
             .set_nfrac(nfrac)
-            .set_freqsel(freqsel, module)
+            .set_freqsel(freqsel, channel)
             .set_vcocap(vcocap)
             .set_band(band)
             .set_tune(tune)
@@ -175,19 +175,16 @@ impl NiosPktRetune {
         self
     }
 
-    pub fn set_freqsel(&mut self, freqsel: u8, module: u8) -> &mut Self {
+    pub fn set_freqsel(&mut self, freqsel: u8, channel: Channel) -> &mut Self {
         // Make sure that freqsel does not consume more than 5 bits.
         assert!(freqsel <= Self::MASK_FREQSEL);
         self.buf[Self::IDX_FREQSEL] = freqsel;
-        match module {
-            BLADERF_MODULE_RX => {
+        match channel {
+            Channel::Rx => {
                 self.set_rx_flag(true);
             }
-            BLADERF_MODULE_TX => {
+            Channel::Tx => {
                 self.set_tx_flag(true);
-            }
-            _ => {
-                panic!("invalid module")
             }
         }
         self
@@ -423,7 +420,7 @@ impl NiosPktRetuneRequest {
 
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        module: u8,
+        channel: Channel,
         timestamp: u64,
         nint: u16,
         nfrac: u32,
@@ -434,7 +431,7 @@ impl NiosPktRetuneRequest {
         xb_gpio: u8,
     ) -> Self {
         let pkt = NiosPktRetune::new(
-            module, timestamp, nint, nfrac, freqsel, vcocap, band, tune, xb_gpio,
+            channel, timestamp, nint, nfrac, freqsel, vcocap, band, tune, xb_gpio,
         );
         Self { pkt }
     }
@@ -442,7 +439,7 @@ impl NiosPktRetuneRequest {
     #[allow(clippy::too_many_arguments)]
     pub fn set(
         &mut self,
-        module: u8,
+        channel: Channel,
         timestamp: u64,
         nint: u16,
         nfrac: u32,
@@ -453,7 +450,7 @@ impl NiosPktRetuneRequest {
         xb_gpio: u8,
     ) -> &mut NiosPktRetuneRequest {
         self.pkt.set(
-            module, timestamp, nint, nfrac, freqsel, vcocap, band, tune, xb_gpio,
+            channel, timestamp, nint, nfrac, freqsel, vcocap, band, tune, xb_gpio,
         );
         self
     }
@@ -488,8 +485,8 @@ impl NiosPktRetuneRequest {
         self
     }
 
-    pub fn set_freqsel(&mut self, freqsel: u8, module: u8) -> &mut Self {
-        self.pkt.set_freqsel(freqsel, module);
+    pub fn set_freqsel(&mut self, freqsel: u8, channel: Channel) -> &mut Self {
+        self.pkt.set_freqsel(freqsel, channel);
         self
     }
 

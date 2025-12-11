@@ -7,30 +7,58 @@
 //     TxX2 = 3, // x2 TX (MIMO)
 // }
 
-// #[macro_export]
-macro_rules! bladerf_channel_rx {
-    ($ch:expr) => {
-        ((($ch) << 1) | 0x0) as u8
-    };
+///  Stream direction
+#[derive(PartialEq, Debug, Clone, Copy)]
+#[repr(u8)]
+pub enum Channel {
+    Rx = 0, // Receive1
+    Tx = 1, // Transmit1
 }
-pub(crate) use bladerf_channel_rx;
 
-// #[macro_export]
-macro_rules! bladerf_channel_tx {
-    ($ch:expr) => {
-        ((($ch) << 1) | 0x1) as u8
-    };
+impl Channel {
+    pub fn is_tx(&self) -> bool {
+        *self == Channel::Tx
+    }
 }
-pub(crate) use bladerf_channel_tx;
 
-///  Convenience macro: true if argument is a TX channel
-// #[macro_export]
-macro_rules! bladerf_channel_is_tx {
-    ($ch:expr) => {
-        (($ch) & crate::bladerf::Direction::Tx as u8) != 0
-    };
+impl TryFrom<u8> for Channel {
+    type Error = Error;
+    fn try_from(value: u8) -> crate::Result<Self> {
+        match value {
+            0 => Ok(Channel::Rx),
+            1 => Ok(Channel::Tx),
+            _ => {
+                log::error!("unsupported channel!");
+                Err(Error::Invalid)
+            }
+        }
+    }
 }
-pub(crate) use bladerf_channel_is_tx;
+//
+// // #[macro_export]
+// macro_rules! bladerf_channel_rx {
+//     ($ch:expr) => {
+//         ((($ch) << 1) | 0x0) as u8
+//     };
+// }
+// pub(crate) use bladerf_channel_rx;
+//
+// // #[macro_export]
+// macro_rules! bladerf_channel_tx {
+//     ($ch:expr) => {
+//         ((($ch) << 1) | 0x1) as u8
+//     };
+// }
+// pub(crate) use bladerf_channel_tx;
+//
+// ///  Convenience macro: true if argument is a TX channel
+// // #[macro_export]
+// macro_rules! bladerf_channel_is_tx {
+//     ($ch:expr) => {
+//         (($ch) & crate::bladerf::Direction::Tx as u8) != 0
+//     };
+// }
+// pub(crate) use bladerf_channel_is_tx;
 
 // #[macro_export]
 macro_rules! khz {
@@ -56,10 +84,11 @@ pub(crate) use mhz;
 // }
 // pub(crate) use ghz;
 
+use crate::Error;
 use std::time::Duration;
 
 ///  Stream direction
-#[derive(PartialEq, Debug, Clone)]
+#[derive(PartialEq, Debug, Clone, Copy)]
 #[repr(u8)]
 pub enum Direction {
     Rx = 0, // Receive direction
@@ -198,5 +227,5 @@ pub const USB_IF_RF_LINK: u8 = 1;
 
 pub const TIMEOUT: Duration = Duration::from_millis(1);
 
-pub const BLADERF_MODULE_RX: u8 = bladerf_channel_rx!(0);
-pub const BLADERF_MODULE_TX: u8 = bladerf_channel_tx!(0);
+// pub const BLADERF_MODULE_RX: u8 = bladerf_channel_rx!(0);
+// pub const BLADERF_MODULE_TX: u8 = bladerf_channel_tx!(0);

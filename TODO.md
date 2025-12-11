@@ -1,3 +1,4 @@
+- Avoid unnecessary clones, by auto implementing copy trait
 - in basic.rs config_gpio_write: Speed info should not be determined on every call of gpio_write, but rather at global board_data level.
 - maybe have one hardcoded pre-reserved Vector that is reused by every call to nios_send.
 - Get rid of experimental_control_urb method.

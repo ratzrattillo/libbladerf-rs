@@ -1,4 +1,4 @@
-use crate::bladerf::{bladerf_channel_rx, bladerf_channel_tx};
+use crate::bladerf::Channel;
 use crate::bladerf1::BladeRf1;
 use crate::nios::Nios;
 use crate::{Error, Result};
@@ -34,7 +34,7 @@ pub(crate) const LMS_RX_SWAP: u8 = 0x40;
 pub(crate) const LMS_TX_SWAP: u8 = 0x08;
 
 /// XB-200 filter selection options
-#[derive(PartialEq, Debug, Clone)]
+#[derive(PartialEq, Debug, Clone, Copy)]
 pub enum Xb200Filter {
     /// 50-54 MHz (6 meter band) filterbank
     _50M = 0,
@@ -231,21 +231,21 @@ impl BladeRf1 {
     /// Note: Verified
     pub fn xb200_init(&self) -> Result<()> {
         log::trace!("Setting RX path");
-        self.xb200_set_path(bladerf_channel_rx!(0), Xb200Path::Bypass)?;
+        self.xb200_set_path(Channel::Rx, Xb200Path::Bypass)?;
 
         log::trace!("Setting TX path");
-        self.xb200_set_path(bladerf_channel_tx!(0), Xb200Path::Bypass)?;
+        self.xb200_set_path(Channel::Tx, Xb200Path::Bypass)?;
 
         log::trace!("Setting RX filter");
-        self.xb200_set_filterbank(bladerf_channel_rx!(0), Xb200Filter::Auto1db)?;
+        self.xb200_set_filterbank(Channel::Rx, Xb200Filter::Auto1db)?;
 
         log::trace!("Setting TX filter");
-        self.xb200_set_filterbank(bladerf_channel_tx!(0), Xb200Filter::Auto1db)
+        self.xb200_set_filterbank(Channel::Tx, Xb200Filter::Auto1db)
     }
 
     /// Validate XB-200 path selection
-    pub fn xb200_get_filterbank(&self, ch: u8) -> Result<Xb200Filter> {
-        if ch != bladerf_channel_rx!(0) && ch != bladerf_channel_tx!(0) {
+    pub fn xb200_get_filterbank(&self, ch: Channel) -> Result<Xb200Filter> {
+        if ch != Channel::Rx && ch != Channel::Tx {
             log::error!("invalid channel");
             return Err(Error::Invalid);
         }
@@ -253,7 +253,7 @@ impl BladeRf1 {
         let val = self.interface.lock().unwrap().nios_expansion_gpio_read()?;
         log::trace!("[xb200_get_filterbank] expansion_gpio_read: {val}");
 
-        let shift = if ch == bladerf_channel_rx!(0) {
+        let shift = if ch == Channel::Rx {
             BLADERF_XB_RX_SHIFT
         } else {
             BLADERF_XB_TX_SHIFT
@@ -264,8 +264,8 @@ impl BladeRf1 {
 
     /// Set the mux filterbank to be used for a specific channel.
     /// Note: Verified
-    pub fn set_filterbank_mux(&self, ch: u8, filter: Xb200Filter) -> Result<()> {
-        let (mask, shift) = if ch == bladerf_channel_rx!(0) {
+    pub fn set_filterbank_mux(&self, ch: Channel, filter: Xb200Filter) -> Result<()> {
+        let (mask, shift) = if ch == Channel::Rx {
             (BLADERF_XB_RX_MASK, BLADERF_XB_RX_SHIFT)
         } else {
             (BLADERF_XB_TX_MASK, BLADERF_XB_TX_SHIFT)
@@ -276,7 +276,7 @@ impl BladeRf1 {
         log::trace!("[set_filterbank_mux] expansion_gpio_read: {orig}");
 
         let mut val = orig & !mask;
-        val |= (filter.clone() as u32) << shift;
+        val |= (filter as u32) << shift;
 
         if orig != val {
             let dir = if mask == BLADERF_XB_TX_MASK {
@@ -294,8 +294,8 @@ impl BladeRf1 {
 
     /// Set the filterbank to be used for a specific channel.
     /// Note: Verified
-    pub fn xb200_set_filterbank(&self, ch: u8, filter: Xb200Filter) -> Result<()> {
-        if ch != bladerf_channel_rx!(0) && ch != bladerf_channel_tx!(0) {
+    pub fn xb200_set_filterbank(&self, ch: Channel, filter: Xb200Filter) -> Result<()> {
+        if ch != Channel::Rx && ch != Channel::Tx {
             log::error!("invalid channel");
             return Err(Error::Invalid);
         }
@@ -329,12 +329,12 @@ impl BladeRf1 {
 
     /// Automatically select the appropriate filter for a specific channel and frequency.
     /// Note: Verified
-    pub fn xb200_auto_filter_selection(&self, ch: u8, frequency: u64) -> Result<()> {
+    pub fn xb200_auto_filter_selection(&self, channel: Channel, frequency: u64) -> Result<()> {
         if frequency >= 300000000 {
             return Ok(());
         }
 
-        if ch != bladerf_channel_rx!(0) && ch != bladerf_channel_tx!(0) {
+        if channel != Channel::Rx && channel != Channel::Tx {
             log::error!("invalid channel");
             return Err(Error::Invalid);
         }
@@ -344,7 +344,7 @@ impl BladeRf1 {
             return Err(Error::Invalid);
         }
 
-        let fb = self.xb200_get_filterbank(ch)?;
+        let fb = self.xb200_get_filterbank(channel)?;
         let filter = if fb == Xb200Filter::Auto1db {
             if (37774405..=59535436).contains(&frequency) {
                 Xb200Filter::_50M
@@ -370,27 +370,27 @@ impl BladeRf1 {
             return Ok(());
         };
 
-        self.set_filterbank_mux(ch, filter)
+        self.set_filterbank_mux(channel, filter)
     }
 
     /// Set the signal path to be taken within the XB200.
     /// Note: Verified
-    pub fn xb200_set_path(&self, ch: u8, path: Xb200Path) -> Result<()> {
-        if ch != bladerf_channel_rx!(0) && ch != bladerf_channel_tx!(0) {
-            log::error!("invalid channel!");
+    pub fn xb200_set_path(&self, ch: Channel, path: Xb200Path) -> Result<()> {
+        if ch != Channel::Rx && ch != Channel::Tx {
+            log::error!("invalid channel");
             return Err(Error::Invalid);
         }
 
         let mut lval = self.lms.read(0x5A)?;
 
         if path == Xb200Path::Mix {
-            lval |= if ch == bladerf_channel_rx!(0) {
+            lval |= if ch == Channel::Rx {
                 LMS_RX_SWAP
             } else {
                 LMS_TX_SWAP
             };
         } else {
-            lval &= !(if ch == bladerf_channel_rx!(0) {
+            lval &= !(if ch == Channel::Rx {
                 LMS_RX_SWAP
             } else {
                 LMS_TX_SWAP
@@ -406,7 +406,7 @@ impl BladeRf1 {
             self.xb200_attach()?;
         }
 
-        let mask = if ch == bladerf_channel_rx!(0) {
+        let mask = if ch == Channel::Rx {
             BLADERF_XB_CONFIG_RX_BYPASS_MASK | BLADERF_XB_RX_ENABLE
         } else {
             BLADERF_XB_CONFIG_TX_BYPASS_MASK | BLADERF_XB_TX_ENABLE
@@ -415,7 +415,7 @@ impl BladeRf1 {
         val |= BLADERF_XB_RF_ON;
         val &= !mask;
 
-        if ch == bladerf_channel_rx!(0) {
+        if ch == Channel::Rx {
             if path == Xb200Path::Mix {
                 val |= BLADERF_XB_RX_ENABLE | BLADERF_XB_CONFIG_RX_PATH_MIX;
             } else {
@@ -435,22 +435,22 @@ impl BladeRf1 {
 
     /// Get the currently configured Path on a specific channel.
     /// Note: Verified
-    pub fn xb200_get_path(&self, ch: u8) -> Result<Xb200Path> {
-        if ch != bladerf_channel_rx!(0) && ch != bladerf_channel_tx!(0) {
-            log::error!("invalid channel!");
+    pub fn xb200_get_path(&self, ch: Channel) -> Result<Xb200Path> {
+        if ch != Channel::Rx && ch != Channel::Tx {
+            log::error!("invalid channel");
             return Err(Error::Invalid);
         }
 
         let val = self.interface.lock().unwrap().nios_expansion_gpio_read()?;
         log::trace!("[xb200_get_path] expansion_gpio_read: {val}");
 
-        if ch == bladerf_channel_rx!(0) {
+        if ch == Channel::Rx {
             if val & BLADERF_XB_CONFIG_RX_BYPASS != 0 {
                 Ok(Xb200Path::Mix)
             } else {
                 Ok(Xb200Path::Bypass)
             }
-        } else if ch == bladerf_channel_tx!(0) {
+        } else if ch == Channel::Tx {
             if val & BLADERF_XB_CONFIG_TX_BYPASS != 0 {
                 Ok(Xb200Path::Mix)
             } else {

@@ -3,7 +3,7 @@ mod common;
 use crate::common::*;
 
 use libbladerf_rs::range::RangeItem;
-use libbladerf_rs::{BLADERF_MODULE_RX, BLADERF_MODULE_TX, Result};
+use libbladerf_rs::{Channel, Result};
 // use libbladerf_rs::hardware::lms6002d::LmsFreq;
 
 // #[test]
@@ -44,15 +44,15 @@ fn frequency_tuning() -> Result<()> {
         let mut desired = min.round() as u64;
 
         while desired <= max.round() as u64 {
-            for channel in [BLADERF_MODULE_RX, BLADERF_MODULE_TX] {
+            for channel in [Channel::Rx, Channel::Tx] {
                 // TODO: What channels are supported?
                 let current = BLADERF.get_frequency(channel)?;
-                log::trace!("Channel {channel} Frequency (CURRENT):\t{current}");
-                log::trace!("Channel {channel} Frequency (DESIRED):\t{desired}");
+                log::trace!("Channel {channel:?} Frequency (CURRENT):\t{current}");
+                log::trace!("Channel {channel:?} Frequency (DESIRED):\t{desired}");
                 // TODO: Why is set frequency requiring a u64 while get frequency returns u32
                 BLADERF.set_frequency(channel, desired)?;
                 let new = BLADERF.get_frequency(channel)?;
-                log::trace!("Channel {channel} Frequency (NEW):\t{new}");
+                log::trace!("Channel {channel:?} Frequency (NEW):\t{new}");
 
                 // The conversion from frequency (u64) to LMSFREQ struct (LmsFreq) is not 100% accurate
                 // Minor deviations in frequency are thus expected and accepted...
@@ -66,7 +66,7 @@ fn frequency_tuning() -> Result<()> {
             //     break;
             // }
 
-            // This adjustment of desired value can be used,
+            // This adjustment of the desired value can be used
             // when we want to tune to each possible frequency
             // desired += (step * scale).round() as u32;
             desired += offset;

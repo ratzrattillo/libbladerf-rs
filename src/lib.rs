@@ -92,7 +92,7 @@ mod hardware;
 pub mod nios;
 pub mod range;
 
-pub use bladerf::{BLADERF_MODULE_RX, BLADERF_MODULE_TX, Direction};
+pub use bladerf::{Channel, Direction};
 pub use board::bladerf1;
 pub use hardware::lms6002d::{Band, Tune};
 

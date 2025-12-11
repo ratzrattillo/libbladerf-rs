@@ -1,3 +1,4 @@
+use crate::bladerf::Channel;
 use crate::bladerf1::BladeRf1;
 use crate::board::bladerf1::xb::xb200::Xb200Path;
 use crate::hardware::lms6002d::{
@@ -27,13 +28,12 @@ impl BladeRf1 {
     /// frequencies provided by that board are automatically supported.
     /// Both Host- and FPGA-TuningModes are supported depending on the config option set in the
     /// BladeRFs BoardData.
-    pub fn set_frequency(&self, channel: u8, mut frequency: u64) -> Result<()> {
+    pub fn set_frequency(&self, channel: Channel, mut frequency: u64) -> Result<()> {
         // let dc_cal = if channel == bladerf_channel_rx!(0) { cal_dc.rx } else { cal.dc_tx };
 
-        log::trace!("Setting Frequency on channel {channel} to {frequency}Hz");
+        log::trace!("Setting Frequency on channel {channel:?} to {frequency}Hz");
 
         if BladeRf1::xb200_is_enabled(&self.interface)? {
-            // println!("set_frequency - xb200_is_enabled!");
             if frequency < BLADERF_FREQUENCY_MIN as u64 {
                 log::debug!("Setting path to Mix");
                 self.xb200_set_path(channel, Xb200Path::Mix)?;
@@ -67,7 +67,7 @@ impl BladeRf1 {
     }
 
     /// Get the frequency that the BladeRF1 is tuned to on a specific channel.
-    pub fn get_frequency(&self, channel: u8) -> Result<u64> {
+    pub fn get_frequency(&self, channel: Channel) -> Result<u64> {
         let f = self.lms.get_frequency(channel)?;
         if f.x == 0 {
             // If we see this, it's most often an indication that communication
@@ -119,7 +119,7 @@ impl BladeRf1 {
 
     // TODO: Does this method have to be exposed externally?
     /// Select the High Band for Frequencies above 1.5GHz, otehrwise Low Band
-    pub fn select_band(&self, channel: u8, frequency: u32) -> Result<()> {
+    pub fn select_band(&self, channel: Channel, frequency: u32) -> Result<()> {
         // CHECK_BOARD_STATE(STATE_INITIALIZED);
 
         let band = if frequency < BLADERF1_BAND_HIGH {
@@ -136,7 +136,7 @@ impl BladeRf1 {
     /// Allows to provide a quick_tune parameter with precalculated tuning parameters for increased speed.
     pub fn schedule_retune(
         &self,
-        channel: u8,
+        channel: Channel,
         timestamp: u64,
         frequency: u64,
         quick_tune: Option<LmsFreq>,
@@ -173,7 +173,7 @@ impl BladeRf1 {
     }
 
     /// Cancel currently outstanding scheduled retunes
-    pub fn cancel_scheduled_retunes(&self, channel: u8) -> Result<()> {
+    pub fn cancel_scheduled_retunes(&self, channel: Channel) -> Result<()> {
         self.interface.lock().unwrap().nios_retune(
             channel,
             NiosPktRetuneRequest::CLEAR_QUEUE,

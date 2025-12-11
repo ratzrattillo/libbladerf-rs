@@ -1,12 +1,12 @@
 #![allow(dead_code)]
 
-use crate::bladerf::{bladerf_channel_rx, bladerf_channel_tx};
+use crate::bladerf::Channel;
 use crate::nios::{NIOS_PKT_8X8_TARGET_SI5338, Nios};
 use crate::{Error, Result};
 use nusb::Interface;
 use std::sync::{Arc, Mutex};
 
-#[derive(Clone, Default)]
+#[derive(Default, Clone, Copy)]
 pub struct RationalRate {
     /// Integer portion
     pub integer: u64,
@@ -125,7 +125,7 @@ impl SI5338 {
         a
     }
 
-    /// Reduce fraction and integer part of rational sample rate.
+    /// Reduce fraction and integer part of the rational sample rate.
     pub fn rational_reduce(r: &mut RationalRate) {
         if (r.den > 0) && (r.num >= r.den) {
             // Get whole number
@@ -376,13 +376,13 @@ impl SI5338 {
     pub fn set_rational_multisynth(
         &self,
         index: u8,
-        channel: u8,
-        mut rate: RationalRate,
+        channel: u8, // This is not a standard Channel, but rather a SI5338_EN_A or SI5338_EN_B
+        rate: &mut RationalRate,
     ) -> Result<RationalRate> {
         let mut ms = Multisynth::default();
         let mut actual = RationalRate::default();
 
-        Self::rational_reduce(&mut rate);
+        Self::rational_reduce(rate);
 
         // Set up the multisynth enables and index
         ms.index = index;
@@ -392,7 +392,7 @@ impl SI5338 {
         Self::update_base(&mut ms);
 
         // Calculate multisynth values
-        Self::calculate_multisynth(&mut ms, &rate);
+        Self::calculate_multisynth(&mut ms, rate);
 
         // Get the actual rate
         Self::calculate_ms_freq(&mut ms, &mut actual);
@@ -416,26 +416,22 @@ impl SI5338 {
     ///  @return 0 on success, BLADERF_ERR_* value on failure
     pub fn set_rational_sample_rate(
         &self,
-        ch: u8,
+        channel: Channel,
         rate: &mut RationalRate,
     ) -> Result<RationalRate> {
-        let mut rate_reduced = rate.clone();
-        let index: u8 = if ch == bladerf_channel_rx!(0) {
-            0x1
-        } else {
-            0x2
-        };
-        let mut channel: u8 = SI5338_EN_A;
+        let rate_reduced = rate;
+        let index: u8 = if channel == Channel::Rx { 0x1 } else { 0x2 };
+        let mut si_channel: u8 = SI5338_EN_A;
 
         // Enforce minimum sample rate
-        Self::rational_reduce(&mut rate_reduced);
+        Self::rational_reduce(rate_reduced);
         assert!(rate_reduced.integer >= BLADERF_SAMPLERATE_MIN as u64);
 
-        if ch == bladerf_channel_tx!(0) {
-            channel |= SI5338_EN_B;
+        if channel == Channel::Tx {
+            si_channel |= SI5338_EN_B;
         }
 
-        self.set_rational_multisynth(index, channel, rate_reduced)
+        self.set_rational_multisynth(index, si_channel, rate_reduced)
     }
 
     /// Set the integral sample rate of the specified channel.
@@ -445,7 +441,7 @@ impl SI5338 {
     ///  @param[in]   rate    Integral rate requested
     ///  @param[out]  actual  Integral rate actually set
     ///  @return 0 on success, BLADERF_ERR_* value on failure
-    pub fn set_sample_rate(&self, channel: u8, rate_requested: u32) -> Result<u32> {
+    pub fn set_sample_rate(&self, channel: Channel, rate_requested: u32) -> Result<u32> {
         let mut req = RationalRate {
             integer: rate_requested as u64,
             num: 0,
@@ -473,14 +469,10 @@ impl SI5338 {
     ///  @param[out]  rate    Rational rate
     ///
     ///  @return 0 on success, BLADERF_ERR_* value on failure
-    pub fn get_rational_sample_rate(&self, channel: u8) -> Result<RationalRate> {
+    pub fn get_rational_sample_rate(&self, channel: Channel) -> Result<RationalRate> {
         // Select the multisynth we want to read
         let mut ms = Multisynth {
-            index: if channel == bladerf_channel_rx!(0) {
-                1
-            } else {
-                2
-            },
+            index: if channel == Channel::Rx { 1 } else { 2 },
             ..Default::default()
         };
 
@@ -502,7 +494,7 @@ impl SI5338 {
     ///  @param[out]  rate    Integral rate
     ///
     ///  @return 0 on success, BLADERF_ERR_* value on failure
-    pub fn get_sample_rate(&self, channel: u8) -> Result<u32> {
+    pub fn get_sample_rate(&self, channel: Channel) -> Result<u32> {
         let actual = self.get_rational_sample_rate(channel)?;
 
         if actual.num != 0 {
@@ -519,8 +511,8 @@ impl SI5338 {
     ///  @param[in]   rate    Rational rate requested
     ///  @param[out]  actual  Rational rate actually set
     ///  @return 0 on success, BLADERF_ERR_* value on failure
-    pub fn set_rational_smb_freq(&self, rate: &RationalRate) -> Result<RationalRate> {
-        let mut rate_reduced = rate.clone();
+    pub fn set_rational_smb_freq(&self, rate: RationalRate) -> Result<RationalRate> {
+        let mut rate_reduced = rate;
 
         // Enforce minimum and maximum frequencies
         Self::rational_reduce(&mut rate_reduced);
@@ -533,7 +525,7 @@ impl SI5338 {
             return Err(Error::Invalid);
         }
 
-        self.set_rational_multisynth(3, SI5338_EN_A, rate_reduced)
+        self.set_rational_multisynth(3, SI5338_EN_A, &mut rate_reduced)
     }
 
     /// Set the integral sample rate of the external SMB port.
@@ -549,7 +541,7 @@ impl SI5338 {
         req.num = 0;
         req.den = 1;
 
-        let act = self.set_rational_smb_freq(&req)?;
+        let act = self.set_rational_smb_freq(req)?;
 
         if act.num != 0 {
             log::trace!("Non-integer SMB frequency set from integer frequency, truncating output.");

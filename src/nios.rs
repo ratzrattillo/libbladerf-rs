@@ -8,7 +8,8 @@ pub mod packet_retune2;
 use crate::hardware::lms6002d::{Band, Tune};
 use crate::nios::packet_generic::{NiosPkt, NumToByte};
 use crate::nios::packet_retune::{NiosPktRetuneRequest, NiosPktRetuneResponse};
-use crate::{BLADERF_MODULE_RX, BLADERF_MODULE_TX};
+//use crate::{BLADERF_MODULE_RX, BLADERF_MODULE_TX};
+use crate::bladerf::Channel;
 use crate::{Error, Result, SemanticVersion};
 use nusb::Interface;
 use nusb::transfer::{Buffer, Bulk, In, Out};
@@ -139,7 +140,7 @@ pub trait Nios {
     ) -> Result<Vec<u8>>;
     fn nios_retune(
         &self,
-        module: u8,
+        channel: Channel,
         timestamp: u64,
         nint: u16,
         nfrac: u32,
@@ -175,10 +176,10 @@ pub trait Nios {
     fn nios_expansion_gpio_dir_read(&self) -> Result<u32>;
     fn nios_expansion_gpio_dir_write(&self, mask: u32, val: u32) -> Result<()>;
     fn nios_get_fpga_version(&self) -> Result<SemanticVersion>;
-    fn nios_get_iq_gain_correction(&self, ch: u8) -> Result<i16>;
-    fn nios_get_iq_phase_correction(&self, ch: u8) -> Result<i16>;
-    fn nios_set_iq_gain_correction(&self, ch: u8, value: i16) -> Result<()>;
-    fn nios_set_iq_phase_correction(&self, ch: u8, value: i16) -> Result<()>;
+    fn nios_get_iq_gain_correction(&self, ch: Channel) -> Result<i16>;
+    fn nios_get_iq_phase_correction(&self, ch: Channel) -> Result<i16>;
+    fn nios_set_iq_gain_correction(&self, ch: Channel, value: i16) -> Result<()>;
+    fn nios_set_iq_phase_correction(&self, ch: Channel, value: i16) -> Result<()>;
 }
 
 impl Nios for Interface {
@@ -250,7 +251,7 @@ impl Nios for Interface {
 
     fn nios_retune(
         &self,
-        module: u8,
+        channel: Channel,
         timestamp: u64,
         nint: u16,
         nfrac: u32,
@@ -267,7 +268,7 @@ impl Nios for Interface {
         }
 
         let pkt = NiosPktRetuneRequest::new(
-            module, timestamp, nint, nfrac, freqsel, vcocap, band, tune, xb_gpio,
+            channel, timestamp, nint, nfrac, freqsel, vcocap, band, tune, xb_gpio,
         );
 
         let response_vec = self.nios_send(ENDPOINT_OUT, ENDPOINT_IN, pkt.into(), None)?;
@@ -389,50 +390,34 @@ impl Nios for Interface {
         Ok(version)
     }
 
-    fn nios_get_iq_gain_correction(&self, ch: u8) -> Result<i16> {
+    fn nios_get_iq_gain_correction(&self, ch: Channel) -> Result<i16> {
         let addr = match ch {
-            BLADERF_MODULE_RX => NIOS_PKT_8X16_ADDR_IQ_CORR_RX_GAIN,
-            BLADERF_MODULE_TX => NIOS_PKT_8X16_ADDR_IQ_CORR_TX_GAIN,
-            _ => {
-                log::error!("Invalid channel: {ch}");
-                return Err(Error::Invalid);
-            }
+            Channel::Rx => NIOS_PKT_8X16_ADDR_IQ_CORR_RX_GAIN,
+            Channel::Tx => NIOS_PKT_8X16_ADDR_IQ_CORR_TX_GAIN,
         };
         Ok(self.nios_read::<u8, u16>(NIOS_PKT_8X16_TARGET_IQ_CORR, addr)? as i16)
     }
 
-    fn nios_get_iq_phase_correction(&self, ch: u8) -> Result<i16> {
+    fn nios_get_iq_phase_correction(&self, ch: Channel) -> Result<i16> {
         let addr = match ch {
-            BLADERF_MODULE_RX => NIOS_PKT_8X16_ADDR_IQ_CORR_RX_PHASE,
-            BLADERF_MODULE_TX => NIOS_PKT_8X16_ADDR_IQ_CORR_TX_PHASE,
-            _ => {
-                log::error!("Invalid channel: {ch}");
-                return Err(Error::Invalid);
-            }
+            Channel::Rx => NIOS_PKT_8X16_ADDR_IQ_CORR_RX_PHASE,
+            Channel::Tx => NIOS_PKT_8X16_ADDR_IQ_CORR_TX_PHASE,
         };
         Ok(self.nios_read::<u8, u16>(NIOS_PKT_8X16_TARGET_IQ_CORR, addr)? as i16)
     }
 
-    fn nios_set_iq_gain_correction(&self, ch: u8, value: i16) -> Result<()> {
+    fn nios_set_iq_gain_correction(&self, ch: Channel, value: i16) -> Result<()> {
         let addr = match ch {
-            BLADERF_MODULE_RX => NIOS_PKT_8X16_ADDR_IQ_CORR_RX_GAIN,
-            BLADERF_MODULE_TX => NIOS_PKT_8X16_ADDR_IQ_CORR_TX_GAIN,
-            _ => {
-                log::error!("Invalid channel: {ch}");
-                return Err(Error::Invalid);
-            }
+            Channel::Rx => NIOS_PKT_8X16_ADDR_IQ_CORR_RX_GAIN,
+            Channel::Tx => NIOS_PKT_8X16_ADDR_IQ_CORR_TX_GAIN,
         };
         self.nios_write::<u8, u16>(NIOS_PKT_8X16_TARGET_IQ_CORR, addr, value as u16)
     }
 
-    fn nios_set_iq_phase_correction(&self, ch: u8, value: i16) -> Result<()> {
+    fn nios_set_iq_phase_correction(&self, ch: Channel, value: i16) -> Result<()> {
         let addr = match ch {
-            BLADERF_MODULE_RX => NIOS_PKT_8X16_ADDR_IQ_CORR_RX_PHASE,
-            BLADERF_MODULE_TX => NIOS_PKT_8X16_ADDR_IQ_CORR_TX_PHASE,
-            _ => {
-                log::error!("Invalid channel: {ch}");
-                return Err(Error::Invalid);
-            }
+            Channel::Rx => NIOS_PKT_8X16_ADDR_IQ_CORR_RX_PHASE,
+            Channel::Tx => NIOS_PKT_8X16_ADDR_IQ_CORR_TX_PHASE,
         };
         self.nios_write::<u8, u16>(NIOS_PKT_8X16_TARGET_IQ_CORR, addr, value as u16)
     }

@@ -1,4 +1,5 @@
 use crate::Result;
+use crate::bladerf::Channel;
 use crate::bladerf1::BladeRf1;
 use crate::nios::Nios;
 
@@ -29,7 +30,7 @@ pub enum Correction {
 
 impl BladeRf1 {
     /// Return the currently applied correction values for either DC, Phase or Gain.
-    pub fn get_correction(&self, ch: u8, corr: &Correction) -> Result<i16> {
+    pub fn get_correction(&self, ch: Channel, corr: &Correction) -> Result<i16> {
         // CHECK_BOARD_STATE(STATE_INITIALIZED);
 
         match corr {
@@ -58,7 +59,7 @@ impl BladeRf1 {
     }
 
     /// Apply correction values for either DC, Phase or Gain.
-    pub fn set_correction(&self, ch: u8, corr: &Correction, value: i16) -> Result<()> {
+    pub fn set_correction(&self, ch: Channel, corr: &Correction, value: i16) -> Result<()> {
         // CHECK_BOARD_STATE(STATE_INITIALIZED);
 
         match corr {
@@ -68,7 +69,7 @@ impl BladeRf1 {
                 .unwrap()
                 .nios_set_iq_phase_correction(ch, value),
             Correction::Gain => {
-                // Gain correction requires than an offset be applied
+                // Gain correction requires that an offset be applied
                 self.interface
                     .lock()
                     .unwrap()

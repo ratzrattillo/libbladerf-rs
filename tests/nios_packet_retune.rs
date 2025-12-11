@@ -2,11 +2,11 @@
 mod tests {
     use libbladerf_rs::nios::NiosPktMagic;
     use libbladerf_rs::nios::packet_retune::NiosPktRetuneRequest;
-    use libbladerf_rs::{BLADERF_MODULE_RX, Band, Tune};
+    use libbladerf_rs::{Band, Channel, Tune};
 
     #[test]
     fn packet_retune_request() {
-        let module: u8 = BLADERF_MODULE_RX;
+        let channel: Channel = Channel::Rx;
         let timestamp: u64 = u64::MAX;
         let nint: u16 = 0x01ff;
         let nfrac: u32 = 0x007fffff;
@@ -17,7 +17,7 @@ mod tests {
         let xb_gpio: u8 = 0xff;
 
         let pkt = NiosPktRetuneRequest::new(
-            module, timestamp, nint, nfrac, freqsel, vcocap, band, tune, xb_gpio,
+            channel, timestamp, nint, nfrac, freqsel, vcocap, band, tune, xb_gpio,
         );
 
         assert_eq!(pkt.magic(), NiosPktMagic::Retune as u8);

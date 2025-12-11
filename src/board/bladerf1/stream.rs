@@ -1,4 +1,4 @@
-use crate::bladerf::{BLADERF_MODULE_RX, BLADERF_MODULE_TX, Direction};
+use crate::bladerf::{Channel, Direction};
 use crate::board::bladerf1::{BladeRf1, BladeRf1RxStreamer, BladeRf1TxStreamer};
 use crate::{Error, Result};
 use num_complex::Complex32;
@@ -293,14 +293,14 @@ impl BladeRf1RxStreamer {
     pub fn activate(&mut self) -> Result<()> {
         self.dev
             .perform_format_config(Direction::Rx, SampleFormat::Sc16Q11)?;
-        self.dev.enable_module(BLADERF_MODULE_RX, true)?;
+        self.dev.enable_module(Channel::Rx, true)?;
         self.dev.experimental_control_urb()
     }
 
     /// Disable receiving samples and shut down RX frontend.
     pub fn deactivate(&mut self) -> Result<()> {
         self.dev.perform_format_deconfig(Direction::Rx)?;
-        self.dev.enable_module(BLADERF_MODULE_RX, false)
+        self.dev.enable_module(Channel::Rx, false)
     }
 
     /// Read I/Q samples into a slice of buffers with configurable timeout.
@@ -387,14 +387,14 @@ impl BladeRf1TxStreamer {
     pub fn activate(&mut self) -> Result<()> {
         // self.dev.perform_format_config(BladeRfDirection::Rx, Format::Sc16Q11)
         //    ?;
-        self.dev.enable_module(BLADERF_MODULE_TX, true)
+        self.dev.enable_module(Channel::Tx, true)
         // dev.experimental_control_urb()
     }
 
     /// Shut down TX frontend
     pub fn deactivate(&mut self) -> Result<()> {
         //  self.dev.perform_format_deconfig(BladeRfDirection::Rx)?;
-        self.dev.enable_module(BLADERF_MODULE_TX, false)
+        self.dev.enable_module(Channel::Tx, false)
     }
 
     /// TODO: https://github.com/FutureSDR/seify/blob/main/src/streamer.rs#L127
