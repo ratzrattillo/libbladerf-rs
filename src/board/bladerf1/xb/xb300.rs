@@ -59,7 +59,7 @@ impl BladeRf1 {
         // if xb_gpio_dir == 0 {
         //     return Ok(false);
         // }
-        Ok((xb_gpio_dir & &(BLADERF_XB_CS | BLADERF_XB_CSEL | BLADERF_XB_LNA_EN)) != 0)
+        Ok((xb_gpio_dir & (BLADERF_XB_CS | BLADERF_XB_CSEL | BLADERF_XB_LNA_EN)) != 0)
 
         // Ok(interface.lock().unwrap().nios_expansion_gpio_dir_read()?
         //     & (BLADERF_XB_CS | BLADERF_XB_CSEL | BLADERF_XB_LNA_EN)

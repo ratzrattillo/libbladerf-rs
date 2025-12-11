@@ -441,7 +441,7 @@ impl BladeRf1TxStreamer {
         end_burst: bool,
         timeout_us: i64,
     ) -> Result<()> {
-        self.write(&buffers, at_ns, end_burst, timeout_us)?;
+        self.write(buffers, at_ns, end_burst, timeout_us)?;
         Ok(())
     }
 }

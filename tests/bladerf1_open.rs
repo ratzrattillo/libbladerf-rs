@@ -1,14 +1,10 @@
 mod common;
 
 use common::*;
-
-#[cfg(target_os = "linux")]
 use libbladerf_rs::Error;
 use libbladerf_rs::Result;
 use libbladerf_rs::bladerf1::BladeRf1;
-#[cfg(target_os = "linux")]
 use libbladerf_rs::bladerf1::{BLADERF1_USB_PID, BLADERF1_USB_VID};
-#[cfg(target_os = "linux")]
 use nusb::MaybeFuture;
 
 #[test]
@@ -19,15 +15,14 @@ fn from_first() -> Result<()> {
 }
 
 #[test]
-#[cfg(target_os = "linux")]
 fn from_bus_addr() -> Result<()> {
     logging_init("bladerf1_open");
     let bladerf = nusb::list_devices()
         .wait()?
         .find(|dev| dev.vendor_id() == BLADERF1_USB_VID && dev.product_id() == BLADERF1_USB_PID)
-        .map(|dev| (dev.busnum(), dev.device_address()));
-    if let Some((bus_number, bus_address)) = bladerf {
-        BladeRf1::from_bus_addr(bus_number, bus_address)?;
+        .map(|dev| (dev.bus_id().to_string(), dev.device_address()));
+    if let Some((bus_id, bus_address)) = bladerf {
+        BladeRf1::from_bus_addr(bus_id.as_str(), bus_address)?;
         Ok(())
     } else {
         Err(Error::NotFound)

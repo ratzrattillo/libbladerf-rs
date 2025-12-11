@@ -12,6 +12,7 @@ use crate::{Error, Result};
 /// BladeRF allows for two tuning modes in which commands to tune to a specific frequency are sent to the BladeRF:
 /// - Host: Commands sent via USB.
 /// - FPGA: Commands sent from the FPGA.
+///
 /// FPGA Tuning might allow for more accurate tuning at specific timestamps (No USB delays).
 #[derive(Clone)]
 pub enum TuningMode {
@@ -32,17 +33,17 @@ impl BladeRf1 {
         log::trace!("Setting Frequency on channel {channel} to {frequency}Hz");
 
         if BladeRf1::xb200_is_enabled(&self.interface)? {
-            println!("set_frequency - xb200_is_enabled!");
+            // println!("set_frequency - xb200_is_enabled!");
             if frequency < BLADERF_FREQUENCY_MIN as u64 {
                 log::debug!("Setting path to Mix");
-                self.xb200_set_path(channel, &Xb200Path::Mix)?;
+                self.xb200_set_path(channel, Xb200Path::Mix)?;
 
                 self.xb200_auto_filter_selection(channel, frequency)?;
 
                 frequency = 1248000000 - frequency;
             } else {
                 log::debug!("Setting path to Bypass");
-                self.xb200_set_path(channel, &Xb200Path::Bypass)?;
+                self.xb200_set_path(channel, Xb200Path::Bypass)?;
             }
         }
 

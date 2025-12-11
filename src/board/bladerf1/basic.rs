@@ -98,10 +98,9 @@ impl BladeRf1 {
     }
 
     /// Opens a BladeRf1 identified by its USB bus address
-    #[cfg(target_os = "linux")]
-    pub fn from_bus_addr(bus_number: u8, bus_addr: u8) -> Result<Self> {
+    pub fn from_bus_addr(bus_number: &str, bus_addr: u8) -> Result<Self> {
         let device = Self::list_bladerf1()?
-            .find(|dev| dev.busnum() == bus_number && dev.device_address() == bus_addr)
+            .find(|dev| dev.bus_id() == bus_number && dev.device_address() == bus_addr)
             .ok_or(Error::NotFound)?
             .open()
             .wait()?;
