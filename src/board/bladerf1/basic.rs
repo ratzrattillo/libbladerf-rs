@@ -154,12 +154,12 @@ impl BladeRf1 {
     // pub fn speed(&self) -> Result<Speed> {
     //     self.device.speed().ok_or(Error::Invalid)
     // }
-    //
-    // /// Return the devices' serial number
-    // pub fn serial(&self) -> Result<String> {
-    //     self.device.serial()
-    // }
-    //
+
+    /// Return the devices' serial number
+    pub fn serial(&self) -> Result<String> {
+        self.device.serial()
+    }
+
     // /// Return the devices' manufacturer (Nuand)
     // pub fn manufacturer(&self) -> Result<String> {
     //     self.device.manufacturer()
