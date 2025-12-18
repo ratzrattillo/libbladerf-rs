@@ -1,8 +1,4 @@
-use crate::bladerf::{
-    BLADE_USB_CMD_GET_LOOPBACK, BLADE_USB_CMD_RESET, BLADE_USB_CMD_RF_RX, BLADE_USB_CMD_RF_TX,
-    BLADE_USB_CMD_SET_LOOPBACK, Channel, DescriptorTypes, Direction, StringDescriptors, TIMEOUT,
-    USB_IF_NULL, USB_IF_RF_LINK,
-};
+use crate::bladerf::{Channel, Direction};
 use crate::bladerf1::frequency::TuningMode;
 use crate::bladerf1::{
     BLADERF_GPIO_FEATURE_SMALL_DMA_XFER, BLADERF1_USB_PID, BLADERF1_USB_VID, BladeRf1,
@@ -12,14 +8,11 @@ use crate::hardware::dac161s055::DAC161S055;
 use crate::hardware::lms6002d::{Band, GainMode, LMS6002D};
 use crate::hardware::si5338::SI5338;
 use crate::nios::Nios;
+use crate::usb::{DeviceCommands, UsbCommands};
 use crate::{Error, Result};
 use nusb::MaybeFuture;
-use nusb::descriptors::ConfigurationDescriptor;
-use nusb::transfer::{ControlIn, ControlOut, ControlType, Recipient};
 use nusb::{Device, DeviceInfo, Speed};
-use std::num::NonZero;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
 impl BladeRf1 {
     /// List all encountered BladeRF1 devices currently attached via USB.
@@ -31,7 +24,46 @@ impl BladeRf1 {
 
     /// Create a new BladeRF1 instance without running any initialization routines.
     fn build(device: Device) -> Result<Self> {
+        log::debug!("Manufacturer: {}", device.manufacturer()?);
+        log::debug!("Product: {}", device.product()?);
+        log::debug!("Serial: {}", device.serial()?);
+        log::debug!("Speed: {:?}", device.speed());
+        log::debug!("Languages: {:x?}", device.get_supported_languages()?);
+
         let interface = Arc::new(Mutex::new(device.detach_and_claim_interface(0).wait()?));
+
+        // log::info!("iface.is_firmware_ready(): {}", interface.lock().unwrap().usb_is_firmware_ready()?);
+        // // We only support the latest FPGA version, which is 0.16.0 at the moment.
+        // {
+        //     log::info!("1 Getting FPGA Version...");
+        //     let iface = interface.lock().unwrap();
+        //     log::info!("Got iface");
+        //     let fpga_version = iface.nios_get_fpga_version()?;
+        //     log::info!("2 Getting FPGA Version...");
+        //     if fpga_version.minor < 16 {
+        //         // This check only works for 0.x branches.
+        //         log::error!(
+        //         "BladeRF1 FPGA version {fpga_version} not supported. Upgrade to version 0.16.0 or later!"
+        //     );
+        //         return Err(Error::Invalid);
+        //     }
+        // }
+
+        // {
+        //     log::info!("1 Waiting for Firmware to be fully loaded...");
+        //     let usb_interface = interface.clone();
+        //     let mut fw_ready_retry_counter = 0;
+        //     let iface = usb_interface.lock().unwrap();
+        //     while iface.is_firmware_ready()? != true {
+        //         if fw_ready_retry_counter == 0 {
+        //             log::info!("Waiting for Firmware to be fully loaded...");
+        //         } else if fw_ready_retry_counter == 30 {
+        //             return Err(Error::Invalid);
+        //         }
+        //         fw_ready_retry_counter += 1;
+        //         sleep(Duration::from_millis(1000));
+        //     }
+        // }
 
         let board_data = BoardData {
             tuning_mode: TuningMode::Fpga,
@@ -118,31 +150,24 @@ impl BladeRf1 {
         Self::build(device)
     }
 
-    /// Returns the USB speed which is used by the BladeRf1.
-    pub fn speed(&self) -> Result<Speed> {
-        // self.board_data.speed
-        self.device.speed().ok_or(Error::Invalid)
-    }
-
-    /// Return the devices' serial number
-    pub fn serial(&self) -> Result<String> {
-        self.get_string_descriptor(
-            NonZero::try_from(StringDescriptors::Serial as u8).map_err(|_| Error::Invalid)?,
-        )
-    }
-
-    /// Return the devices' manufacturer (Nuand)
-    pub fn manufacturer(&self) -> Result<String> {
-        self.get_string_descriptor(
-            NonZero::try_from(StringDescriptors::Manufacturer as u8).map_err(|_| Error::Invalid)?,
-        )
-    }
+    // /// Returns the USB speed which is used by the BladeRf1.
+    // pub fn speed(&self) -> Result<Speed> {
+    //     self.device.speed().ok_or(Error::Invalid)
+    // }
+    //
+    // /// Return the devices' serial number
+    // pub fn serial(&self) -> Result<String> {
+    //     self.device.serial()
+    // }
+    //
+    // /// Return the devices' manufacturer (Nuand)
+    // pub fn manufacturer(&self) -> Result<String> {
+    //     self.device.manufacturer()
+    // }
 
     /// Return the devices' FX3 firmware version
-    pub fn fx3_firmware(&self) -> Result<String> {
-        self.get_string_descriptor(
-            NonZero::try_from(StringDescriptors::Fx3Firmware as u8).map_err(|_| Error::Invalid)?,
-        )
+    pub fn fx3_firmware_version(&self) -> Result<String> {
+        self.device.fx3_firmware_version()
     }
 
     /// Return the version of the FPGA firmware.
@@ -151,12 +176,15 @@ impl BladeRf1 {
         Ok(format!("{version}"))
     }
 
-    /// Return the devices' product name (BladeRf1)
-    pub fn product(&self) -> Result<String> {
-        self.get_string_descriptor(
-            NonZero::try_from(StringDescriptors::Product as u8).map_err(|_| Error::Invalid)?,
-        )
-    }
+    // /// Return the devices' product name (BladeRf1)
+    // pub fn product(&self) -> Result<String> {
+    //     self.device.product()
+    // }
+    //
+    // /// Get a list of supported languages of the BladeRF1. Returns a Vector with Language codes.
+    // pub fn get_supported_languages(&self) -> Result<Vec<u16>> {
+    //     self.device.get_supported_languages()
+    // }
 
     /// Read from the configuration GPIO register.
     pub(crate) fn config_gpio_read(&self) -> Result<u32> {
@@ -168,7 +196,7 @@ impl BladeRf1 {
     /// clearing other GPIO bits that may be set by the library internally.
     pub(crate) fn config_gpio_write(&self, mut data: u32) -> Result<()> {
         log::trace!("[config_gpio_write] data: {data}");
-        let speed = self.speed()?;
+        let speed = self.device.speed().ok_or(Error::Invalid)?;
         log::trace!("[config_gpio_write] speed: {speed:?}");
         // If we're connected at HS, we need to use smaller DMA transfers
         match speed {
@@ -402,131 +430,6 @@ impl BladeRf1 {
         Ok(())
     }
 
-    // Vendor command that sets a 32-bit integer value
-    // fn set_vendor_cmd_int(&self, cmd: u8, val: u32) -> Result<()> {
-    //     let pkt = ControlOut {
-    //         control_type: ControlType::Vendor,
-    //         recipient: Recipient::Device,
-    //         request: cmd,
-    //         value: 0,
-    //         index: 0,
-    //         data: &val.to_le_bytes(),
-    //     };
-    //     Ok(self
-    //         .interface
-    //         .control_out(pkt, Duration::from_secs(5))
-    //         ?)
-    // }
-
-    /// Vendor command that gets a 32-bit integer value
-    fn get_vendor_cmd_int(&self, cmd: u8) -> Result<u32> {
-        let pkt = ControlIn {
-            control_type: ControlType::Vendor,
-            recipient: Recipient::Device,
-            request: cmd,
-            value: 0,
-            index: 0,
-            length: 0x4,
-        };
-        let vec = self
-            .interface
-            .lock()
-            .unwrap()
-            .control_in(pkt, Duration::from_secs(5))
-            .wait()?;
-
-        // TODO: Examine return value and return it
-        log::debug!("get_vendor_cmd_int response data: {vec:?}");
-        Ok(u32::from_le_bytes(
-            vec.as_slice()[0..4]
-                .try_into()
-                .map_err(|_| Error::Invalid)?,
-        ))
-    }
-    /// Vendor command wrapper to get a 32-bit integer and supplies wValue
-    /// TODO: Return u32 value
-    fn vendor_cmd_int_wvalue(&self, cmd: u8, wvalue: u16) -> Result<u32> {
-        let pkt = ControlIn {
-            control_type: ControlType::Vendor,
-            recipient: Recipient::Device,
-            request: cmd,
-            value: wvalue,
-            index: 0,
-            length: 0x4,
-        };
-        let vec = self
-            .interface
-            .lock()
-            .unwrap()
-            .control_in(pkt, Duration::from_secs(5))
-            .wait()?;
-        // TODO: Examine return value and return it
-        log::trace!("vendor_cmd_int_wvalue response data: {vec:?}");
-        Ok(u32::from_le_bytes(
-            vec.as_slice()[0..4]
-                .try_into()
-                .map_err(|_| Error::Invalid)?,
-        ))
-    }
-
-    /// Enable/Disable RF Module via the USB backend.
-    /// This method should probably be moved to some USB backend dedicated source file.
-    fn usb_enable_module(&self, direction: Direction, enable: bool) -> Result<()> {
-        let val = enable as u16;
-
-        let cmd = if direction == Direction::Rx {
-            BLADE_USB_CMD_RF_RX
-        } else {
-            BLADE_USB_CMD_RF_TX
-        };
-
-        let _fx3_ret = self.vendor_cmd_int_wvalue(cmd, val)?;
-        // TODO:
-        // if fx3_ret {
-        //     log::trace!("FX3 reported error={fx3_ret:?} when {} RF {direction:?}", if enable {"enabling"} else { "disabling"});
-        //
-        //      // FIXME: Work around what seems to be a harmless failure.
-        //      //        It appears that in firmware or in the lib, we may be
-        //      //        attempting to disable an already disabled channel, or
-        //      //        enabling an already enabled channel.
-        //      //
-        //      //        Further investigation required
-        //      //
-        //      //        0x44 corresponds to CY_U3P_ERROR_ALREADY_STARTED
-        //
-        //         if fx3_ret != 0x44 {
-        //                Err(BladeRfError::Unexpected)
-        //         }
-        // }
-
-        Ok(())
-    }
-
-    /// Change USB Alternate Setting
-    pub fn change_setting(&self, setting: u8) -> Result<()> {
-        Ok(self
-            .interface
-            .lock()
-            .unwrap()
-            .set_alt_setting(setting)
-            .wait()?)
-    }
-
-    /// TODO:
-    pub fn usb_set_firmware_loopback(&self, enable: bool) -> Result<()> {
-        self.vendor_cmd_int_wvalue(BLADE_USB_CMD_SET_LOOPBACK, enable as u16)?;
-        self.change_setting(USB_IF_NULL)?;
-        self.change_setting(USB_IF_RF_LINK)?;
-        Ok(())
-    }
-
-    /// TODO:
-    pub fn usb_get_firmware_loopback(&self) -> Result<bool> {
-        let result = self.get_vendor_cmd_int(BLADE_USB_CMD_GET_LOOPBACK)?;
-
-        Ok(result != 0)
-    }
-
     /// Enable/Disable RF Module
     pub fn enable_module(&self, channel: Channel, enable: bool) -> Result<()> {
         // CHECK_BOARD_STATE(STATE_INITIALIZED);
@@ -553,7 +456,10 @@ impl BladeRf1 {
 
         self.lms.enable_rffe(channel, enable)?;
 
-        self.usb_enable_module(direction, enable)
+        self.interface
+            .lock()
+            .unwrap()
+            .usb_enable_module(direction, enable)
     }
 
     /// FPGA Band Selection on a specific channel.
@@ -584,94 +490,5 @@ impl BladeRf1 {
         gpio |= !shift;
 
         self.config_gpio_write(gpio)
-    }
-
-    /// Get BladeRf1 USB String descriptor identified by an Index number
-    /// Valid indices are given in: ```rust StringDescriptors```
-    pub fn get_string_descriptor(&self, descriptor_index: NonZero<u8>) -> Result<String> {
-        let descriptor = self
-            .device
-            .get_string_descriptor(descriptor_index, 0x409, Duration::from_secs(1))
-            .wait()
-            .map_err(|_| Error::Invalid)?;
-        Ok(descriptor)
-    }
-
-    /// Get BladeRf1 Configuration Descriptor
-    /// TODO: What is a configuration descriptor?
-    pub fn get_configuration_descriptor(&self, descriptor_index: u8) -> Result<Vec<u8>> {
-        let descriptor = self
-            .device
-            .get_descriptor(
-                DescriptorTypes::Configuration as u8,
-                descriptor_index,
-                0x00,
-                Duration::from_secs(1),
-            )
-            .wait()
-            .map_err(|_| Error::Invalid)?;
-        Ok(descriptor)
-    }
-
-    /// Get a list of supported languages of the BladeRF1. Returns a Vector with Language codes.
-    /// TODO: How can these language codes be translated to a str representation? nusb offers something?
-    pub fn get_supported_languages(&self) -> Result<Vec<u16>> {
-        let languages = self
-            .device
-            .get_string_descriptor_supported_languages(Duration::from_secs(1))
-            .wait()
-            .map_err(|_| Error::Invalid)?
-            .collect();
-
-        Ok(languages)
-    }
-
-    pub fn get_configurations(&'_ self) -> Vec<ConfigurationDescriptor<'_>> {
-        self.device.configurations().collect()
-    }
-
-    /// TODO: set which configuration???
-    pub fn set_configuration(&self, configuration: u16) -> Result<()> {
-        // self.device.set_configuration(configuration)?;
-        Ok(self
-            .interface
-            .lock()
-            .unwrap()
-            .control_out(
-                ControlOut {
-                    control_type: ControlType::Standard,
-                    recipient: Recipient::Device,
-                    request: 0x09, //Request::VersionStringRead as u8,
-                    value: configuration,
-                    index: 0x00,
-                    data: &[],
-                },
-                TIMEOUT,
-            )
-            .wait()?)
-    }
-
-    /// Reset the BladeRF1
-    /// TODO Find out if this is soft reset or hard reset?
-    pub fn device_reset(&self) -> Result<()> {
-        // TODO: Dont know what this is doing
-        let pkt = ControlOut {
-            control_type: ControlType::Vendor,
-            recipient: Recipient::Device,
-            request: BLADE_USB_CMD_RESET,
-            value: 0x0,
-            index: 0x0,
-            data: &[],
-        };
-
-        self.interface
-            .lock()
-            .unwrap()
-            .control_out(pkt, Duration::from_secs(100))
-            .wait()?;
-        // self.device.set_configuration(0).wait()?;
-        // self.interface.set_alt_setting(0).wait()?;
-
-        Ok(())
     }
 }

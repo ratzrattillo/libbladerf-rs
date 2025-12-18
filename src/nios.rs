@@ -218,7 +218,7 @@ impl Nios for Interface {
         } else {
             pkt.capacity() % ep_bulk_in.max_packet_size()
         };
-        // reserve does nothing, if capacity is already sufficient
+        // reserve does nothing if capacity is already sufficient
         pkt.reserve(additional);
 
         let t = timeout.unwrap_or(Duration::from_millis(100));

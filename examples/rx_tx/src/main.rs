@@ -1,14 +1,16 @@
 use anyhow::Result;
 use libbladerf_rs::bladerf1::xb::ExpansionBoard;
 use libbladerf_rs::bladerf1::xb::ExpansionBoard::XbNone;
-use libbladerf_rs::bladerf1::{BladeRf1, BladeRf1RxStreamer, BladeRf1TxStreamer, SampleFormat};
+use libbladerf_rs::bladerf1::{
+    BladeRf1, BladeRf1RxStreamer, BladeRf1TxStreamer, GainDb, SampleFormat,
+};
 use libbladerf_rs::{Channel, Direction};
 use num_complex::Complex32;
 use std::thread::sleep;
 use std::time::Duration;
 
 // RX
-fn do_rx(bladerf: &BladeRf1) -> Result<()> {
+fn _do_rx(bladerf: &BladeRf1) -> Result<()> {
     bladerf.perform_format_config(Direction::Rx, SampleFormat::Sc16Q11)?;
     bladerf.enable_module(Channel::Rx, true)?;
     bladerf.experimental_control_urb()?;
@@ -36,9 +38,6 @@ fn do_tx(bladerf: &BladeRf1) -> Result<()> {
     bladerf.enable_module(Channel::Tx, true)?;
     println!("called enable_module(Channel::Tx, true)");
     sleep(Duration::from_millis(5000));
-    // bladerf.experimental_control_urb()?;
-    // println!("experimental_control_urb");
-    // sleep(Duration::from_millis(5000));
 
     let mut tx_streamer = BladeRf1TxStreamer::new(bladerf.clone(), 32768, Some(8), None)?;
 
@@ -56,8 +55,6 @@ fn do_tx(bladerf: &BladeRf1) -> Result<()> {
     sleep(Duration::from_millis(5000));
     bladerf.enable_module(Channel::Tx, false)?;
     println!("called enable_module(Channel::Tx, false)");
-    // bladerf.experimental_control_urb2()?;
-    // println!("experimental_control_urb2()");
 
     Ok(())
 }
@@ -67,22 +64,41 @@ fn main() -> Result<()> {
         .filter_module("nusb", log::LevelFilter::Info)
         .init();
 
+    let frequency: u64 = 100_000_000;
     let bladerf = BladeRf1::from_first()?;
 
     bladerf.initialize()?;
 
-    let xb = bladerf.expansion_get_attached()?;
-    log::debug!("XB: {xb:?}");
-    if xb == XbNone {
-        bladerf.expansion_attach(ExpansionBoard::Xb200)?;
+    let frequency_range = bladerf.get_frequency_range()?;
+    log::debug!("Frequency Range: {frequency_range:?}");
 
+    if frequency < frequency_range.min().unwrap() as u64 {
         let xb = bladerf.expansion_get_attached()?;
         log::debug!("XB: {xb:?}");
+        if xb == XbNone {
+            bladerf.expansion_attach(ExpansionBoard::Xb200)?;
+
+            let xb = bladerf.expansion_get_attached()?;
+            log::debug!("XB: {xb:?}");
+        }
     }
 
-    bladerf.set_frequency(Channel::Tx, 1000000000)?;
+    bladerf.set_frequency(Channel::Tx, frequency)?;
 
-    do_rx(&bladerf)?;
+    let gain_range_tx = BladeRf1::get_gain_range(Channel::Tx);
+    log::debug!("Gain Range TX: {gain_range_tx:?}");
+
+    bladerf.set_gain(
+        Channel::Tx,
+        GainDb {
+            db: gain_range_tx.min().unwrap() as i8,
+        },
+    )?;
+
+    let gain_tx = bladerf.get_gain(Channel::Tx)?;
+    log::debug!("Gain TX: {}", gain_tx.db);
+
+    // do_rx(&bladerf)?;
 
     do_tx(&bladerf)?;
 

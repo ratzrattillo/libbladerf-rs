@@ -1,6 +1,7 @@
 use crate::Result;
 use crate::bladerf1::BladeRf1;
 use crate::hardware::lms6002d::Loopback;
+use crate::usb::UsbCommands;
 
 impl BladeRf1 {
     /// Set the loopback config to one of the supported `BladeRf1::hardware::lms6002d::Loopback` modes
@@ -15,17 +16,24 @@ impl BladeRf1 {
                 // that the PAs will be disabled, and remain enabled across
                 // frequency changes.
                 self.lms.set_loopback_mode(Loopback::Lna3)?;
-                self.usb_set_firmware_loopback(true)
+                self.interface
+                    .lock()
+                    .unwrap()
+                    .usb_set_firmware_loopback(true)
             }
             _ => {
                 // Query first, as the implementation of setting the mode
                 // may interrupt running streams. The API don't guarantee that
                 // switching loopback modes on the fly to work, but we can at least
                 // try to avoid unnecessarily interrupting things...
-                let fw_lb_enabled: bool = self.usb_get_firmware_loopback()?;
+                let fw_lb_enabled: bool =
+                    self.interface.lock().unwrap().usb_get_firmware_loopback()?;
 
                 if fw_lb_enabled {
-                    self.usb_set_firmware_loopback(false)?;
+                    self.interface
+                        .lock()
+                        .unwrap()
+                        .usb_set_firmware_loopback(false)?;
                 }
 
                 self.lms.set_loopback_mode(lb)
@@ -39,7 +47,7 @@ impl BladeRf1 {
 
         let mut lb = Loopback::None;
 
-        let fw_lb_enabled = self.usb_get_firmware_loopback()?;
+        let fw_lb_enabled = self.interface.lock().unwrap().usb_get_firmware_loopback()?;
         if fw_lb_enabled {
             lb = Loopback::Firmware;
         }

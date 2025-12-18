@@ -354,7 +354,7 @@ impl BladeRf1RxStreamer {
 }
 
 impl BladeRf1TxStreamer {
-    /// Create new instance of an TX Streamer to transmit I/Q samples.
+    /// Create a new instance of a TX Streamer to transmit I/Q samples.
     pub fn new(
         dev: BladeRf1,
         buffer_size: usize,
@@ -485,26 +485,25 @@ impl BladeRf1 {
 
         let mut gpio_val = self.config_gpio_read()?;
 
-        log::debug!("gpio_val {gpio_val:#08x}");
+        // log::debug!("gpio_val {gpio_val:#08x}");
         if format == SampleFormat::PacketMeta {
             gpio_val |= BLADERF_GPIO_PACKET;
             use_timestamps = true;
             log::debug!("BladeRf1Format::PacketMeta");
         } else {
             gpio_val &= !BLADERF_GPIO_PACKET;
-            log::debug!("else");
         }
-        log::debug!("gpio_val {gpio_val:#08x}");
+        // log::debug!("gpio_val {gpio_val:#08x}");
 
         if use_timestamps {
-            log::debug!("use_timestamps");
+            // log::debug!("use_timestamps");
             gpio_val |= BLADERF_GPIO_TIMESTAMP | BLADERF_GPIO_TIMESTAMP_DIV2;
         } else {
-            log::debug!("dont use_timestamps");
+            // log::debug!("dont use_timestamps");
             gpio_val &= !(BLADERF_GPIO_TIMESTAMP | BLADERF_GPIO_TIMESTAMP_DIV2);
         }
 
-        log::debug!("gpio_val {gpio_val:#08x}");
+        // log::debug!("gpio_val {gpio_val:#08x}");
 
         self.config_gpio_write(gpio_val)?;
         // if (status == 0) {

@@ -345,22 +345,23 @@ impl BladeRf1 {
         }
 
         let fb = self.xb200_get_filterbank(channel)?;
+        log::trace!("xb_200 current filterbank: {fb:?}");
         let filter = if fb == Xb200Filter::Auto1db {
-            if (37774405..=59535436).contains(&frequency) {
+            if (37_774_405..=59_535_436).contains(&frequency) {
                 Xb200Filter::_50M
-            } else if (128326173..=166711171).contains(&frequency) {
+            } else if (128_326_173..=166_711_171).contains(&frequency) {
                 Xb200Filter::_144M
-            } else if (187593160..=245346403).contains(&frequency) {
+            } else if (187_593_160..=245_346_403).contains(&frequency) {
                 Xb200Filter::_222M
             } else {
                 Xb200Filter::Custom
             }
         } else if fb == Xb200Filter::Auto3db {
-            if (34782924..=61899260).contains(&frequency) {
+            if (34_782_924..=61_899_260).contains(&frequency) {
                 Xb200Filter::_50M
-            } else if (121956957..=178444099).contains(&frequency) {
+            } else if (121_956_957..=178_444_099).contains(&frequency) {
                 Xb200Filter::_144M
-            } else if (177522675..=260140935).contains(&frequency) {
+            } else if (177_522_675..=260_140_935).contains(&frequency) {
                 Xb200Filter::_222M
             } else {
                 Xb200Filter::Custom

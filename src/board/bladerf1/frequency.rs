@@ -71,7 +71,7 @@ impl BladeRf1 {
         let f = self.lms.get_frequency(channel)?;
         if f.x == 0 {
             // If we see this, it's most often an indication that communication
-            // with the LMS6002D is not occuring correctly
+            // with the LMS6002D is not occurring correctly
             log::error!("LMSFreq.x was zero!");
             return Err(Error::Invalid);
         }
@@ -79,9 +79,7 @@ impl BladeRf1 {
         let mut frequency_hz: u64 = (&f).into();
         log::trace!("Frequency Hz: {frequency_hz}");
 
-        // if self.xb200.is_some() {
         if BladeRf1::xb200_is_enabled(&self.interface)? {
-            println!("XB200 is enabled!");
             let path = self.xb200_get_path(channel)?;
 
             if path == Xb200Path::Mix {

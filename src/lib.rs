@@ -91,6 +91,7 @@ mod board;
 mod hardware;
 pub mod nios;
 pub mod range;
+mod usb;
 
 pub use bladerf::{Channel, Direction};
 pub use board::bladerf1;

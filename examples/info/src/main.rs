@@ -1,7 +1,5 @@
 use anyhow::Result;
 use libbladerf_rs::Channel;
-use libbladerf_rs::bladerf1::xb::ExpansionBoard;
-use libbladerf_rs::bladerf1::xb::ExpansionBoard::XbNone;
 use libbladerf_rs::bladerf1::{BladeRf1, GainDb};
 
 fn main() -> Result<()> {
@@ -12,14 +10,7 @@ fn main() -> Result<()> {
 
     let bladerf = BladeRf1::from_first()?;
 
-    log::debug!("Speed: {:?}", bladerf.speed());
-    log::debug!("Serial: {}", bladerf.serial()?);
-    log::debug!("Manufacturer: {}", bladerf.manufacturer()?);
-    log::debug!("FX3 Firmware: {}", bladerf.fx3_firmware()?);
-    log::debug!("Product: {}", bladerf.product()?);
-
-    let languages = bladerf.get_supported_languages()?;
-    log::debug!("Languages: {:x?}", languages);
+    log::debug!("FX3 Firmware: {}", bladerf.fx3_firmware_version()?);
 
     bladerf.initialize()?;
 
@@ -27,12 +18,12 @@ fn main() -> Result<()> {
 
     let xb = bladerf.expansion_get_attached()?;
     log::debug!("XB: {xb:?}");
-    if xb == XbNone {
-        bladerf.expansion_attach(ExpansionBoard::Xb200)?;
-
-        let xb = bladerf.expansion_get_attached()?;
-        log::debug!("XB: {xb:?}");
-    }
+    // if xb == XbNone {
+    //     bladerf.expansion_attach(ExpansionBoard::Xb200)?;
+    //
+    //     let xb = bladerf.expansion_get_attached()?;
+    //     log::debug!("XB: {xb:?}");
+    // }
 
     let frequency_range = bladerf.get_frequency_range()?;
     log::debug!("Frequency Range: {frequency_range:?}");
