@@ -13,6 +13,9 @@
 - Adjusts the quadrature DC offset. Valid values are \[-2048, 2048\], whichare scaled to the available control bits. DcoffQ, that's why they maybe just go until 2016?
 - Fix BladeRf being in weird state, where recieving e.g. via fm-receiver example, after running the tests, no proper output is produced.. (White noise only)
 - impl From<&LmsFreq> for u64 { maybe impl deref for lmsfreq
+- Drop deprecated code (Search for "deprecated" in codebase)
+- Restructure LMS6002D.rs into individual functionalities
+- 
 
 NIOS:
 - Assert and trow error, if in retune packet the maximum width of nint and nfrac is reached

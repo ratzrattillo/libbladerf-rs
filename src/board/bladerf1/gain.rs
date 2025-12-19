@@ -1,9 +1,9 @@
 use crate::bladerf1::BladeRf1;
 use crate::hardware::lms6002d::{
-    BLADERF_LNA_GAIN_MAX_DB, BLADERF_LNA_GAIN_MID_DB, BLADERF_RXVGA1_GAIN_MAX,
-    BLADERF_RXVGA1_GAIN_MIN, BLADERF_RXVGA2_GAIN_MAX, BLADERF_RXVGA2_GAIN_MIN,
-    BLADERF_TXVGA1_GAIN_MAX, BLADERF_TXVGA1_GAIN_MIN, BLADERF_TXVGA2_GAIN_MAX,
-    BLADERF_TXVGA2_GAIN_MIN, BLADERF1_RX_GAIN_OFFSET, BLADERF1_TX_GAIN_OFFSET, GainDb, GainMode,
+    BLADERF_LNA_GAIN_MAX, BLADERF_LNA_GAIN_MID, BLADERF_RXVGA1_GAIN_MAX, BLADERF_RXVGA1_GAIN_MIN,
+    BLADERF_RXVGA2_GAIN_MAX, BLADERF_RXVGA2_GAIN_MIN, BLADERF_TXVGA1_GAIN_MAX,
+    BLADERF_TXVGA1_GAIN_MIN, BLADERF_TXVGA2_GAIN_MAX, BLADERF_TXVGA2_GAIN_MIN,
+    BLADERF1_RX_GAIN_OFFSET, BLADERF1_TX_GAIN_OFFSET, GainDb, GainMode,
 };
 use crate::range::{Range, RangeItem};
 use crate::{Channel, Error, Result};
@@ -87,7 +87,7 @@ impl BladeRf1 {
                     BLADERF_RXVGA1_GAIN_MIN as f64
                         + BLADERF_RXVGA2_GAIN_MIN as f64
                         + BLADERF1_RX_GAIN_OFFSET as f64,
-                    BLADERF_LNA_GAIN_MAX_DB as f64
+                    BLADERF_LNA_GAIN_MAX as f64
                         + BLADERF_RXVGA1_GAIN_MAX as f64
                         + BLADERF_RXVGA2_GAIN_MAX as f64
                         + BLADERF1_RX_GAIN_OFFSET as f64,
@@ -246,7 +246,7 @@ impl BladeRf1 {
                 "lna" => Ok(Range {
                     items: vec![RangeItem::Step(
                         0f64,
-                        BLADERF_LNA_GAIN_MAX_DB as f64,
+                        BLADERF_LNA_GAIN_MAX as f64,
                         3f64,
                         1f64,
                     )],
@@ -401,9 +401,9 @@ impl BladeRf1 {
 
         // apportion some gain to RXLNA (but only half of it for now)
         (lna, gain) = Self::_apportion_gain(&lna_range, lna, gain);
-        if lna > BLADERF_LNA_GAIN_MID_DB {
-            gain += lna - BLADERF_LNA_GAIN_MID_DB;
-            lna = lna - (lna - BLADERF_LNA_GAIN_MID_DB);
+        if lna > BLADERF_LNA_GAIN_MID {
+            gain += lna - BLADERF_LNA_GAIN_MID;
+            lna = lna - (lna - BLADERF_LNA_GAIN_MID);
         }
         log::trace!(
             "gain={desired_gain} -> lna={lna} rxvga1={rxvga1} rxvga2={rxvga2} remainder={gain}"

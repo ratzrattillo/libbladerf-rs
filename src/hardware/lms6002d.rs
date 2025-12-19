@@ -1,5 +1,7 @@
 #![allow(dead_code)]
 
+mod dc_calibration;
+
 use crate::bladerf::{Channel, khz, mhz};
 use crate::bladerf1::BladeRf1;
 use crate::nios::{NIOS_PKT_8X8_TARGET_LMS6, Nios};
@@ -123,12 +125,12 @@ pub const BLADERF_TXVGA2_GAIN_MAX: i8 = 25;
 /// Gain in dB of the LNA at mid-setting
 ///
 /// \deprecated Use bladerf_get_gain_stage_range()
-pub const BLADERF_LNA_GAIN_MID_DB: i8 = 3;
+pub const BLADERF_LNA_GAIN_MID: i8 = 3;
 
 /// Gain in db of the LNA at max setting
 ///
 /// \deprecated Use bladerf_get_gain_stage_range()
-pub const BLADERF_LNA_GAIN_MAX_DB: i8 = 6;
+pub const BLADERF_LNA_GAIN_MAX: i8 = 6;
 
 /// Gain in dB
 pub struct GainDb {
@@ -138,7 +140,7 @@ pub struct GainDb {
 /// LNA gain options
 ///
 /// \deprecated Use bladerf_get_gain_stage_range()
-#[derive(PartialEq)]
+#[derive(PartialEq, Clone, Copy)]
 pub enum LnaGainCode {
     /// Invalid LNA gain
     // UnsupportedMaxLna3 = 0x0,
@@ -182,8 +184,8 @@ impl From<LnaGainCode> for GainDb {
     fn from(value: LnaGainCode) -> Self {
         GainDb {
             db: match value {
-                LnaGainCode::MaxAllLnas => BLADERF_LNA_GAIN_MAX_DB,
-                LnaGainCode::MidAllLnas => BLADERF_LNA_GAIN_MID_DB,
+                LnaGainCode::MaxAllLnas => BLADERF_LNA_GAIN_MAX,
+                LnaGainCode::MidAllLnas => BLADERF_LNA_GAIN_MID,
                 LnaGainCode::BypassLna1Lna2 => 0i8,
             },
         }
@@ -212,9 +214,9 @@ impl From<LnaGainCode> for GainDb {
 
 impl From<GainDb> for LnaGainCode {
     fn from(value: GainDb) -> Self {
-        if value.db >= BLADERF_LNA_GAIN_MAX_DB {
+        if value.db >= BLADERF_LNA_GAIN_MAX {
             LnaGainCode::MaxAllLnas
-        } else if value.db >= BLADERF_LNA_GAIN_MID_DB {
+        } else if value.db >= BLADERF_LNA_GAIN_MID {
             LnaGainCode::MidAllLnas
         } else {
             LnaGainCode::BypassLna1Lna2
@@ -393,25 +395,6 @@ pub struct QuickTune {
     pub flags: u8,
     /// Flag bits used to configure XB
     pub xb_gpio: u8,
-}
-
-struct DcCalState {
-    /// Backup of clock enables
-    clk_en: u8,
-    /// Register backup
-    reg0x72: u8,
-    ///  Backup of gain values
-    lna_gain: LnaGainCode,
-    rxvga1_gain: i32,
-    rxvga2_gain: i32,
-
-    /// Base address of DC cal regs
-    base_addr: u8,
-    /// # of DC cal submodules to operate on
-    num_submodules: u32,
-    /// Current gains used in retry loops
-    rxvga1_curr_gain: i32,
-    rxvga2_curr_gain: i32,
 }
 
 /// Here we define more conservative band ranges than those in the
@@ -694,13 +677,9 @@ pub struct LmsFreq {
     pub xb_gpio: u8,
     /// VCO division ratio
     pub x: u8,
-    /// Filled in by retune operation to denote which VCOCAP value was used
+    /// Filled in by the retune operation to denote which VCOCAP value was used
     pub vcocap_result: u8,
 }
-
-// pub struct FrequencyHz {
-//     pub hz: u64,
-// }
 
 impl From<&LmsFreq> for u64 {
     fn from(value: &LmsFreq) -> Self {
@@ -1182,6 +1161,18 @@ impl LMS6002D {
     pub fn set(&self, addr: u8, mask: u8) -> Result<()> {
         let data = self.read(addr)?;
         self.write(addr, data | mask)
+    }
+
+    /// Wrapper for clearing bits in an LMS6002 register via a RMW operation
+    ///
+    /// @param   dev         Device to operate on
+    /// @param   addr        Register address
+    /// @param   mask        Bits to clear should be '1'
+    ///
+    /// @return BLADERF_ERR_* value
+    pub fn clear(&self, addr: u8, mask: u8) -> Result<()> {
+        let data = self.read(addr)?;
+        self.write(addr, data & !mask)
     }
 
     /// Soft reset of the LMS
@@ -2077,7 +2068,7 @@ impl LMS6002D {
 
     /// Enable the first Variable Gain Amplifier after the antenna.
     pub fn rxvga1_enable(&self, enable: bool) -> Result<()> {
-        // Enable bit is in reserved register documented in this thread:
+        // Enable bit is in the reserved register documented in this thread:
         // https://groups.google.com/forum/#!topic/limemicro-opensource/8iTannzlfzg
         let mut data = self.read(0x7d)?;
         if enable {
@@ -2293,7 +2284,7 @@ impl LMS6002D {
         data >>= 2;
         data &= 0xf;
 
-        // Lookup the bandwidth for returned u8 in lookup table
+        // Look up the bandwidth for returned u8 in lookup table
         // and convert u32 bandwidth into Enum
         Ok(LmsBw::from_index(data))
     }
@@ -2372,26 +2363,6 @@ impl LMS6002D {
 
                 // Renormalize to 2048
                 Ok(value << 5)
-
-                // // Mask out an unrelated control bit
-                // regval &= 0x7f;
-                // log::error!("{regval:#x} {regval:#b} {regval} [unrelated control bit masked]");
-                //
-                // let sign_bit = (regval as i16) & (1 << 6);
-                // log::error!("{sign_bit:#x} {sign_bit:#b} {sign_bit} [sign_bit mask]");
-                //
-                // let mut value = if sign_bit != 0 {
-                //     !(regval as i16)
-                // } else {
-                //     regval as i16
-                // };
-                // log::error!("{value:#x} {value:#b} {value} [bitflip if signed]");
-                //
-                // value |= sign_bit;
-                // log::error!("{value:#x} {value:#b} {value} [transform to signed value if required]");
-                //
-                // // Renormalize to 2048
-                // Ok(value << 5)
             }
             Channel::Tx => {
                 // LMS6002D 0x00 = -16, 0x80 = 0, 0xff = 15.9375
@@ -2444,7 +2415,7 @@ impl LMS6002D {
         self.get_dc_offset(channel, addr)
     }
 
-    /// Get the DC offset on specified channel for the real part.
+    /// Get the DC offset on speca ified channel for the real part.
     pub fn get_dc_offset_q(&self, channel: Channel) -> Result<i16> {
         let addr = if channel == Channel::Tx { 0x43 } else { 0x72 };
         self.get_dc_offset(channel, addr)
