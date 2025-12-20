@@ -12,7 +12,7 @@ keywords = ["sdr", "rf", "bladerf"]
 categories = ["api-bindings"]
 
 [workspace]
-members = [".", "examples/info", "examples/rx_tx"]
+members = [".", "examples/calibrate", "examples/info", "examples/rx_tx"]
 
 [dependencies]
 thiserror = "2.0"

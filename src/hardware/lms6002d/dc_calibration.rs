@@ -5,6 +5,7 @@ use crate::hardware::lms6002d::{
 };
 use crate::{Error, Result};
 use std::cmp::PartialEq;
+use std::fmt::{Display, Formatter};
 
 /// This structure is used to directly apply DC calibration register values to
 /// the LMS, rather than use the values resulting from an auto-calibration.
@@ -35,8 +36,25 @@ pub struct DcCals {
     rxvga2b_q: i16,
 }
 
+impl Display for DcCals {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "\n")?;
+        write!(f, "LPF tuning module: {}\n", self.lpf_tuning)?;
+        write!(f, "TX LPF I filter: {}\n", self.tx_lpf_i)?;
+        write!(f, "TX LPF Q filter: {}\n", self.tx_lpf_q)?;
+        write!(f, "RX LPF I filter: {}\n", self.rx_lpf_i)?;
+        write!(f, "RX LPF Q filter: {}\n", self.rx_lpf_q)?;
+        write!(f, "RX VGA2 DC reference module: {}\n", self.dc_ref)?;
+        write!(f, "RX VGA2 stage 1, I channel: {}\n", self.rxvga2a_i)?;
+        write!(f, "RX VGA2 stage 1, Q channel: {}\n", self.rxvga2a_q)?;
+        write!(f, "RX VGA2 stage 2, I channel: {}\n", self.rxvga2b_i)?;
+        write!(f, "RX VGA2 stage 2, Q channel: {}\n", self.rxvga2b_q)?;
+        write!(f, "\n")
+    }
+}
+
 pub struct DcCalState {
-    /// Backup of clock enables
+    /// Backup of the clock enables
     clk_en: u8,
     /// Register backup
     reg0x72: u8,
@@ -137,48 +155,34 @@ impl LMS6002D {
         Ok(state)
     }
 
-    pub fn dc_cal_module_init(&self, module: DcCalModule) -> Result<DcCalState> {
-        let mut state = DcCalState {
-            clk_en: 0,
-            reg0x72: 0,
-            lna_gain: LnaGainCode::BypassLna1Lna2,
-            rxvga1_gain: 0,
-            rxvga2_gain: 0,
-            base_addr: 0,
-            num_submodules: 0,
-            rxvga1_curr_gain: 0,
-            rxvga2_curr_gain: 0,
-        };
-        let cal_clock: u8;
-        let val: u8;
-
-        match module {
+    pub fn dc_cal_module_init(&self, module: DcCalModule, state: &mut DcCalState) -> Result<()> {
+        let cal_clock = match module {
             DcCalModule::LpfTuning => {
                 // CLK_EN[5] - LPF CAL Clock
-                cal_clock = 1 << 5;
                 state.base_addr = 0x00;
                 state.num_submodules = 1;
+                1 << 5
             }
             DcCalModule::TxLpf => {
                 // CLK_EN[1] - TX LPF DCCAL Clock
-                cal_clock = 1 << 1;
                 state.base_addr = 0x30;
                 state.num_submodules = 2;
+                1 << 1
             }
             DcCalModule::RxLpf => {
                 // CLK_EN[3] - RX LPF DCCAL Clock
-                cal_clock = 1 << 3;
                 state.base_addr = 0x50;
                 state.num_submodules = 2;
+                1 << 3
             }
             DcCalModule::RxVga2 => {
                 // CLK_EN[4] - RX VGA2 DCCAL Clock
-                cal_clock = 1 << 4;
                 state.base_addr = 0x60;
                 state.num_submodules = 5;
+                1 << 4
             }
             _ => return Err(Error::Invalid),
-        }
+        };
 
         // Enable the appropriate clock based on the module
         self.write(0x09, state.clk_en | cal_clock)?;
@@ -201,7 +205,7 @@ impl LMS6002D {
                 // Disconnect LNA from the RXMIX input by opening up the
                 // INLOAD_LNA_RXFE switch. This should help reduce external
                 // interference while calibrating
-                val = state.reg0x72 & !(1 << 7);
+                let val = state.reg0x72 & !(1 << 7);
                 self.write(0x72, val)?;
 
                 // Attempt to calibrate at max gain.
@@ -233,7 +237,7 @@ impl LMS6002D {
             }
         }
 
-        Ok(state)
+        Ok(())
     }
 
     /// The RXVGA2 items here are based upon Lime Microsystems' recommendations
@@ -446,48 +450,38 @@ impl LMS6002D {
         Ok(converged)
     }
 
-    pub fn lms_calibrate_dc(&self, module: DcCalModule) -> Result<()> {
-        let oldstate = self.dc_cal_backup(module)?;
-
-        let state = self.dc_cal_module_init(module);
-        // if (status != 0) {
-        //     goto error;
-        // }
-        if state.is_err() {
+    // TODO: Check in original file in lms.c if control flow is correct
+    pub fn calibrate_dc(&self, module: DcCalModule) -> Result<()> {
+        let mut state = self.dc_cal_backup(module)?;
+        if self.dc_cal_module_init(module, &mut state).is_err() {
             let _ = self.dc_cal_module_deinit(module);
-            let _ = self.dc_cal_restore(module, &oldstate);
-            return Err(Error::Invalid);
+            return self.dc_cal_restore(module, &state);
         }
-
-        let mut ok_state = state.unwrap();
 
         let mut converged = false;
         let mut limit_reached = false;
 
         while !converged && !limit_reached {
-            converged = self.dc_cal_module(module, &mut ok_state)?;
-
-            if !converged {
-                limit_reached = self.dc_cal_retry_adjustment(module, &mut ok_state)?;
+            if let Ok(c) = self.dc_cal_module(module, &mut state) {
+                converged = c;
+                if !converged {
+                    if let Ok(l) = self.dc_cal_retry_adjustment(module, &mut state) {
+                        limit_reached = l;
+                    } else {
+                        break;
+                    }
+                }
+            } else {
+                break;
             }
         }
 
         if !converged {
             log::warn!("DC Calibration (module={module:?}) failed to converge.");
-            //status = BLADERF_ERR_UNEXPECTED;
-            return Err(Error::Invalid);
         }
 
-        Ok(())
-
-        // error:
-        //     tmp_status = dc_cal_module_deinit(dev, module, &state);
-        //     status = (status != 0) ? status : tmp_status;
-        //
-        //     tmp_status = dc_cal_restore(dev, module, &state);
-        //     status = (status != 0) ? status : tmp_status;
-        //
-        //     return status;
+        let _ = self.dc_cal_module_deinit(module);
+        self.dc_cal_restore(module, &state)
     }
 
     pub fn set_cal_clock(&self, enable: bool, mask: u8) -> Result<()> {
@@ -518,11 +512,11 @@ impl LMS6002D {
         self.set_cal_clock(enable, 1 << 3)
     }
 
-    pub fn enable_txlpf_dccal_clock(&self, enable: bool) -> crate::Result<()> {
+    pub fn enable_txlpf_dccal_clock(&self, enable: bool) -> Result<()> {
         self.set_cal_clock(enable, 1 << 1)
     }
 
-    pub fn set_dc_cal_value(&self, base: u8, dc_addr: u8, value: u8) -> crate::Result<u8> {
+    pub fn set_dc_cal_value(&self, base: u8, dc_addr: u8, value: u8) -> Result<u8> {
         let mut regval: u8 = 0x08 | dc_addr;
 
         // Keep reset inactive, cal disable, load addr
@@ -541,7 +535,7 @@ impl LMS6002D {
         self.read(base)
     }
 
-    pub fn get_dc_cal_value(&self, base: u8, dc_addr: u8) -> crate::Result<u8> {
+    pub fn get_dc_cal_value(&self, base: u8, dc_addr: u8) -> Result<u8> {
         // Keep reset inactive, cal disable, load addr
         self.write(base + 3, 0x08 | dc_addr)?;
 
@@ -559,7 +553,7 @@ impl LMS6002D {
     ///                          not be applied.
     ///
     /// @return 0 on success, value from \ref RETCODES list on failure
-    pub fn set_dc_cals(&self, dc_cals: DcCals) -> crate::Result<()> {
+    pub fn set_dc_cals(&self, dc_cals: DcCals) -> Result<()> {
         let cal_tx_lpf: bool = (dc_cals.tx_lpf_i >= 0) || (dc_cals.tx_lpf_q >= 0);
 
         let cal_rx_lpf: bool = (dc_cals.rx_lpf_i >= 0) || (dc_cals.rx_lpf_q >= 0);
@@ -633,7 +627,7 @@ impl LMS6002D {
         Ok(())
     }
 
-    pub fn get_dc_cals(&self) -> crate::Result<DcCals> {
+    pub fn get_dc_cals(&self) -> Result<DcCals> {
         Ok(DcCals {
             lpf_tuning: self.get_dc_cal_value(0x00, 0)? as i16,
             tx_lpf_i: self.get_dc_cal_value(0x30, 0)? as i16,

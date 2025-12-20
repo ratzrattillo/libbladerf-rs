@@ -15,7 +15,7 @@
 - impl From<&LmsFreq> for u64 { maybe impl deref for lmsfreq
 - Drop deprecated code (Search for "deprecated" in codebase)
 - Restructure LMS6002D.rs into individual functionalities
-- 
+- Implement from/into traits for GainDb, to remove ugly GainDb{ db: } initializations
 
 NIOS:
 - Assert and trow error, if in retune packet the maximum width of nint and nfrac is reached
