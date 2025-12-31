@@ -1,9 +1,10 @@
-use crate::bladerf::Channel;
-use crate::bladerf1::{BladeRf1, SampleFormat};
-use crate::bladerf1::Loopback::BbTxvga1Rxvga2;
-use crate::hardware::lms6002d::dc_calibration::{DcCalModule, DcCals};
-use crate::nios::Nios;
 use crate::Result;
+use crate::bladerf::Channel;
+use crate::bladerf1::Loopback::BbTxvga1Rxvga2;
+use crate::bladerf1::{BladeRf1, Loopback};
+use crate::hardware::lms6002d::dc_calibration::{DcCalModule, DcCals};
+use crate::hardware::si5338::RationalRate;
+use crate::nios::Nios;
 
 /// Correction parameter selection
 ///
@@ -87,72 +88,59 @@ impl BladeRf1 {
     }
 
     /*******************************************************************************
- * LMS6002D DC offset calibration
- ******************************************************************************/
+     * LMS6002D DC offset calibration
+     ******************************************************************************/
 
     /// We've found that running samples through the LMS6 tends to be required
     /// for the TX LPF calibration to converge
-    pub fn tx_lpf_dummy_tx(&self) {
-        struct bladerf_metadata meta;
-        int16_t zero_sample[] = { 0, 0 };
-
-        memset(&meta, 0, sizeof(meta));
-
+    pub fn tx_lpf_dummy_tx(&self) -> Result<()> {
+        // let mut meta = BladerfMetadata::default();
         let loopback_backup = self.get_loopback()?;
+        let mut sample_rate_backup = self.get_rational_sample_rate(Channel::Tx)?;
 
-        let sample_rate_backup = self.get_rational_sample_rate(Channel::Tx)?;
+        let restore_backup = |sample_rate_backup: &mut RationalRate, loopback_backup: Loopback| {
+            let _ = self.enable_module(Channel::Tx, false);
+            let _ = self.set_rational_sample_rate(Channel::Tx, sample_rate_backup);
+            self.set_loopback(loopback_backup)
+        };
 
-
-        let status = self.set_loopback(BbTxvga1Rxvga2);
-        if (status != 0) {
-            goto out;
+        if let Err(_) = self.set_loopback(BbTxvga1Rxvga2) {
+            return restore_backup(&mut sample_rate_backup, loopback_backup);
         }
 
-        let status = self.set_sample_rate(Channel::Tx, 3000000);
-        if (status != 0) {
-            goto out;
+        if let Err(_) = self.set_sample_rate(Channel::Tx, 3000000) {
+            return restore_backup(&mut sample_rate_backup, loopback_backup);
         }
 
-        let status = self.sync_config(Channel::Tx, SampleFormat::Sc16Q11Meta, 64, 16384, 16, 1000);
-        if (status != 0) {
-            goto out;
+        // if let Err(_) =
+        //     self.sync_config(Channel::Tx, SampleFormat::Sc16Q11Meta, 64, 16384, 16, 1000)
+        // {
+        //     return restore_backup(&mut sample_rate_backup, loopback_backup);
+        // }
+
+        if let Err(_) = self.enable_module(Channel::Tx, true) {
+            return restore_backup(&mut sample_rate_backup, loopback_backup);
         }
 
-        let status = self.enable_module(Channel::Tx, true);
-        if (status != 0) {
-            goto out;
-        }
+        // meta.flags = MetadataFlags::TxBurstStart | MetadataFlags::TxBurstEnd | MetadataFlags::TxNow;
 
-        meta.flags = BLADERF_META_FLAG_TX_BURST_START |
-            BLADERF_META_FLAG_TX_BURST_END   |
-            BLADERF_META_FLAG_TX_NOW;
+        // let mut streamer = BladeRf1TxStreamer::new(self.clone(), 1, Some(1), None)?;
+        // if let Err(_) = streamer.write(&[&[Complex32::new(0.0, 0.0)]], None, false, 2000) {
+        //     return restore_backup(&sample_rate_backup, loopback_backup);
+        // }
 
-        let status = self.sync_tx(zero_sample, 1, &meta, 2000);
-        if (status != 0) {
-            goto out;
-        }
+        // TODO: Implement sync_tx
+        // int16_t zero_sample[] = { 0, 0 };
+        // if let Err(_) = self.sync_tx(zero_sample, 1, &meta, 2000) {
+        //     return restore_backup(&sample_rate_backup, loopback_backup);
+        // }
 
-        out:
-            status = self.enable_module(Channel::Tx, false);
-            if (status != 0 && retval == 0) {
-                retval = status;
-            }
-
-            status = self.set_rational_sample_rate(Channel::Tx, &sample_rate_backup);
-            if (status != 0 && retval == 0) {
-                retval = status;
-            }
-
-            status = self.set_loopback(loopback_backup);
-            if (status != 0 && retval == 0) {
-                retval = status;
-            }
-
-            return retval;
+        restore_backup(&mut sample_rate_backup, loopback_backup)
     }
+
     pub fn cal_tx_lpf(&self) -> Result<()> {
         self.tx_lpf_dummy_tx()?;
-        self.bladerf_calibrate_dc(DcCalModule::TxLpf)
+        self.calibrate_dc(DcCalModule::TxLpf)
     }
 
     pub fn calibrate_dc(&self, module: DcCalModule) -> Result<()> {
