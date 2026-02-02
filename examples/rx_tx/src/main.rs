@@ -10,7 +10,7 @@ use std::thread::sleep;
 use std::time::Duration;
 
 // RX
-fn _do_rx(bladerf: &BladeRf1) -> Result<()> {
+fn do_rx(bladerf: &BladeRf1) -> Result<()> {
     bladerf.perform_format_config(Direction::Rx, SampleFormat::Sc16Q11)?;
     bladerf.enable_module(Channel::Rx, true)?;
     bladerf.experimental_control_urb()?;
@@ -29,7 +29,7 @@ fn _do_rx(bladerf: &BladeRf1) -> Result<()> {
 }
 
 // TX
-fn do_tx(bladerf: &BladeRf1) -> Result<()> {
+fn _do_tx(bladerf: &BladeRf1) -> Result<()> {
     println!("called do_tx()");
     sleep(Duration::from_millis(5000));
     bladerf.perform_format_config(Direction::Tx, SampleFormat::Sc16Q11)?;
@@ -83,24 +83,37 @@ fn main() -> Result<()> {
         }
     }
 
-    bladerf.set_frequency(Channel::Tx, frequency)?;
-
-    let gain_range_tx = BladeRf1::get_gain_range(Channel::Tx);
-    log::debug!("Gain Range TX: {gain_range_tx:?}");
-
+    bladerf.set_frequency(Channel::Rx, frequency)?;
+    let gain_range_rx = BladeRf1::get_gain_range(Channel::Rx);
+    log::debug!("Gain Range RX: {gain_range_rx:?}");
     bladerf.set_gain(
-        Channel::Tx,
+        Channel::Rx,
         GainDb {
-            db: gain_range_tx.min().unwrap() as i8,
+            db: gain_range_rx.min().unwrap() as i8,
         },
     )?;
 
-    let gain_tx = bladerf.get_gain(Channel::Tx)?;
-    log::debug!("Gain TX: {}", gain_tx.db);
+    let gain_rx = bladerf.get_gain(Channel::Rx)?;
+    log::debug!("Gain RX: {}", gain_rx.db);
 
-    // do_rx(&bladerf)?;
+    do_rx(&bladerf)?;
 
-    do_tx(&bladerf)?;
+    // bladerf.set_frequency(Channel::Tx, frequency)?;
+    //
+    // let gain_range_tx = BladeRf1::get_gain_range(Channel::Tx);
+    // log::debug!("Gain Range TX: {gain_range_tx:?}");
+    //
+    // bladerf.set_gain(
+    //     Channel::Tx,
+    //     GainDb {
+    //         db: gain_range_tx.min().unwrap() as i8,
+    //     },
+    // )?;
+    //
+    // let gain_tx = bladerf.get_gain(Channel::Tx)?;
+    // log::debug!("Gain TX: {}", gain_tx.db);
+
+    // do_tx(&bladerf)?;
 
     Ok(())
 }

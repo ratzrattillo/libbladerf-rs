@@ -12,21 +12,21 @@ fn main() -> Result<()> {
     bladerf.initialize()?;
 
     let dc_cals = bladerf.get_dc_cals()?;
-    //log::debug!("Dc Calibration: {:?}", dc_cals);
     log::debug!("{dc_cals}");
 
     log::debug!("Calibrating: {:?}", DcCalModule::RxVga2);
     bladerf.calibrate_dc(DcCalModule::RxVga2)?;
-    //
-    // log::debug!("Calibrating: {:?}", DcCalModule::RxLpf);
-    // bladerf.calibrate_dc(DcCalModule::RxLpf)?;
-    //
+
+    log::debug!("Calibrating: {:?}", DcCalModule::RxLpf);
+    bladerf.calibrate_dc(DcCalModule::RxLpf)?;
+
+    // Currently unsupported
     // log::debug!("Calibrating: {:?}", DcCalModule::TxLpf);
     // // bladerf.calibrate_dc(DcCalModule::TxLpf)?;
     // bladerf.cal_tx_lpf()?;
-    //
-    // log::debug!("Calibrating: {:?}", DcCalModule::LpfTuning);
-    // bladerf.calibrate_dc(DcCalModule::LpfTuning)?;
+
+    log::debug!("Calibrating: {:?}", DcCalModule::LpfTuning);
+    bladerf.calibrate_dc(DcCalModule::LpfTuning)?;
 
     Ok(())
 }

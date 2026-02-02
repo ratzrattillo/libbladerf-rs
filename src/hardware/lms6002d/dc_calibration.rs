@@ -3,6 +3,7 @@ use crate::hardware::lms6002d::{
     BLADERF_LNA_GAIN_MAX, BLADERF_RXVGA1_GAIN_MAX, BLADERF_RXVGA1_GAIN_MIN,
     BLADERF_RXVGA2_GAIN_MAX, BLADERF_RXVGA2_GAIN_MIN, LMS6002D, LnaGainCode,
 };
+use crate::hardware::si5338::RationalRate;
 use crate::{Error, Result};
 use std::cmp::PartialEq;
 use std::fmt::{Display, Formatter};
@@ -38,18 +39,16 @@ pub struct DcCals {
 
 impl Display for DcCals {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "\n")?;
-        write!(f, "LPF tuning module: {}\n", self.lpf_tuning)?;
-        write!(f, "TX LPF I filter: {}\n", self.tx_lpf_i)?;
-        write!(f, "TX LPF Q filter: {}\n", self.tx_lpf_q)?;
-        write!(f, "RX LPF I filter: {}\n", self.rx_lpf_i)?;
-        write!(f, "RX LPF Q filter: {}\n", self.rx_lpf_q)?;
-        write!(f, "RX VGA2 DC reference module: {}\n", self.dc_ref)?;
-        write!(f, "RX VGA2 stage 1, I channel: {}\n", self.rxvga2a_i)?;
-        write!(f, "RX VGA2 stage 1, Q channel: {}\n", self.rxvga2a_q)?;
-        write!(f, "RX VGA2 stage 2, I channel: {}\n", self.rxvga2b_i)?;
-        write!(f, "RX VGA2 stage 2, Q channel: {}\n", self.rxvga2b_q)?;
-        write!(f, "\n")
+        writeln!(f, "LPF tuning module: {}", self.lpf_tuning)?;
+        writeln!(f, "TX LPF I filter: {}", self.tx_lpf_i)?;
+        writeln!(f, "TX LPF Q filter: {}", self.tx_lpf_q)?;
+        writeln!(f, "RX LPF I filter: {}", self.rx_lpf_i)?;
+        writeln!(f, "RX LPF Q filter: {}", self.rx_lpf_q)?;
+        writeln!(f, "RX VGA2 DC reference module: {}", self.dc_ref)?;
+        writeln!(f, "RX VGA2 stage 1, I channel: {}", self.rxvga2a_i)?;
+        writeln!(f, "RX VGA2 stage 1, Q channel: {}", self.rxvga2a_q)?;
+        writeln!(f, "RX VGA2 stage 2, I channel: {}", self.rxvga2b_i)?;
+        writeln!(f, "RX VGA2 stage 2, Q channel: {}", self.rxvga2b_q)
     }
 }
 
@@ -80,6 +79,21 @@ pub enum DcCalModule {
     TxLpf,
     RxLpf,
     RxVga2,
+}
+
+pub struct RxCal {
+    // struct bladerf *dev;
+    // samples: &i16,
+    num_samples: u32,
+    //corr_sweep: &i16,
+    pub(crate) ts: u64,
+    pub(crate) tx_freq: u64,
+}
+
+pub struct RxCalBackup {
+    pub(crate) rational_sample_rate: RationalRate,
+    pub(crate) bandwidth: u32,
+    pub(crate) tx_freq: u64,
 }
 
 impl LMS6002D {
@@ -642,3 +656,81 @@ impl LMS6002D {
         })
     }
 }
+
+/*******************************************************************************
+ * RX DC offset calibration
+ ******************************************************************************/
+
+// https://vscode.dev/github/Nuand/bladeRF/blob/master/host/common/src/dc_calibration.c#L312
+//
+// pub fn dc_calibration_rx(&self, struct dc_calibration_params *params, size_t params_count, bool print_status) -> Result<()> {
+//     int status = 0;
+//     int retval = 0;
+//     struct rx_cal state;
+//     struct rx_cal_backup backup;
+//     size_t i;
+//
+//     memset(&state, 0, sizeof(state));
+//
+//     status = get_rx_cal_backup(dev, &backup);
+//     if (status != 0) {
+//         return status;
+//     }
+//
+//     status = rx_cal_init(dev);
+//     if (status != 0) {
+//         goto out;
+//     }
+//
+//     status = rx_cal_init_state(dev, &backup, &state);
+//     if (status != 0) {
+//         goto out;
+//     }
+//
+//     for (i = 0; i < params_count && status == 0; i++) {
+//         status = perform_rx_cal(&state, &params[i]);
+//
+//         if (status == 0 && print_status) {
+//             #           ifdef DEBUG_DC_CALIBRATION
+//             const char sol = '\n';
+//             const char eol = '\n';
+//             #           else
+//             const char sol = '\r';
+//             const char eol = '\0';
+//             #           endif
+//             printf("%cCalibrated @ %10" PRIu64 " Hz: I=%4d (Error: %4.2f), "
+//                    "Q=%4d (Error: %4.2f)      ",
+//                    sol,
+//                    params[i].frequency,
+//                    params[i].corr_i, params[i].error_i,
+//                    params[i].corr_q, params[i].error_q);
+//             printf("DC-LUT: Max (I=%3d, Q=%3d) Mid (I=%3d, Q=%3d)"
+//                    " Min (I=%3d, Q=%3d)%c",
+//                    params[i].max_dc_i, params[i].max_dc_q, params[i].mid_dc_i, params[i].mid_dc_q,
+//                    params[i].min_dc_i, params[i].min_dc_q, eol);
+//             fflush(stdout);
+//         }
+//     }
+//
+//     if (print_status) {
+//         putchar('\n');
+//     }
+//
+//     out:
+//         free(state.samples);
+//     free(state.corr_sweep);
+//
+//     retval = status;
+//
+//     status = bladerf_enable_module(dev, BLADERF_MODULE_RX, false);
+//     if (status != 0 && retval == 0) {
+//         retval = status;
+//     }
+//
+//     status = set_rx_cal_backup(dev, &backup);
+//     if (status != 0 && retval == 0) {
+//         retval = status;
+//     }
+//
+//     return retval;
+// }

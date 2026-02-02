@@ -30,7 +30,7 @@ pub enum SampleFormat {
     ///   `--------------`--------------`
     ///  </pre>
     ///
-    ///  When using this format the minimum required buffer size, in bytes, is:
+    ///  When using this format, the minimum required buffer size, in bytes, is:
     ///
     ///  \f$
     ///   buffer\_size\_min = (2 \times num\_samples \times num\_channels \times
@@ -40,9 +40,9 @@ pub enum SampleFormat {
     ///  For example, to hold 2048 samples for one channel, a buffer must be at
     ///  least 8192 bytes large.
     ///
-    ///  When a multi-channel ::bladerf_channel_layout is selected, samples
-    ///  will be interleaved per channel. For example, with ::BLADERF_RX_X2
-    ///  or ::BLADERF_TX_X2 (x2 MIMO), the buffer is structured like:
+    ///  When a multichannel bladerf_channel_layout is selected, samples
+    ///  will be interleaved per channel. For example, with BLADERF_RX_X2
+    ///  or BLADERF_TX_X2 (x2 MIMO), the buffer is structured like:
     ///
     ///  <pre>
     ///   .-------------.--------------.--------------.------------------.
@@ -59,14 +59,14 @@ pub enum SampleFormat {
     ///  </pre>
     ///
     ///  Per the `buffer_size_min` formula above, 2048 samples for two channels
-    ///  will generate 4096 total samples, and require at least 16384 bytes.
+    ///  will generate 4096 total samples and require at least 16384 bytes.
     ///
-    ///  Implementors may use the interleaved buffers directly, or may use
+    ///  Implementors may use the interleaved buffers directly or may use
     ///  bladerf_deinterleave_stream_buffer() / bladerf_interleave_stream_buffer()
     ///  if contiguous blocks of samples are desired.
     Sc16Q11 = 0,
 
-    ///  This format is the same as the ::BLADERF_FORMAT_SC16_Q11 format, except
+    ///  This format is the same as the BLADERF_FORMAT_SC16_Q11 format, except
     ///  the first 4 samples in every <i>block*</i> of samples are replaced with
     ///  metadata organized as follows. All fields are little-endian byte order.
     ///
@@ -83,7 +83,7 @@ pub enum SampleFormat {
     ///   `-------------`------------`----------------------------------`
     ///  </pre>
     ///
-    ///  For IQ sample meta mode, the Meta version ID and Stream flags should
+    ///  For IQ sample meta-mode, the Meta version ID and Stream flags should
     ///  currently be set to values 0x00 and 0x00, respectively.
     ///
     ///  <i>*</i>The number of samples in a <i>block</i> is dependent upon
@@ -95,7 +95,7 @@ pub enum SampleFormat {
     ///  above details are entirely transparent; the caller need not be concerned
     ///  with these details. These functions take care of packing/unpacking the
     ///  metadata into/from the underlying stream and convey this information
-    ///  through the ::bladerf_metadata structure.
+    ///  through the bladerf_metadata structure.
     ///
     ///  However, when using the \ref FN_STREAMING_ASYNC interface, the user is
     ///  responsible for manually packing/unpacking the above metadata into/from
@@ -106,7 +106,7 @@ pub enum SampleFormat {
     Sc16Q11Meta = 1,
 
     ///  This format is for exchanging packets containing digital payloads with
-    ///  the FPGA. A packet is generall a digital payload, that the FPGA then
+    ///  the FPGA. A packet is generall a digital payload that the FPGA then
     ///  processes to either modulate, demodulate, filter, etc.
     ///
     ///  All fields are little-endian byte order.
@@ -124,7 +124,7 @@ pub enum SampleFormat {
     ///   `-------------`------------`----------------------------------`
     ///  </pre>
     ///
-    ///  A target core (for example a modem) must be specified when calling the
+    ///  A target core (for example, a modem) must be specified when calling the
     ///  bladerf_sync_rx() and bladerf_sync_tx() functions.
     ///
     ///  When in packet mode, lengths for all functions and data formats are
@@ -132,11 +132,11 @@ pub enum SampleFormat {
     ///  is considered to be 3 32-bit DWORDs long.
     ///
     ///  This packet format does not send or receive raw IQ samples. The digital
-    ///  payloads contain configurations, and digital payloads that are specific
+    ///  payloads contain configurations and digital payloads that are specific
     ///  to the digital core to which they are addressed. It is the FPGA core
     ///  that should generate, interpret, and process the digital payloads.
     ///
-    ///  With the exception of packet lenghts, no difference should exist between
+    ///  Except packet length, no difference should exist between
     ///  USB 2.0 Hi-Speed or USB 3.0 SuperSpeed for packets for this streaming
     ///  format.
     ///
@@ -172,9 +172,9 @@ pub enum SampleFormat {
     ///  For example, to hold 2048 samples for one channel, a buffer must be at
     ///  least 4096 bytes large.
     ///
-    ///  When a multi-channel ::bladerf_channel_layout is selected, samples
-    ///  will be interleaved per channel. For example, with ::BLADERF_RX_X2
-    ///  or ::BLADERF_TX_X2 (x2 MIMO), the buffer is structured like:
+    ///  When a multi-channel bladerf_channel_layout is selected, samples
+    ///  will be interleaved per channel. For example, with BLADERF_RX_X2
+    ///  or BLADERF_TX_X2 (x2 MIMO), the buffer is structured like:
     ///
     ///  <pre>
     ///   .-------------.--------------.--------------.------------------.
@@ -191,9 +191,9 @@ pub enum SampleFormat {
     ///  </pre>
     ///
     ///  Per the `buffer_size_min` formula above, 2048 samples for two channels
-    ///  will generate 4096 total samples, and require at least 8192 bytes.
+    ///  will generate 4096 total samples and require at least 8192 bytes.
     ///
-    ///  Implementors may use the interleaved buffers directly, or may use
+    ///  Implementors may use the interleaved buffers directly or may use
     ///  bladerf_deinterleave_stream_buffer() / bladerf_interleave_stream_buffer()
     ///  if contiguous blocks of samples are desired.
     Sc8Q7 = 3,
@@ -227,7 +227,7 @@ pub enum SampleFormat {
     ///  above details are entirely transparent; the caller need not be concerned
     ///  with these details. These functions take care of packing/unpacking the
     ///  metadata into/from the underlying stream and convey this information
-    ///  through the ::bladerf_metadata structure.
+    ///  through the bladerf_metadata structure.
     ///
     ///  However, when using the \ref FN_STREAMING_ASYNC interface, the user is
     ///  responsible for manually packing/unpacking the above metadata into/from
@@ -260,7 +260,7 @@ pub const BLADERF_GPIO_TIMESTAMP: u32 = 1 << 16;
 pub const BLADERF_GPIO_TIMESTAMP_DIV2: u32 = 1 << 17;
 
 impl BladeRf1RxStreamer {
-    /// Create new instance of an RX Streamer to receive I/Q samples.
+    /// Create a new instance of an RX Streamer to receive I/Q samples.
     pub fn new(
         dev: BladeRf1,
         buffer_size: usize,
@@ -297,7 +297,7 @@ impl BladeRf1RxStreamer {
         self.dev.experimental_control_urb()
     }
 
-    /// Disable receiving samples and shut down RX frontend.
+    /// Disable receiving samples and shut down the RX frontend.
     pub fn deactivate(&mut self) -> Result<()> {
         self.dev.perform_format_deconfig(Direction::Rx)?;
         self.dev.enable_module(Channel::Rx, false)
@@ -351,6 +351,18 @@ impl BladeRf1RxStreamer {
 
         Ok(received / (2 * size_of::<i16>()))
     }
+
+    // /// Custom function to receive samples with metadata.
+    // pub fn read_sync_extended(
+    //     &mut self,
+    //     buffers: &mut [&mut [ComplexWithMetadata]],
+    //     format: SampleFormat,
+    //     timeout_us: i64,
+    // ) -> Result<usize> {
+    //     // TODO: Receive Samples with metadata
+    //
+    //     self.read_sync(buffers, timeout_us)
+    // }
 }
 
 impl BladeRf1TxStreamer {

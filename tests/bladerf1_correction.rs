@@ -97,7 +97,7 @@ fn iq_correction() -> Result<()> {
             }
         };
 
-        for correction_type in &[Correction::DcoffI, Correction::DcoffQ] {
+        for correction_type in &[Correction::DcOffI, Correction::DcOffQ] {
             for desired in desired_arr {
                 // TODO: What channels are supported?
                 let current = BLADERF.get_correction(channel, correction_type)?;
