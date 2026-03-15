@@ -256,7 +256,7 @@ impl LMS6002D {
 
     /// The RXVGA2 items here are based upon Lime Microsystems' recommendations
     /// in their "Improving RxVGA2 DC Offset Calibration Stability" Document:
-    /// https://groups.google.com/group/limemicro-opensource/attach/19b675d099a22b89/Improving%20RxVGA2%20DC%20Offset%20Calibration%20Stability_v1.pdf?part=0.1&authuser=0
+    /// <https://groups.google.com/group/limemicro-opensource/attach/19b675d099a22b89/Improving%20RxVGA2%20DC%20Offset%20Calibration%20Stability_v1.pdf?part=0.1&authuser=0>
     ///
     ///  This function assumes that the submodules are preformed in a consecutive
     ///  and increasing order, as outlined in the above document.
@@ -563,7 +563,7 @@ impl LMS6002D {
     /// a previous run of the LMS autocalibrations.
     ///
     /// @param       dev        Device handle
-    /// @param[in]   dc_cals    Calibration values to load. Values set to <0 will
+    /// @param\[in\]   dc_cals    Calibration values to load. Values set to <0 will
     ///                          not be applied.
     ///
     /// @return 0 on success, value from \ref RETCODES list on failure

@@ -1,32 +1,35 @@
 #!/bin/bash
 
+# Bash debug mode
 set -xe
 
-SCRIPT=$(readlink -f "$0")
-SCRIPTPATH=$(dirname "$SCRIPT")
-
-cd "${SCRIPTPATH}" && find . -name "Cargo.lock" -delete
-
-CARGO_FMT="cargo fmt"
+find . -name "Cargo.lock" -delete
 
 ###########################################################
-# FMT
+# TEST
 ###########################################################
-cd "${SCRIPTPATH}" && ${CARGO_FMT} --check
+# standard tests
+cargo test --examples --all-features --all-targets -- # --no-capture
 
 ###########################################################
 # CLIPPY
 ###########################################################
-cd "${SCRIPTPATH}" && cargo clippy --all-targets -- -D warnings
-# examples
-cd "${SCRIPTPATH}"/examples && cargo clippy --all-targets -- -D warnings
+cargo clippy --all-targets -- -D warnings
 
 ###########################################################
-# Test
+# FMT
 ###########################################################
-# doctests
-cd "${SCRIPTPATH}" && cargo test --doc
-# standard tests
-cd "${SCRIPTPATH}" && cargo test --all-targets -- # --no-capture
-# examples
-cd "${SCRIPTPATH}"/examples && cargo test --all-targets -- # --no-capture
+cargo fmt --all --check
+
+###########################################################
+# DOC
+###########################################################
+cargo doc --all-features --no-deps --lib --bins --examples
+
+###########################################################
+# AUDIT
+###########################################################
+# Install cargo-audit
+# cargo install cargo-audit
+# Run security audit
+cargo audit
