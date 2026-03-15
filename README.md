@@ -1,3 +1,10 @@
+[![Crates.io](https://img.shields.io/crates/v/libbladerf-rs.svg)](https://crates.io/crates/libbladerf-rs)
+[![Documentation](https://docs.rs/libbladerf-rs/badge.svg)](https://docs.rs/libbladerf-rs)
+[![License](https://img.shields.io/crates/l/libbladerf-rs.svg)](https://github.com/ratzrattillo/libbladerf-rs#license)
+[![Build Status](https://github.com/ratzrattillo/libbladerf-rs/workflows/CI/badge.svg)](https://github.com/ratzrattillo/libbladerf-rs/actions)
+[![Downloads](https://img.shields.io/crates/d/libbladerf-rs.svg)](https://crates.io/crates/libbladerf-rs)
+
+
 A reimplementation of basic libbladeRF functions in Rust, based on [nusb] usb backend.
 Currently supporting BladeRF1 on Windows, macOS and Linux only.
 
