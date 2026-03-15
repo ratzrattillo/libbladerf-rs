@@ -409,9 +409,9 @@ impl SI5338 {
     /// Set the rational sample rate of the specified channel.
     ///
     ///  @param       dev     Device handle
-    ///  @param[in]   ch      Channel
-    ///  @param[in]   rate    Rational rate requested
-    ///  @param[out]  actual  Rational rate actually set
+    ///  @param\[in\]   ch      Channel
+    ///  @param\[in\]   rate    Rational rate requested
+    ///  @param\[out\]  actual  Rational rate actually set
     ///
     ///  @return 0 on success, BLADERF_ERR_* value on failure
     pub fn set_rational_sample_rate(
@@ -437,9 +437,9 @@ impl SI5338 {
     /// Set the integral sample rate of the specified channel.
     ///
     ///  @param       dev     Device handle
-    ///  @param[in]   ch      Channel
-    ///  @param[in]   rate    Integral rate requested
-    ///  @param[out]  actual  Integral rate actually set
+    ///  @param\[in\]   ch      Channel
+    ///  @param\[in\]   rate    Integral rate requested
+    ///  @param\[out\]  actual  Integral rate actually set
     ///  @return 0 on success, BLADERF_ERR_* value on failure
     pub fn set_sample_rate(&self, channel: Channel, rate_requested: u32) -> Result<u32> {
         let mut req = RationalRate {
@@ -465,8 +465,8 @@ impl SI5338 {
     /// Get the rational sample rate of the specified channel.
     ///
     ///  @param       dev     Device handle
-    ///  @param[in]   ch      Channel
-    ///  @param[out]  rate    Rational rate
+    ///  @param\[in\]   ch      Channel
+    ///  @param\[out\]  rate    Rational rate
     ///
     ///  @return 0 on success, BLADERF_ERR_* value on failure
     pub fn get_rational_sample_rate(&self, channel: Channel) -> Result<RationalRate> {
@@ -490,8 +490,8 @@ impl SI5338 {
     /// Get the integral sample rate of the specified channel.
     ///
     ///  @param       dev     Device handle
-    ///  @param[in]   ch      Channel
-    ///  @param[out]  rate    Integral rate
+    ///  @param\[in\]   ch      Channel
+    ///  @param\[out\]  rate    Integral rate
     ///
     ///  @return 0 on success, BLADERF_ERR_* value on failure
     pub fn get_sample_rate(&self, channel: Channel) -> Result<u32> {
@@ -508,8 +508,8 @@ impl SI5338 {
     /// Set the rational frequency of the external SMB port.
     ///
     ///  @param       dev     Device handle
-    ///  @param[in]   rate    Rational rate requested
-    ///  @param[out]  actual  Rational rate actually set
+    ///  @param\[in\]   rate    Rational rate requested
+    ///  @param\[out\]  actual  Rational rate actually set
     ///  @return 0 on success, BLADERF_ERR_* value on failure
     pub fn set_rational_smb_freq(&self, rate: RationalRate) -> Result<RationalRate> {
         let mut rate_reduced = rate;
@@ -530,8 +530,8 @@ impl SI5338 {
 
     /// Set the integral sample rate of the external SMB port.
     ///  @param       dev     Device handle
-    ///  @param[in]   rate    Integral rate requested
-    ///  @param[out]  actual  Integral rate actually set
+    ///  @param\[in\]   rate    Integral rate requested
+    ///  @param\[out\]  actual  Integral rate actually set
     ///
     ///  @return 0 on success, BLADERF_ERR_* value on failure
     pub fn set_smb_freq(&self, rate: u32) -> Result<u32> {
@@ -557,7 +557,7 @@ impl SI5338 {
     /// Get the rational sample rate of the external SMB port.
     ///
     ///  @param       dev     Device handle
-    ///  @param[out]  rate    Rational rate
+    ///  @param\[out\]  rate    Rational rate
     ///  @return 0 on success, BLADERF_ERR_* value on failure
     pub fn get_rational_smb_freq(&self) -> Result<RationalRate> {
         let mut ms = Multisynth::default();
@@ -576,7 +576,7 @@ impl SI5338 {
 
     /// Get the integral sample rate of the external SMB port.
     ///  @param       dev     Device handle
-    ///  @param[out]  rate    Integral rate
+    ///  @param\[out\]  rate    Integral rate
     ///  @return 0 on success, BLADERF_ERR_* value on failure
     pub fn get_smb_freq(&self) -> Result<u32> {
         let actual = self.get_rational_smb_freq()?;

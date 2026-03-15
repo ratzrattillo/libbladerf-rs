@@ -409,7 +409,6 @@ impl BladeRf1TxStreamer {
         self.dev.enable_module(Channel::Tx, false)
     }
 
-    /// TODO: https://github.com/FutureSDR/seify/blob/main/src/streamer.rs#L127
     pub fn write(
         &mut self,
         buffers: &[&[Complex32]],
