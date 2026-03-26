@@ -1,8 +1,7 @@
 use crate::bladerf::Channel;
 use crate::bladerf1::BladeRf1;
-use crate::nios::Nios;
+use crate::nios2::{Nios, NiosInterface};
 use crate::{Error, Result};
-use nusb::Interface;
 use std::sync::{Arc, Mutex};
 
 pub(crate) const BLADERF_XB_CONFIG_TX_PATH_MIX: u32 = 0x04;
@@ -115,7 +114,7 @@ pub enum Xb200Path {
 impl BladeRf1 {
     /// Trying to detect if XB200 is enabled by reading the BLADERF_XB_RF_ON gpio Flag,
     /// which is set in xb200_enable(). Might be not the best, or correct way.
-    pub fn xb200_is_enabled(interface: &Arc<Mutex<Interface>>) -> Result<bool> {
+    pub fn xb200_is_enabled(interface: &Arc<Mutex<NiosInterface>>) -> Result<bool> {
         // The original libbladerf from Nuand saves the state of attached boards in a
         // separate structure. We try to determine the attached XB200 board ONLY by reading
         // the NIOS_PKT_32X32_TARGET_EXP register. It seems like this register is
@@ -167,7 +166,7 @@ impl BladeRf1 {
         // Out: 43010100002f00008000000000000000 in the original library!
         self.config_gpio_write(val)?;
 
-        let interface = self.interface.lock().unwrap();
+        let mut interface = self.interface.lock().unwrap();
 
         interface.nios_expansion_gpio_dir_write(0xffffffff, 0x3C00383E)?;
         interface.nios_expansion_gpio_write(0xffffffff, 0x800)?;
@@ -208,7 +207,7 @@ impl BladeRf1 {
     /// The XB200 expansion board has to be enabled after attaching in order to be used.
     /// Note: Verified
     pub fn xb200_enable(&self, enable: bool) -> Result<()> {
-        let interface = self.interface.lock().unwrap();
+        let mut interface = self.interface.lock().unwrap();
 
         let orig = interface.nios_expansion_gpio_read()?;
         log::trace!("[xb200_enable] expansion_gpio_read: {orig}");
@@ -271,7 +270,7 @@ impl BladeRf1 {
             (BLADERF_XB_TX_MASK, BLADERF_XB_TX_SHIFT)
         };
 
-        let interface = self.interface.lock().unwrap();
+        let mut interface = self.interface.lock().unwrap();
         let orig = interface.nios_expansion_gpio_read()?;
         log::trace!("[set_filterbank_mux] expansion_gpio_read: {orig}");
 

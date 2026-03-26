@@ -134,8 +134,6 @@ fn main() -> Result<()> {
 
     bladerf.enable_module(BLADERF_MODULE_RX, true)?;
 
-    bladerf.experimental_control_urb()?;
-
     // bladerf.run_stream()?;
 
     bladerf.perform_format_deconfig(Direction::Rx)?;

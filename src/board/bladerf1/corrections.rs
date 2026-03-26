@@ -5,7 +5,7 @@ use crate::bladerf1::{BladeRf1, BladeRf1TxStreamer, Loopback};
 use crate::hardware::lms6002d::BLADERF_FREQUENCY_MIN;
 use crate::hardware::lms6002d::dc_calibration::{DcCalModule, DcCals, RxCal, RxCalBackup};
 use crate::hardware::si5338::RationalRate;
-use crate::nios::Nios;
+use crate::nios2::Nios;
 use num_complex::Complex32;
 
 /// Convert ms to samples

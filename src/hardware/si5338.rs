@@ -1,9 +1,8 @@
 #![allow(dead_code)]
 
 use crate::bladerf::Channel;
-use crate::nios::{NIOS_PKT_8X8_TARGET_SI5338, Nios};
+use crate::nios2::{Nios, NiosInterface, NiosPkt8x8Target};
 use crate::{Error, Result};
-use nusb::Interface;
 use std::sync::{Arc, Mutex};
 
 #[derive(Default, Clone, Copy)]
@@ -79,14 +78,14 @@ pub struct Multisynth {
 /// or 3.3 V core supply.
 #[derive(Clone)]
 pub struct SI5338 {
-    interface: Arc<Mutex<Interface>>,
+    interface: Arc<Mutex<NiosInterface>>,
 }
 
 impl SI5338 {
     /// Create a new instance of an SI5338 Clock Generator
     ///
     /// Expects a handle to an NUSB interface to the BladeRF1.
-    pub fn new(interface: Arc<Mutex<Interface>>) -> Self {
+    pub fn new(interface: Arc<Mutex<NiosInterface>>) -> Self {
         Self { interface }
     }
 
@@ -96,7 +95,7 @@ impl SI5338 {
         self.interface
             .lock()
             .unwrap()
-            .nios_read::<u8, u8>(NIOS_PKT_8X8_TARGET_SI5338, addr)
+            .nios_read::<u8, u8>(NiosPkt8x8Target::Si5338, addr)
     }
 
     /// Write the SI5338 configuration by specifying the address
@@ -105,7 +104,7 @@ impl SI5338 {
         self.interface
             .lock()
             .unwrap()
-            .nios_write::<u8, u8>(NIOS_PKT_8X8_TARGET_SI5338, addr, data)
+            .nios_write::<u8, u8>(NiosPkt8x8Target::Si5338, addr, data)
     }
 
     /// Update the base address of the selected multisynth

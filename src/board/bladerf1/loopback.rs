@@ -1,7 +1,7 @@
 use crate::Result;
 use crate::bladerf1::BladeRf1;
 use crate::hardware::lms6002d::Loopback;
-use crate::usb::UsbCommands;
+use crate::transport::usb::BladeRf1Commands;
 
 impl BladeRf1 {
     /// Set the loopback config to one of the supported `BladeRf1::hardware::lms6002d::Loopback` modes

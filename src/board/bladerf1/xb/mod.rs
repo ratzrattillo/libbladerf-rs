@@ -3,7 +3,7 @@ pub(crate) mod xb200;
 pub(crate) mod xb300;
 
 use crate::bladerf1::BladeRf1;
-use crate::nios::Nios;
+use crate::nios2::Nios;
 use crate::{Error, Result};
 
 /// Expansion boards

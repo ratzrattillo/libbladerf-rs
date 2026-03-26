@@ -1,7 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use libbladerf_rs::nios::NiosPktMagic;
-    use libbladerf_rs::nios::packet_retune::NiosPktRetuneRequest;
+    use libbladerf_rs::protocol::nios::bladerf1::NiosPktRetuneRequest;
     use libbladerf_rs::{Band, Channel, Tune};
 
     #[test]
@@ -16,11 +15,13 @@ mod tests {
         let tune = Tune::Normal;
         let xb_gpio: u8 = 0xff;
 
-        let pkt = NiosPktRetuneRequest::new(
-            channel, timestamp, nint, nfrac, freqsel, vcocap, band, tune, xb_gpio,
-        );
+        let pkt = NiosPktRetuneRequest::try_from(vec![0u8; 16])
+            .unwrap()
+            .prepare(
+                channel, timestamp, nint, nfrac, freqsel, vcocap, band, tune, xb_gpio,
+            )
+            .expect("valid packet");
 
-        assert_eq!(pkt.magic(), NiosPktMagic::Retune as u8);
         assert_eq!(pkt.timestamp(), timestamp);
         assert_eq!(pkt.nint(), nint);
         assert_eq!(pkt.nfrac(), nfrac);

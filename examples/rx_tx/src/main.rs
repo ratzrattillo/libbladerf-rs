@@ -13,7 +13,6 @@ use std::time::Duration;
 fn do_rx(bladerf: &BladeRf1) -> Result<()> {
     bladerf.perform_format_config(Direction::Rx, SampleFormat::Sc16Q11)?;
     bladerf.enable_module(Channel::Rx, true)?;
-    bladerf.experimental_control_urb()?;
     let mut rx_streamer = BladeRf1RxStreamer::new(bladerf.clone(), 65536, Some(8), None)?;
 
     let mut buffer = [Complex32::new(0.0, 0.0); 1024];

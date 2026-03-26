@@ -15,7 +15,7 @@ pub static BLADERF: LazyLock<BladeRf1> = LazyLock::new(|| {
 pub fn logging_init(module: &str) {
     let _ = env_logger::builder()
         .is_test(true)
-        .filter_level(log::LevelFilter::Error)
+        .filter_level(log::LevelFilter::Trace)
         .filter_module(module, log::LevelFilter::Trace)
         .try_init();
 }

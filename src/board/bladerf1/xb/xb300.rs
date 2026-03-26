@@ -1,7 +1,6 @@
 use crate::bladerf1::BladeRf1;
-use crate::nios::Nios;
+use crate::nios2::{Nios, NiosInterface};
 use crate::{Error, Result};
-use nusb::Interface;
 use std::sync::{Arc, Mutex};
 
 pub(crate) const BLADERF_XB_AUX_EN: u32 = 0x000002;
@@ -46,7 +45,7 @@ pub enum BladeRfXb300Amplifier {
 impl BladeRf1 {
     /// Trying to detect if XB300 is enabled by reading the LNA enablement status Flag,
     /// which is set in xb300_enable(). Might be not the best, or correct way.
-    pub fn xb300_is_enabled(interface: &Arc<Mutex<Interface>>) -> Result<bool> {
+    pub fn xb300_is_enabled(interface: &Arc<Mutex<NiosInterface>>) -> Result<bool> {
         // The original libbladerf from Nuand saves the state of attached boards in a
         // separate structure. We try to determine the attached XB300 board ONLY by reading
         // the NIOS_PKT_32X32_TARGET_EXP_DIR register. It seems like this register is
@@ -77,7 +76,7 @@ impl BladeRf1 {
             | BLADERF_XB_SCLK
             | BLADERF_XB_CS;
 
-        let interface = self.interface.lock().unwrap();
+        let mut interface = self.interface.lock().unwrap();
         interface.nios_expansion_gpio_dir_write(0xffffffff, val)?;
 
         val = BLADERF_XB_CS | BLADERF_XB_LNA_EN;
@@ -231,7 +230,7 @@ impl BladeRf1 {
     pub fn xb300_get_output_power(&self) -> Result<f32> {
         let mut ret = 0;
 
-        let interface = self.interface.lock().unwrap();
+        let mut interface = self.interface.lock().unwrap();
 
         let mut val = interface.nios_expansion_gpio_read()?;
 

@@ -4,9 +4,8 @@ pub mod dc_calibration;
 
 use crate::bladerf::{Channel, khz, mhz};
 use crate::bladerf1::BladeRf1;
-use crate::nios::{NIOS_PKT_8X8_TARGET_LMS6, Nios};
+use crate::nios2::{Nios, NiosInterface, NiosPkt8x8Target};
 use crate::{Error, Result};
-use nusb::Interface;
 use std::sync::{Arc, Mutex};
 use std::thread::sleep;
 use std::time::Duration;
@@ -1112,7 +1111,7 @@ pub struct LmsXcvrConfig {
 #[derive(Clone)]
 pub struct LMS6002D {
     /// The communication with the LMS6002D is done over an NUSB interface
-    interface: Arc<Mutex<Interface>>,
+    interface: Arc<Mutex<NiosInterface>>,
 }
 
 impl LMS6002D {
@@ -1133,7 +1132,7 @@ impl LMS6002D {
     // let lms = LMS6002D::new(interface);
     // # Ok::<(), Error>(())
     // ```
-    pub fn new(interface: Arc<Mutex<Interface>>) -> Self {
+    pub fn new(interface: Arc<Mutex<NiosInterface>>) -> Self {
         Self { interface }
     }
 
@@ -1143,7 +1142,7 @@ impl LMS6002D {
         self.interface
             .lock()
             .unwrap()
-            .nios_read::<u8, u8>(NIOS_PKT_8X8_TARGET_LMS6, addr)
+            .nios_read::<u8, u8>(NiosPkt8x8Target::Lms6, addr)
     }
 
     /// Write the LMS6002D configuration by specifying the address
@@ -1152,7 +1151,7 @@ impl LMS6002D {
         self.interface
             .lock()
             .unwrap()
-            .nios_write::<u8, u8>(NIOS_PKT_8X8_TARGET_LMS6, addr, data)
+            .nios_write::<u8, u8>(NiosPkt8x8Target::Lms6, addr, data)
     }
 
     /// Set a specific Bit in the LMS6002D configuration specified

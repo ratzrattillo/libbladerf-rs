@@ -22,9 +22,10 @@ use crate::bladerf1::frequency::TuningMode;
 use crate::hardware::dac161s055::DAC161S055;
 use crate::hardware::lms6002d::LMS6002D;
 use crate::hardware::si5338::SI5338;
+use crate::nios2::NiosInterface;
+use nusb::Device;
 use nusb::io::{EndpointRead, EndpointWrite};
 use nusb::transfer::Bulk;
-use nusb::{Device, Interface};
 use std::sync::{Arc, Mutex};
 
 /// BladeRF1 USB vendor ID.
@@ -123,7 +124,7 @@ pub struct BladeRf1TxStreamer {
 #[derive(Clone)]
 pub struct BladeRf1 {
     device: Device,
-    pub interface: Arc<Mutex<Interface>>,
+    pub interface: Arc<Mutex<NiosInterface>>,
     board_data: BoardData,
     lms: LMS6002D,
     si5338: SI5338,

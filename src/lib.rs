@@ -89,9 +89,25 @@
 mod bladerf;
 mod board;
 pub mod hardware;
-pub mod nios;
+pub mod nios_client;
+pub mod protocol;
 pub mod range;
-mod usb;
+pub mod transport;
+
+// Re-export nios2 types for backward compatibility
+pub mod nios2 {
+    //! NIOS II communication types.
+    //!
+    //! This module re-exports types from `nios2_client` and `protocol::nios`.
+
+    pub use crate::nios_client::{Nios, NiosClient, NiosInterface};
+    pub use crate::protocol::nios::packet_generic::{NiosNum, NiosPacket};
+    pub use crate::protocol::nios::{
+        NiosPkt, NiosPkt8x8Target, NiosPkt8x16AddrIqCorr, NiosPkt8x16Target, NiosPkt8x32Target,
+        NiosPkt32x32Target, NiosPktFlags, NiosPktRetuneRequest, NiosPktRetuneResponse,
+        NiosPktStatus, NiosProtocol,
+    };
+}
 
 pub use bladerf::{Channel, Direction};
 pub use board::bladerf1;
@@ -118,49 +134,42 @@ impl Display for SemanticVersion {
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
-    /// I/O error occurred.
-    #[error("io")]
+    #[error("I/O error")]
     Io(#[from] std::io::Error),
-    #[error("nusb")]
+    #[error("USB error")]
     Nusb(#[from] nusb::Error),
-    /// USB transfer error.
-    #[error("transfer")]
+    #[error("USB transfer error")]
     Transfer(#[from] nusb::transfer::TransferError),
-    // /// Transfer truncated.
-    // #[error("transfer truncated")]
-    // TransferTruncated {
-    //     /// Actual amount of bytes transferred.
-    //     actual: usize,
-    //     /// Expected number of bytes transferred.
-    //     expected: usize,
-    // },
-    // /// An API call is not supported by your hardware.
-    // ///
-    // /// Try updating the firmware on your device.
-    // #[error("no api")]
-    // NoApi {
-    //     /// Current device version.
-    //     device: String,
-    //     /// Minimum version required.
-    //     min: String,
-    // },
-    /// Invalid argument provided.
     #[error("{0}")]
     Argument(&'static str),
-    /// BladeRF is in an invalid mode.
-    // #[error("BladeRF in invalid mode. Required: {required:?}, actual: {actual:?}")]
-    // WrongMode {
-    //     /// The mode required for this operation.
-    //     required: Mode,
-    //     /// The actual mode of the device which differs from `required`.
-    //     actual: Mode,
-    // },
-    /// Invalid value provided
-    #[error("invalid")]
+    #[error("invalid state or value")]
     Invalid,
-    /// Device not found
-    #[error("not found")]
+    #[error("device not found")]
     NotFound,
+    #[error("operation timed out")]
+    Timeout,
+    #[error("NIOS packet error: {0}")]
+    NiosPacket(#[from] NiosPacketError),
+    #[error("endpoint busy")]
+    EndpointBusy,
+    #[error("FPGA tuning failed")]
+    TuningFailed,
+    #[error("FPGA retune queue is full")]
+    RetuneQueueFull,
+    #[error("NIOS write failed")]
+    NiosWriteFailed,
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum NiosPacketError {
+    #[error("nfrac value {0} exceeds maximum 0x7FFFFF")]
+    NfracOverflow(u32),
+    #[error("freqsel value {0} exceeds maximum {1}")]
+    FreqselOverflow(u8, u8),
+    #[error("vcocap value {0} exceeds maximum {1}")]
+    VcocapOverflow(u8, u8),
+    #[error("invalid packet size: expected 16 bytes, got {0}")]
+    InvalidSize(usize),
 }
 /// Result type for operations that may return an `Error`.
 pub type Result<T> = std::result::Result<T, Error>;

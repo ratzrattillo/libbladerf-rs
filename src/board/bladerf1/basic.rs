@@ -7,8 +7,10 @@ use crate::board::bladerf1::BoardData;
 use crate::hardware::dac161s055::DAC161S055;
 use crate::hardware::lms6002d::{Band, GainMode, LMS6002D};
 use crate::hardware::si5338::SI5338;
-use crate::nios::Nios;
-use crate::usb::{DeviceCommands, UsbCommands};
+use crate::nios2::{Nios, NiosInterface};
+use crate::transport::usb::{
+    BladeRf1Commands, BladeRf1DeviceCommands, DeviceCommands, InterfaceCommands,
+};
 use crate::{Error, Result};
 use nusb::MaybeFuture;
 use nusb::{Device, DeviceInfo, Speed};
@@ -30,7 +32,9 @@ impl BladeRf1 {
         log::debug!("Speed: {:?}", device.speed());
         log::debug!("Languages: {:x?}", device.get_supported_languages()?);
 
-        let interface = Arc::new(Mutex::new(device.detach_and_claim_interface(0).wait()?));
+        let interface = Arc::new(Mutex::new(NiosInterface::from(
+            device.detach_and_claim_interface(0).wait()?,
+        )));
 
         // log::info!("iface.is_firmware_ready(): {}", interface.lock().unwrap().usb_is_firmware_ready()?);
         // // We only support the latest FPGA version, which is 0.16.0 at the moment.
@@ -176,16 +180,6 @@ impl BladeRf1 {
         Ok(format!("{version}"))
     }
 
-    // /// Return the devices' product name (BladeRf1)
-    // pub fn product(&self) -> Result<String> {
-    //     self.device.product()
-    // }
-    //
-    // /// Get a list of supported languages of the BladeRF1. Returns a Vector with Language codes.
-    // pub fn get_supported_languages(&self) -> Result<Vec<u16>> {
-    //     self.device.get_supported_languages()
-    // }
-
     /// Read from the configuration GPIO register.
     pub(crate) fn config_gpio_read(&self) -> Result<u32> {
         self.interface.lock().unwrap().nios_config_read()
@@ -222,11 +216,7 @@ impl BladeRf1 {
         let alt_setting = self.interface.lock().unwrap().get_alt_setting();
         log::trace!("[*] Init - Default Alt Setting {alt_setting}");
 
-        self.interface
-            .lock()
-            .unwrap()
-            .set_alt_setting(0x01)
-            .wait()?;
+        self.interface.lock().unwrap().usb_change_setting(0x01)?;
         log::trace!("[*] Init - Set Alt Setting to 0x01");
 
         // Out: 43010000000000000000000000000000

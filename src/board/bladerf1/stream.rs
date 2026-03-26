@@ -2,8 +2,6 @@ use crate::bladerf::{Channel, Direction};
 use crate::board::bladerf1::{BladeRf1, BladeRf1RxStreamer, BladeRf1TxStreamer};
 use crate::{Error, Result};
 use num_complex::Complex32;
-use nusb::MaybeFuture;
-use nusb::transfer::{Bulk, ControlIn, ControlType, In, Out, Recipient};
 use std::io::{BufRead, Write};
 use std::thread::sleep;
 use std::time::Duration;
@@ -267,7 +265,12 @@ impl BladeRf1RxStreamer {
         num_transfers: Option<usize>,
         timeout: Option<Duration>,
     ) -> Result<Self> {
-        let endpoint = dev.interface.lock().unwrap().endpoint::<Bulk, In>(0x81)?;
+        let endpoint = dev
+            .interface
+            .lock()
+            .unwrap()
+            .transport()
+            .acquire_streaming_rx_endpoint()?;
         log::trace!(
             "using endpoint 0x81 with buffer_size: {buffer_size}, num_transfers: {num_transfers:?}, timeout: {timeout:?}"
         );
@@ -293,8 +296,7 @@ impl BladeRf1RxStreamer {
     pub fn activate(&mut self) -> Result<()> {
         self.dev
             .perform_format_config(Direction::Rx, SampleFormat::Sc16Q11)?;
-        self.dev.enable_module(Channel::Rx, true)?;
-        self.dev.experimental_control_urb()
+        self.dev.enable_module(Channel::Rx, true)
     }
 
     /// Disable receiving samples and shut down the RX frontend.
@@ -373,7 +375,12 @@ impl BladeRf1TxStreamer {
         num_transfers: Option<usize>,
         timeout: Option<Duration>,
     ) -> Result<Self> {
-        let endpoint = dev.interface.lock().unwrap().endpoint::<Bulk, Out>(0x01)?;
+        let endpoint = dev
+            .interface
+            .lock()
+            .unwrap()
+            .transport()
+            .acquire_streaming_tx_endpoint()?;
         log::trace!(
             "using endpoint 0x01 with buffer_size: {buffer_size}, num_transfers: {num_transfers:?}, timeout: {timeout:?}"
         );
@@ -400,7 +407,6 @@ impl BladeRf1TxStreamer {
         // self.dev.perform_format_config(BladeRfDirection::Rx, Format::Sc16Q11)
         //    ?;
         self.dev.enable_module(Channel::Tx, true)
-        // dev.experimental_control_urb()
     }
 
     /// Shut down TX frontend
@@ -545,48 +551,6 @@ impl BladeRf1 {
 
         Ok(())
     }
-
-    /// Investigate: This is required to set the BladeRF1 into a mode where receiving and transmitting I/Q samples is possible.
-    pub fn experimental_control_urb(&self) -> Result<()> {
-        // TODO: Dont know what this is doing
-        let pkt = ControlIn {
-            control_type: ControlType::Vendor,
-            recipient: Recipient::Device,
-            request: 0x4,
-            value: 0x1,
-            index: 0,
-            length: 0x4,
-        };
-        let vec = self
-            .interface
-            .lock()
-            .unwrap()
-            .control_in(pkt, Duration::from_secs(5))
-            .wait()?;
-        log::debug!("Control Response Data: {vec:?}");
-        Ok(())
-    }
-
-    // /// Investigate:
-    // pub fn experimental_control_urb2(&self) -> Result<()> {
-    //     // TODO: Dont know what this is doing
-    //     let pkt = ControlIn {
-    //         control_type: ControlType::Vendor,
-    //         recipient: Recipient::Device,
-    //         request: 0x1,
-    //         value: 0x1,
-    //         index: 0,
-    //         length: 0x4,
-    //     };
-    //     let vec = self
-    //         .interface
-    //         .lock()
-    //         .unwrap()
-    //         .control_in(pkt, Duration::from_secs(5))
-    //         .wait()?;
-    //     log::debug!("Control Response Data: {vec:?}");
-    //     Ok(())
-    // }
 
     // pub fn write_all_sync(
     //     &mut self,

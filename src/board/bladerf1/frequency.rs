@@ -5,8 +5,8 @@ use crate::hardware::lms6002d::{
     BLADERF_FREQUENCY_MAX, BLADERF_FREQUENCY_MIN, BLADERF1_BAND_HIGH, Band,
     LMS_FREQ_FLAGS_FORCE_VCOCAP, LMS_FREQ_FLAGS_LOW_BAND, LmsFreq, Tune,
 };
-use crate::nios::Nios;
-use crate::nios::packet_retune::NiosPktRetuneRequest;
+use crate::nios2::Nios;
+use crate::protocol::nios::bladerf1::NiosPktRetuneRequest;
 use crate::range::{Range, RangeItem};
 use crate::{Error, Result};
 
@@ -175,8 +175,8 @@ impl BladeRf1 {
         self.interface.lock().unwrap().nios_retune(
             channel,
             NiosPktRetuneRequest::CLEAR_QUEUE,
-            0,
-            0,
+            0u16,
+            0u32,
             0,
             0,
             Band::Low,

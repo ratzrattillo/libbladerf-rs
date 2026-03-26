@@ -5,14 +5,13 @@ use crate::board::bladerf1::xb::{
     BLADERF_XB100_LED_D5, BLADERF_XB100_LED_D6, BLADERF_XB100_LED_D7, BLADERF_XB100_LED_D8,
     BLADERF_XB100_TLED_BLUE, BLADERF_XB100_TLED_GREEN, BLADERF_XB100_TLED_RED,
 };
-use crate::nios::Nios;
-use nusb::Interface;
+use crate::nios2::{Nios, NiosInterface};
 use std::sync::{Arc, Mutex};
 
 impl BladeRf1 {
     /// Trying to detect if XB100 is enabled by reading the BLADERF_XB100* gpio Flags,
     /// which is set in xb100_enable(). Might be not the best, or correct way.
-    pub fn xb100_is_enabled(interface: &Arc<Mutex<Interface>>) -> Result<bool> {
+    pub fn xb100_is_enabled(interface: &Arc<Mutex<NiosInterface>>) -> Result<bool> {
         let mask: u32 = (BLADERF_XB100_LED_D1
             | BLADERF_XB100_LED_D2
             | BLADERF_XB100_LED_D3
@@ -65,7 +64,7 @@ impl BladeRf1 {
             | BLADERF_XB100_TLED_BLUE) as u32;
 
         if enable {
-            let interface = self.interface.lock().unwrap();
+            let mut interface = self.interface.lock().unwrap();
 
             interface.nios_expansion_gpio_dir_write(mask, mask)?;
             interface.nios_expansion_gpio_write(mask, mask)?;
