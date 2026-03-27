@@ -5,7 +5,7 @@ use crate::board::bladerf1::xb::{
     BLADERF_XB100_LED_D5, BLADERF_XB100_LED_D6, BLADERF_XB100_LED_D7, BLADERF_XB100_LED_D8,
     BLADERF_XB100_TLED_BLUE, BLADERF_XB100_TLED_GREEN, BLADERF_XB100_TLED_RED,
 };
-use crate::nios2::{Nios, NiosInterface};
+use crate::nios_client::{Nios, NiosInterface};
 use std::sync::{Arc, Mutex};
 
 impl BladeRf1 {

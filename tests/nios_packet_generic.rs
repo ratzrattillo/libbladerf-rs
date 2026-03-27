@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use libbladerf_rs::nios2::{NiosPacket, NiosPkt, NiosPktFlags};
+    use libbladerf_rs::protocol::nios::{NiosPacket, NiosPkt, NiosPktFlags};
 
     fn make_buf() -> Vec<u8> {
         vec![0u8; 16]

@@ -1,5 +1,6 @@
 use crate::Result;
-use crate::nios2::{Nios, NiosInterface, NiosPkt8x16Target};
+use crate::nios_client::{Nios, NiosInterface};
+use crate::protocol::nios::NiosPkt8x16Target;
 use std::sync::{Arc, Mutex};
 
 #[derive(Clone)]

@@ -1,9 +1,10 @@
 use crate::Channel;
 use crate::hardware::lms6002d::{Band, Tune};
-use crate::nios2::{NiosNum, NiosPacket};
 use crate::protocol::nios::bladerf1::NiosProtocolBladeRf1;
+use crate::protocol::nios::packet_generic::NiosNum;
 use crate::protocol::nios::{
-    NiosPkt8x16AddrIqCorr, NiosPkt8x16Target, NiosPkt8x32Target, NiosPkt32x32Target, NiosProtocol,
+    NiosPacket, NiosPkt8x16AddrIqCorr, NiosPkt8x16Target, NiosPkt8x32Target, NiosPkt32x32Target,
+    NiosProtocol,
 };
 use crate::transport::usb::{BladeRf1Commands, InterfaceCommands};
 use crate::{Direction, Error, Result, SemanticVersion};

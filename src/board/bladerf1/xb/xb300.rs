@@ -1,5 +1,5 @@
 use crate::bladerf1::BladeRf1;
-use crate::nios2::{Nios, NiosInterface};
+use crate::nios_client::{Nios, NiosInterface};
 use crate::{Error, Result};
 use std::sync::{Arc, Mutex};
 

@@ -20,7 +20,7 @@ use crate::bladerf1::frequency::TuningMode;
 use crate::hardware::dac161s055::DAC161S055;
 use crate::hardware::lms6002d::LMS6002D;
 use crate::hardware::si5338::SI5338;
-use crate::nios2::{Nios, NiosInterface};
+use crate::nios_client::{Nios, NiosInterface};
 use crate::transport::usb::{
     BladeRf1Commands, BladeRf1DeviceCommands, DeviceCommands, InterfaceCommands,
 };

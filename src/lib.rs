@@ -93,21 +93,6 @@ pub mod protocol;
 pub mod range;
 pub mod transport;
 
-// Re-export nios2 types for backward compatibility
-pub mod nios2 {
-    //! NIOS II communication types.
-    //!
-    //! This module re-exports types from `nios2_client` and `protocol::nios`.
-
-    pub use crate::nios_client::{Nios, NiosClient, NiosInterface};
-    pub use crate::protocol::nios::packet_generic::{NiosNum, NiosPacket};
-    pub use crate::protocol::nios::{
-        NiosPkt, NiosPkt8x8Target, NiosPkt8x16AddrIqCorr, NiosPkt8x16Target, NiosPkt8x32Target,
-        NiosPkt32x32Target, NiosPktFlags, NiosPktRetuneRequest, NiosPktRetuneResponse,
-        NiosPktStatus, NiosProtocol,
-    };
-}
-
 pub use board::bladerf1;
 pub use hardware::lms6002d::{Band, Tune};
 
