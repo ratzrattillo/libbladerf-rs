@@ -86,7 +86,6 @@
 //! ### DAC161S055
 //! [DAC Datasheet](https://www.ti.com/lit/ds/symlink/dac161s055.pdf?ts=1739140548819&ref_url=https%253A%252F%252Fwww.ti.com%252Fproduct%252Fde-de%252FDAC161S055)
 
-mod bladerf;
 mod board;
 pub mod hardware;
 pub mod nios_client;
@@ -109,11 +108,71 @@ pub mod nios2 {
     };
 }
 
-pub use bladerf::{Channel, Direction};
 pub use board::bladerf1;
 pub use hardware::lms6002d::{Band, Tune};
 
+use crate::protocol::nios::NiosPacketError;
 use std::fmt::{Display, Formatter};
+
+///  Stream direction
+#[derive(PartialEq, Debug, Clone, Copy)]
+#[repr(u8)]
+pub enum Channel {
+    Rx = 0, // Receive1
+    Tx = 1, // Transmit1
+}
+
+impl Channel {
+    pub fn is_tx(&self) -> bool {
+        *self == Channel::Tx
+    }
+}
+
+impl TryFrom<u8> for Channel {
+    type Error = Error;
+    fn try_from(value: u8) -> Result<Self> {
+        match value {
+            0 => Ok(Channel::Rx),
+            1 => Ok(Channel::Tx),
+            _ => {
+                log::error!("unsupported channel!");
+                Err(Error::Invalid)
+            }
+        }
+    }
+}
+
+// #[macro_export]
+macro_rules! khz {
+    ($value:expr) => {
+        ($value * 1000u32)
+    };
+}
+pub(crate) use khz;
+
+// #[macro_export]
+macro_rules! mhz {
+    ($value:expr) => {
+        ($value * 1000000u32)
+    };
+}
+pub(crate) use mhz;
+
+// #[macro_export]
+// macro_rules! ghz {
+//     ($value:expr) => {
+//         ($value * 1000000000u32)
+//     };
+// }
+// pub(crate) use ghz;
+
+///  Stream direction
+#[derive(PartialEq, Debug, Clone, Copy)]
+#[repr(u8)]
+pub enum Direction {
+    Rx = 0, // Receive direction
+    Tx = 1, // Transmit direction
+}
 
 /// Version structure for FPGA, firmware, libbladeRF, and associated utilities
 #[derive(Debug)]
@@ -160,16 +219,5 @@ pub enum Error {
     NiosWriteFailed,
 }
 
-#[derive(thiserror::Error, Debug)]
-pub enum NiosPacketError {
-    #[error("nfrac value {0} exceeds maximum 0x7FFFFF")]
-    NfracOverflow(u32),
-    #[error("freqsel value {0} exceeds maximum {1}")]
-    FreqselOverflow(u8, u8),
-    #[error("vcocap value {0} exceeds maximum {1}")]
-    VcocapOverflow(u8, u8),
-    #[error("invalid packet size: expected 16 bytes, got {0}")]
-    InvalidSize(usize),
-}
 /// Result type for operations that may return an `Error`.
 pub type Result<T> = std::result::Result<T, Error>;

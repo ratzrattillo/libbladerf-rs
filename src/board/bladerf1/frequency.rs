@@ -1,4 +1,4 @@
-use crate::bladerf::Channel;
+use crate::Channel;
 use crate::bladerf1::BladeRf1;
 use crate::board::bladerf1::xb::xb200::Xb200Path;
 use crate::hardware::lms6002d::{

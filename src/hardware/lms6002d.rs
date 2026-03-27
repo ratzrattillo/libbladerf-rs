@@ -2,9 +2,9 @@
 
 pub mod dc_calibration;
 
-use crate::bladerf::{Channel, khz, mhz};
 use crate::bladerf1::BladeRf1;
 use crate::nios2::{Nios, NiosInterface, NiosPkt8x8Target};
+use crate::{Channel, khz, mhz};
 use crate::{Error, Result};
 use std::sync::{Arc, Mutex};
 use std::thread::sleep;

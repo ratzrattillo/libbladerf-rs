@@ -1,5 +1,5 @@
-use crate::bladerf::{Channel, Direction};
 use crate::board::bladerf1::{BladeRf1, BladeRf1RxStreamer, BladeRf1TxStreamer};
+use crate::{Channel, Direction};
 use crate::{Error, Result};
 use num_complex::Complex32;
 use std::io::{BufRead, Write};

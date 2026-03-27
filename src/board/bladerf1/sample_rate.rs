@@ -1,5 +1,5 @@
+use crate::Channel;
 use crate::Result;
-use crate::bladerf::Channel;
 use crate::bladerf1::BladeRf1;
 use crate::hardware::si5338::{BLADERF_SAMPLERATE_MIN, BLADERF_SAMPLERATE_REC_MAX, RationalRate};
 use crate::range::{Range, RangeItem};

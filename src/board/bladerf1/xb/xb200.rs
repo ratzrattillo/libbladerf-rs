@@ -1,4 +1,4 @@
-use crate::bladerf::Channel;
+use crate::Channel;
 use crate::bladerf1::BladeRf1;
 use crate::nios2::{Nios, NiosInterface};
 use crate::{Error, Result};

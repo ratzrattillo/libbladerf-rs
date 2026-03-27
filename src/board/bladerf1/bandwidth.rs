@@ -1,5 +1,5 @@
+use crate::Channel;
 use crate::Result;
-use crate::bladerf::Channel;
 use crate::bladerf1::BladeRf1;
 use crate::hardware::lms6002d::{
     BLADERF_BANDWIDTH_MAX, BLADERF_BANDWIDTH_MIN, LmsBw, UINT_BANDWIDTHS,

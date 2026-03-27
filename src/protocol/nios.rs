@@ -14,6 +14,18 @@ pub use targets::{
 
 pub use bladerf1::{NiosPktRetuneRequest, NiosPktRetuneResponse};
 
+#[derive(thiserror::Error, Debug)]
+pub enum NiosPacketError {
+    #[error("nfrac value {0} exceeds maximum 0x7FFFFF")]
+    NfracOverflow(u32),
+    #[error("freqsel value {0} exceeds maximum {1}")]
+    FreqselOverflow(u8, u8),
+    #[error("vcocap value {0} exceeds maximum {1}")]
+    VcocapOverflow(u8, u8),
+    #[error("invalid packet size: expected 16 bytes, got {0}")]
+    InvalidSize(usize),
+}
+
 pub struct NiosProtocol;
 
 impl NiosProtocol {

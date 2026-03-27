@@ -1,4 +1,4 @@
-use crate::bladerf::Channel;
+use crate::Channel;
 use crate::hardware::lms6002d::{Band, Tune};
 use crate::nios2::{NiosNum, NiosPacket};
 use crate::protocol::nios::bladerf1::NiosProtocolBladeRf1;

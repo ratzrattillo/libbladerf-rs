@@ -1,5 +1,5 @@
+use crate::Channel;
 use crate::Result;
-use crate::bladerf::Channel;
 use crate::bladerf1::Loopback::BbTxvga1Rxvga2;
 use crate::bladerf1::{BladeRf1, BladeRf1TxStreamer, Loopback};
 use crate::hardware::lms6002d::BLADERF_FREQUENCY_MIN;
