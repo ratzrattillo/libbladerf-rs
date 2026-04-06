@@ -1,29 +1,32 @@
 use anyhow::Result;
+use libbladerf_rs::Channel;
+use libbladerf_rs::bladerf1::board::{BladeRf1RxStreamer, BladeRf1TxStreamer};
+use libbladerf_rs::bladerf1::hardware::lms6002d::gain::GainDb;
 use libbladerf_rs::bladerf1::xb::ExpansionBoard;
 use libbladerf_rs::bladerf1::xb::ExpansionBoard::XbNone;
-use libbladerf_rs::bladerf1::{
-    BladeRf1, BladeRf1RxStreamer, BladeRf1TxStreamer, GainDb, SampleFormat,
-};
-use libbladerf_rs::{Channel, Direction};
-use num_complex::Complex32;
+use libbladerf_rs::bladerf1::{BladeRf1, SampleFormat};
 use std::thread::sleep;
 use std::time::Duration;
 
 // RX
 fn do_rx(bladerf: &BladeRf1) -> Result<()> {
-    bladerf.perform_format_config(Direction::Rx, SampleFormat::Sc16Q11)?;
-    bladerf.enable_module(Channel::Rx, true)?;
-    let mut rx_streamer = BladeRf1RxStreamer::new(bladerf.clone(), 65536, Some(8), None)?;
+    let mut rx_streamer =
+        BladeRf1RxStreamer::new(bladerf.clone(), 65536, 8, SampleFormat::Sc16Q11)?;
 
-    let mut buffer = [Complex32::new(0.0, 0.0); 1024];
+    rx_streamer.activate()?;
 
-    rx_streamer.read_sync(&mut [buffer.as_mut_slice()], 300000)?;
-    println!("Read into buffers");
+    // Read a buffer using the new ownership-based API
+    let buffer = rx_streamer.read(None)?;
+    let n = buffer.len();
 
-    bladerf.perform_format_deconfig(Direction::Rx)?;
-    bladerf.enable_module(Channel::Rx, false)?;
+    println!("Read {} bytes via zero-copy DMA buffer", n);
+    println!("First 32 bytes: {:02x?}", &buffer[..32.min(buffer.len())]);
 
-    println!("{:x?}", buffer);
+    // Recycle the buffer back to the pool
+    rx_streamer.recycle(buffer)?;
+
+    rx_streamer.deactivate()?;
+
     Ok(())
 }
 
@@ -31,32 +34,38 @@ fn do_rx(bladerf: &BladeRf1) -> Result<()> {
 fn _do_tx(bladerf: &BladeRf1) -> Result<()> {
     println!("called do_tx()");
     sleep(Duration::from_millis(5000));
-    bladerf.perform_format_config(Direction::Tx, SampleFormat::Sc16Q11)?;
-    println!("called perform_format_config(Direction::Tx, SampleFormat::Sc16Q11)");
+    bladerf.perform_format_config(Channel::Tx, SampleFormat::Sc16Q11)?;
+    println!("called perform_format_config(Channel::Tx, SampleFormat::Sc16Q11)");
     sleep(Duration::from_millis(5000));
     bladerf.enable_module(Channel::Tx, true)?;
     println!("called enable_module(Channel::Tx, true)");
     sleep(Duration::from_millis(5000));
 
-    let mut tx_streamer = BladeRf1TxStreamer::new(bladerf.clone(), 32768, Some(8), None)?;
+    let mut tx_streamer =
+        BladeRf1TxStreamer::new(bladerf.clone(), 32768, 8, SampleFormat::Sc16Q11)?;
 
-    let buf = vec![Complex32::new(2047.0, 2047.0); 5000];
-    let buffers = &[buf.as_slice()];
+    tx_streamer.activate()?;
+
+    // 5000 samples * 4 bytes per sample (SC16Q11: 2x i16)
+    // Each sample: I=2047 (0x07FF), Q=2047 (0x07FF) in little-endian
+    let buf: Vec<u8> = (0..5000).flat_map(|_| [0xFF, 0x07, 0xFF, 0x07]).collect();
+
     for _ in 0..10 {
-        // sync.c, Line: 1056, int sync_tx(struct bladerf_sync *s,
-        tx_streamer.write(buffers, None, false, 5000000)?;
-        println!("tx_streamer.write(buffers, None, false, 5000000)");
+        let mut buffer = tx_streamer.get_buffer(None)?;
+        buffer.extend_from_slice(&buf);
+        tx_streamer.submit(buffer, buf.len())?;
+        tx_streamer.wait_completion(Some(Duration::from_millis(5000)))?;
+        println!("Submitted buffer");
     }
+
     sleep(Duration::from_millis(5000));
 
-    bladerf.perform_format_deconfig(Direction::Tx)?;
-    println!("called perform_format_deconfig(Direction::Tx)");
-    sleep(Duration::from_millis(5000));
-    bladerf.enable_module(Channel::Tx, false)?;
+    tx_streamer.deactivate()?;
     println!("called enable_module(Channel::Tx, false)");
 
     Ok(())
 }
+
 fn main() -> Result<()> {
     env_logger::builder()
         .filter_level(log::LevelFilter::Debug)

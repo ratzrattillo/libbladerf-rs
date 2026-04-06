@@ -1,8 +1,8 @@
+pub mod mock;
 pub mod usb;
-
 use crate::Result;
 use std::time::Duration;
-
 pub trait Transport: Send {
-    fn transact(&mut self, request: Vec<u8>, timeout: Option<Duration>) -> Result<Vec<u8>>;
+    fn out_buffer(&mut self) -> Result<&mut [u8]>;
+    fn submit(&mut self, timeout: Option<Duration>) -> Result<&[u8]>;
 }

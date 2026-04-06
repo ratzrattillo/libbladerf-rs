@@ -1,6 +1,7 @@
 use anyhow::Result;
 use libbladerf_rs::Channel;
-use libbladerf_rs::bladerf1::{BladeRf1, GainDb};
+use libbladerf_rs::bladerf1::BladeRf1;
+use libbladerf_rs::bladerf1::hardware::lms6002d::gain::GainDb;
 
 fn main() -> Result<()> {
     env_logger::builder()

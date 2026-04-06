@@ -19,16 +19,21 @@ categories = [
 members = [".", "examples/calibrate", "examples/info", "examples/rx_tx"]
 
 [dependencies]
-thiserror = "2.0.18"
-nusb = "0.2.3"
-log = "0.4.29"
-num-complex = "0.4.6"
+thiserror = "2.0"
+nusb = "0.2"
+log = "0.4"
 
 [dev-dependencies]
-env_logger = "0.11.10"
+env_logger = "0.11"
 
 [features]
-default = []
+default = ["bladerf1"]
+
+# BladeRF1 support (x40/x115)
+bladerf1 = []
+
+# BladeRF2 support (xA4/xA9)
+bladerf2 = []
 
 # Configure docs.rs to show all features
 [package.metadata.docs.rs]

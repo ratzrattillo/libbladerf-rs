@@ -1,4 +1,3 @@
-// Shamelessly stolen from: https://github.com/FutureSDR/seify/blob/main/src/range.rs
 impl RangeItem {
     pub fn min(&self) -> f64 {
         match self {
@@ -7,7 +6,6 @@ impl RangeItem {
             RangeItem::Step(min, _max, _step, _scale) => *min,
         }
     }
-
     pub fn max(&self) -> f64 {
         match self {
             RangeItem::Interval(_min, max) => *max,
@@ -15,7 +13,6 @@ impl RangeItem {
             RangeItem::Step(_min, max, _step, _scale) => *max,
         }
     }
-
     pub fn step(&self) -> Option<f64> {
         match self {
             RangeItem::Interval(_min, _max) => None,
@@ -23,7 +20,6 @@ impl RangeItem {
             RangeItem::Step(_min, _max, step, _scale) => Some(*step),
         }
     }
-
     pub fn scale(&self) -> Option<f64> {
         match self {
             RangeItem::Interval(_min, _max) => None,
@@ -32,58 +28,40 @@ impl RangeItem {
         }
     }
 }
-
 impl Range {
     pub fn min(&self) -> Option<f64> {
         self.items
             .iter()
             .reduce(|a, b| if a.min() < b.min() { a } else { b })
             .map(|item| item.min())
-        //.and_then(|item| Some(item.min()))
     }
-
     pub fn max(&self) -> Option<f64> {
         self.items
             .iter()
             .reduce(|a, b| if a.max() > b.max() { a } else { b })
             .map(|item| item.max())
-        //.and_then(|item| Some(item.max()))
     }
-
     pub fn step(&self) -> Option<f64> {
         self.items.first().and_then(|item| item.step())
     }
-
     pub fn scale(&self) -> Option<f64> {
         self.items.first().and_then(|item| item.scale())
     }
 }
-
-/// Component of a [Range].
-///
-/// A [RangeItem] can be an interval, a fixed value, or a step interval.
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub enum RangeItem {
-    /// Min/max interval (inclusive).
     Interval(f64, f64),
-    /// Exact, fixed value.
     Value(f64),
-    /// Min/max/skip intervals.
     Step(f64, f64, f64, f64),
 }
-
-/// Range of possible values, comprised of individual values and/or intervals.
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub struct Range {
     pub items: Vec<RangeItem>,
 }
-
 impl Range {
-    /// Create a [`Range`] from [`RangeItems`](RangeItem).
     pub fn new(items: Vec<RangeItem>) -> Self {
         Self { items }
     }
-    /// Check if the [`Range`] contains the `value`.
     pub fn contains(&self, value: f64) -> bool {
         for item in &self.items {
             match *item {
@@ -113,8 +91,6 @@ impl Range {
         }
         false
     }
-    /// Returns the value in [`Range`] that is closest to the given `value` or `None`, if the
-    /// [`Range`] is empty.
     pub fn closest(&self, value: f64) -> Option<f64> {
         fn closer(target: f64, closest: Option<f64>, current: f64) -> f64 {
             match closest {
@@ -128,7 +104,6 @@ impl Range {
                 None => current,
             }
         }
-
         if self.contains(value) {
             Some(value)
         } else {
@@ -162,8 +137,6 @@ impl Range {
             close
         }
     }
-    /// Returns the smallest value in [`Range`] that is as big as the given `value` or bigger.
-    /// Returns `None`, if the [`Range`] is empty or if all values are smaller than the given value.
     pub fn at_least(&self, value: f64) -> Option<f64> {
         fn closer_at_least(target: f64, closest: Option<f64>, current: f64) -> Option<f64> {
             match closest {
@@ -183,7 +156,6 @@ impl Range {
                 }
             }
         }
-
         if self.contains(value) {
             Some(value)
         } else {
@@ -217,8 +189,6 @@ impl Range {
             close
         }
     }
-    /// Returns the largest value in [`Range`] that is as big as the given `value` or smaller.
-    /// Returns `None`, if the [`Range`] is empty or if all values are bigger than the given `value`.
     pub fn at_max(&self, value: f64) -> Option<f64> {
         fn closer_at_max(target: f64, closest: Option<f64>, current: f64) -> Option<f64> {
             match closest {
@@ -238,7 +208,6 @@ impl Range {
                 }
             }
         }
-
         if self.contains(value) {
             Some(value)
         } else {
@@ -272,16 +241,13 @@ impl Range {
             close
         }
     }
-    /// Merges two [`Ranges`](Range).
     pub fn merge(&mut self, mut r: Range) {
         self.items.append(&mut r.items)
     }
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
     #[test]
     fn contains_empty() {
         let r = Range::new(Vec::new());

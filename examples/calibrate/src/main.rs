@@ -1,6 +1,6 @@
 use anyhow::Result;
 use libbladerf_rs::bladerf1::BladeRf1;
-use libbladerf_rs::hardware::lms6002d::dc_calibration::DcCalModule;
+use libbladerf_rs::bladerf1::hardware::lms6002d::dc_calibration::DcCalModule;
 
 fn main() -> Result<()> {
     env_logger::builder()
@@ -20,10 +20,8 @@ fn main() -> Result<()> {
     log::debug!("Calibrating: {:?}", DcCalModule::RxLpf);
     bladerf.calibrate_dc(DcCalModule::RxLpf)?;
 
-    // Currently unsupported
-    // log::debug!("Calibrating: {:?}", DcCalModule::TxLpf);
-    // // bladerf.calibrate_dc(DcCalModule::TxLpf)?;
-    // bladerf.cal_tx_lpf()?;
+    log::debug!("Calibrating: {:?}", DcCalModule::TxLpf);
+    bladerf.cal_tx_lpf()?;
 
     log::debug!("Calibrating: {:?}", DcCalModule::LpfTuning);
     bladerf.calibrate_dc(DcCalModule::LpfTuning)?;
