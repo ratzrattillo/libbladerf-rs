@@ -1,18 +1,12 @@
-use crate::bladerf1::nios_client::NiosInterface;
+use crate::bladerf1::nios_client::NiosClient;
 use crate::error::Result;
 use crate::protocol::nios::NiosPkt8x16Target;
-use std::sync::{Arc, Mutex};
-#[derive(Clone)]
-pub struct DAC161S055 {
-    interface: Arc<Mutex<NiosInterface>>,
+
+pub fn write(nios: &mut NiosClient, value: u16) -> Result<()> {
+    nios.nios_write::<u8, u16>(NiosPkt8x16Target::VctcxoDac, 0x28, 0x0u16)?;
+    nios.nios_write::<u8, u16>(NiosPkt8x16Target::VctcxoDac, 0x8, value)
 }
-impl DAC161S055 {
-    pub fn new(interface: Arc<Mutex<NiosInterface>>) -> Self {
-        Self { interface }
-    }
-    pub fn write(&self, value: u16) -> Result<()> {
-        let mut interface = self.interface.lock().unwrap();
-        interface.nios_write::<u8, u16>(NiosPkt8x16Target::VctcxoDac, 0x28, 0x0u16)?;
-        interface.nios_write::<u8, u16>(NiosPkt8x16Target::VctcxoDac, 0x8, value)
-    }
+
+pub fn read(nios: &mut NiosClient) -> Result<u16> {
+    nios.nios_read::<u8, u16>(NiosPkt8x16Target::VctcxoDac, 0x98)
 }

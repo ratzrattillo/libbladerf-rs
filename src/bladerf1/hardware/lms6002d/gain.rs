@@ -1,5 +1,5 @@
 use crate::Error;
-use crate::bladerf1::hardware::lms6002d::LMS6002D;
+use crate::bladerf1::nios_client::NiosClient;
 use crate::range::{Range, RangeItem};
 pub const BLADERF1_RX_GAIN_OFFSET: f32 = -6.0;
 pub const BLADERF1_TX_GAIN_OFFSET: f32 = 52.0;
@@ -34,7 +34,7 @@ impl TryFrom<u8> for LmsLowNoiseAmplifier {
             1 => Ok(LmsLowNoiseAmplifier::Lna1),
             2 => Ok(LmsLowNoiseAmplifier::Lna2),
             3 => Ok(LmsLowNoiseAmplifier::Lna3),
-            _ => Err(Error::Invalid),
+            _ => Err(Error::Argument("invalid LNA value".into())),
         }
     }
 }
@@ -71,6 +71,11 @@ pub const GAIN_SPEC_TXVGA2: GainSpec = GainSpec {
 };
 pub struct GainDb {
     pub db: i8,
+}
+impl From<i8> for GainDb {
+    fn from(db: i8) -> Self {
+        Self { db }
+    }
 }
 #[derive(PartialEq, Clone, Copy)]
 pub enum LnaGainCode {
@@ -238,165 +243,165 @@ impl TryFrom<&str> for GainStage {
             "rxvga2" => Ok(GainStage::RxVga2),
             "txvga1" => Ok(GainStage::TxVga1),
             "txvga2" => Ok(GainStage::TxVga2),
-            _ => Err(crate::error::Error::Invalid),
+            _ => Err(Error::Argument("unknown gain stage".into())),
         }
     }
 }
-impl LMS6002D {
-    fn gain_spec_to_range(spec: GainSpec) -> Range {
-        Range {
-            items: vec![RangeItem::Step(
-                spec.min as f64,
-                spec.max as f64,
-                spec.step as f64,
-                1.0,
-            )],
-        }
+fn gain_spec_to_range(spec: GainSpec) -> Range {
+    Range {
+        items: vec![RangeItem::Step(
+            spec.min as f64,
+            spec.max as f64,
+            spec.step as f64,
+            1.0,
+        )],
     }
-    pub fn get_lna_gain_range() -> Range {
-        Self::gain_spec_to_range(GAIN_SPEC_LNA)
+}
+pub fn get_lna_gain_range() -> Range {
+    gain_spec_to_range(GAIN_SPEC_LNA)
+}
+pub fn get_rxvga1_gain_range() -> Range {
+    gain_spec_to_range(GAIN_SPEC_RXVGA1)
+}
+pub fn get_rxvga2_gain_range() -> Range {
+    gain_spec_to_range(GAIN_SPEC_RXVGA2)
+}
+pub fn get_txvga1_gain_range() -> Range {
+    gain_spec_to_range(GAIN_SPEC_TXVGA1)
+}
+pub fn get_txvga2_gain_range() -> Range {
+    gain_spec_to_range(GAIN_SPEC_TXVGA2)
+}
+pub fn get_gain_stage_range(stage: GainStage) -> Range {
+    match stage {
+        GainStage::Lna => get_lna_gain_range(),
+        GainStage::RxVga1 => get_rxvga1_gain_range(),
+        GainStage::RxVga2 => get_rxvga2_gain_range(),
+        GainStage::TxVga1 => get_txvga1_gain_range(),
+        GainStage::TxVga2 => get_txvga2_gain_range(),
     }
-    pub fn get_rxvga1_gain_range() -> Range {
-        Self::gain_spec_to_range(GAIN_SPEC_RXVGA1)
+}
+pub fn lna_set_gain(nios: &mut NiosClient, gain: GainDb) -> crate::Result<()> {
+    let mut data = super::read(nios, 0x75)?;
+    data &= !(3 << 6);
+    let lna_gain_code: LnaGainCode = gain.into();
+    let lna_gain_code_u8: u8 = lna_gain_code.into();
+    data |= (lna_gain_code_u8 & 3) << 6;
+    super::write(nios, 0x75, data)
+}
+pub fn lna_get_gain(nios: &mut NiosClient) -> crate::Result<GainDb> {
+    let mut data = super::read(nios, 0x75)?;
+    data >>= 6;
+    data &= 3;
+    let lna_gain_code: LnaGainCode = data
+        .try_into()
+        .map_err(|_| Error::HardwareState("invalid LNA gain code from hardware"))?;
+    Ok(lna_gain_code.into())
+}
+pub fn get_lna(nios: &mut NiosClient) -> crate::Result<LmsLowNoiseAmplifier> {
+    let data = super::read(nios, 0x75)?;
+    LmsLowNoiseAmplifier::try_from((data >> 4) & 0x3)
+}
+pub fn rxvga1_enable(nios: &mut NiosClient, enable: bool) -> crate::Result<()> {
+    let mut data = super::read(nios, 0x7d)?;
+    if enable {
+        data &= !(1 << 3);
+    } else {
+        data |= 1 << 3;
     }
-    pub fn get_rxvga2_gain_range() -> Range {
-        Self::gain_spec_to_range(GAIN_SPEC_RXVGA2)
+    super::write(nios, 0x7d, data)
+}
+pub fn rxvga1_set_gain(nios: &mut NiosClient, gain_db: GainDb) -> crate::Result<()> {
+    let code: Rxvga1GainCode = gain_db.into();
+    super::write(nios, 0x76, code.code)
+}
+pub fn rxvga1_get_gain(nios: &mut NiosClient) -> crate::Result<GainDb> {
+    let mut data = super::read(nios, 0x76)?;
+    data &= 0x7f;
+    let rxvga1_gain_code = Rxvga1GainCode {
+        code: data.clamp(0, 120),
+    };
+    Ok(rxvga1_gain_code.into())
+}
+pub fn rxvga2_enable(nios: &mut NiosClient, enable: bool) -> crate::Result<()> {
+    let mut data = super::read(nios, 0x64)?;
+    if enable {
+        data |= 1 << 1;
+    } else {
+        data &= !(1 << 1);
     }
-    pub fn get_txvga1_gain_range() -> Range {
-        Self::gain_spec_to_range(GAIN_SPEC_TXVGA1)
+    super::write(nios, 0x64, data)
+}
+pub fn rxvga2_set_gain(nios: &mut NiosClient, gain_db: GainDb) -> crate::Result<()> {
+    let code: Rxvga2GainCode = gain_db.into();
+    super::write(nios, 0x65, code.code)
+}
+pub fn rxvga2_get_gain(nios: &mut NiosClient) -> crate::Result<GainDb> {
+    let rxvga2_gain_code = Rxvga2GainCode {
+        code: super::read(nios, 0x65)?,
+    };
+    Ok(rxvga2_gain_code.into())
+}
+pub fn txvga1_get_gain(nios: &mut NiosClient) -> crate::Result<GainDb> {
+    let txvga1_gain_code = Txvga1GainCode {
+        code: super::read(nios, 0x41)?,
+    };
+    Ok(txvga1_gain_code.into())
+}
+pub fn txvga2_get_gain(nios: &mut NiosClient) -> crate::Result<GainDb> {
+    let txvga2_gain_code = Txvga2GainCode {
+        code: super::read(nios, 0x45)?,
+    };
+    Ok(txvga2_gain_code.into())
+}
+pub fn txvga1_set_gain(nios: &mut NiosClient, gain: GainDb) -> crate::Result<()> {
+    let txvga1_gain_code: Txvga1GainCode = gain.into();
+    super::write(nios, 0x41, txvga1_gain_code.code)
+}
+pub fn txvga2_set_gain(nios: &mut NiosClient, gain: GainDb) -> crate::Result<()> {
+    let mut data = super::read(nios, 0x45)?;
+    data &= !(0x1f << 3);
+    let txvga2_gain_code: Txvga2GainCode = gain.into();
+    data |= txvga2_gain_code.code;
+    super::write(nios, 0x45, data)
+}
+pub fn enable_lna_power(nios: &mut NiosClient, enable: bool) -> crate::Result<()> {
+    let mut regval = super::read(nios, 0x7d)?;
+    if enable {
+        regval &= !(1 << 0);
+    } else {
+        regval |= 1 << 0;
     }
-    pub fn get_txvga2_gain_range() -> Range {
-        Self::gain_spec_to_range(GAIN_SPEC_TXVGA2)
+    super::write(nios, 0x7d, regval)?;
+    regval = super::read(nios, 0x70)?;
+    if enable {
+        regval &= !(1 << 1);
+    } else {
+        regval |= 1 << 1;
     }
-    pub fn get_gain_stage_range(stage: GainStage) -> Range {
-        match stage {
-            GainStage::Lna => Self::get_lna_gain_range(),
-            GainStage::RxVga1 => Self::get_rxvga1_gain_range(),
-            GainStage::RxVga2 => Self::get_rxvga2_gain_range(),
-            GainStage::TxVga1 => Self::get_txvga1_gain_range(),
-            GainStage::TxVga2 => Self::get_txvga2_gain_range(),
-        }
-    }
-    pub fn lna_set_gain(&self, gain: GainDb) -> crate::Result<()> {
-        let mut data = self.read(0x75)?;
-        data &= !(3 << 6);
-        let lna_gain_code: LnaGainCode = gain.into();
-        let lna_gain_code_u8: u8 = lna_gain_code.into();
-        data |= (lna_gain_code_u8 & 3) << 6;
-        self.write(0x75, data)
-    }
-    pub fn lna_get_gain(&self) -> crate::Result<GainDb> {
-        let mut data = self.read(0x75)?;
-        data >>= 6;
-        data &= 3;
-        let lna_gain_code: LnaGainCode = data.try_into().map_err(|_| Error::Invalid)?;
-        Ok(lna_gain_code.into())
-    }
-    pub fn get_lna(&self) -> crate::Result<LmsLowNoiseAmplifier> {
-        let data = self.read(0x75)?;
-        LmsLowNoiseAmplifier::try_from((data >> 4) & 0x3)
-    }
-    pub fn rxvga1_enable(&self, enable: bool) -> crate::Result<()> {
-        let mut data = self.read(0x7d)?;
-        if enable {
-            data &= !(1 << 3);
-        } else {
-            data |= 1 << 3;
-        }
-        self.write(0x7d, data)
-    }
-    pub fn rxvga1_set_gain(&self, gain_db: GainDb) -> crate::Result<()> {
-        let code: Rxvga1GainCode = gain_db.into();
-        self.write(0x76, code.code)
-    }
-    pub fn rxvga1_get_gain(&self) -> crate::Result<GainDb> {
-        let mut data = self.read(0x76)?;
-        data &= 0x7f;
-        let rxvga1_gain_code = Rxvga1GainCode {
-            code: data.clamp(0, 120),
-        };
-        Ok(rxvga1_gain_code.into())
-    }
-    pub fn rxvga2_enable(&self, enable: bool) -> crate::Result<()> {
-        let mut data = self.read(0x64)?;
-        if enable {
-            data |= 1 << 1;
-        } else {
+    super::write(nios, 0x70, regval)
+}
+pub fn select_pa(nios: &mut NiosClient, pa: LmsPowerAmplifier) -> crate::Result<()> {
+    let mut data = super::read(nios, 0x44)?;
+    data &= !0x1C;
+    data |= 1 << 1;
+    match pa {
+        LmsPowerAmplifier::PaAux => {
             data &= !(1 << 1);
         }
-        self.write(0x64, data)
-    }
-    pub fn rxvga2_set_gain(&self, gain_db: GainDb) -> crate::Result<()> {
-        let code: Rxvga2GainCode = gain_db.into();
-        self.write(0x65, code.code)
-    }
-    pub fn rxvga2_get_gain(&self) -> crate::Result<GainDb> {
-        let rxvga2_gain_code = Rxvga2GainCode {
-            code: self.read(0x65)?,
-        };
-        Ok(rxvga2_gain_code.into())
-    }
-    pub fn txvga1_get_gain(&self) -> crate::Result<GainDb> {
-        let txvga1_gain_code = Txvga1GainCode {
-            code: self.read(0x41)?,
-        };
-        Ok(txvga1_gain_code.into())
-    }
-    pub fn txvga2_get_gain(&self) -> crate::Result<GainDb> {
-        let txvga2_gain_code = Txvga2GainCode {
-            code: self.read(0x45)?,
-        };
-        Ok(txvga2_gain_code.into())
-    }
-    pub fn txvga1_set_gain(&self, gain: GainDb) -> crate::Result<()> {
-        let txvga1_gain_code: Txvga1GainCode = gain.into();
-        self.write(0x41, txvga1_gain_code.code)
-    }
-    pub fn txvga2_set_gain(&self, gain: GainDb) -> crate::Result<()> {
-        let mut data = self.read(0x45)?;
-        data &= !(0x1f << 3);
-        let txvga2_gain_code: Txvga2GainCode = gain.into();
-        data |= txvga2_gain_code.code;
-        self.write(0x45, data)
-    }
-    pub fn enable_lna_power(&self, enable: bool) -> crate::Result<()> {
-        let mut regval = self.read(0x7d)?;
-        if enable {
-            regval &= !(1 << 0);
-        } else {
-            regval |= 1 << 0;
+        LmsPowerAmplifier::Pa1 => {
+            data |= 2 << 2;
         }
-        self.write(0x7d, regval)?;
-        regval = self.read(0x70)?;
-        if enable {
-            regval &= !(1 << 1);
-        } else {
-            regval |= 1 << 1;
+        LmsPowerAmplifier::Pa2 => {
+            data |= 4 << 2;
         }
-        self.write(0x70, regval)
+        LmsPowerAmplifier::PaNone => {}
     }
-    pub fn select_pa(&self, pa: LmsPowerAmplifier) -> crate::Result<()> {
-        let mut data = self.read(0x44)?;
-        data &= !0x1C;
-        data |= 1 << 1;
-        match pa {
-            LmsPowerAmplifier::PaAux => {
-                data &= !(1 << 1);
-            }
-            LmsPowerAmplifier::Pa1 => {
-                data |= 2 << 2;
-            }
-            LmsPowerAmplifier::Pa2 => {
-                data |= 4 << 2;
-            }
-            LmsPowerAmplifier::PaNone => {}
-        }
-        self.write(0x44, data)
-    }
-    pub fn select_lna(&self, lna: LmsLowNoiseAmplifier) -> crate::Result<()> {
-        let mut data = self.read(0x75)?;
-        data &= !(3 << 4);
-        data |= (u8::from(lna) & 3) << 4;
-        self.write(0x75, data)
-    }
+    super::write(nios, 0x44, data)
+}
+pub fn select_lna(nios: &mut NiosClient, lna: LmsLowNoiseAmplifier) -> crate::Result<()> {
+    let mut data = super::read(nios, 0x75)?;
+    data &= !(3 << 4);
+    data |= (u8::from(lna) & 3) << 4;
+    super::write(nios, 0x75, data)
 }

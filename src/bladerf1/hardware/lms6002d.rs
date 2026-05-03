@@ -7,16 +7,31 @@ pub mod loopback;
 use crate::bladerf1::hardware::lms6002d::bandwidth::LmsBandwidth;
 use crate::bladerf1::hardware::lms6002d::gain::{LmsLowNoiseAmplifier, LmsPowerAmplifier};
 use crate::bladerf1::hardware::lms6002d::loopback::Loopback;
-use crate::bladerf1::nios_client::NiosInterface;
+use crate::bladerf1::nios_client::NiosClient;
 use crate::channel::Channel;
 use crate::error::Result;
 use crate::protocol::nios::NiosPkt8x8Target;
-use std::sync::{Arc, Mutex};
 #[repr(u8)]
 #[derive(PartialEq, Debug)]
 pub enum Band {
     Low = 0,
     High = 1,
+}
+
+impl From<u64> for Band {
+    fn from(freq: u64) -> Self {
+        if freq < bandwidth::BLADERF1_BAND_HIGH as u64 {
+            Band::Low
+        } else {
+            Band::High
+        }
+    }
+}
+
+impl From<u32> for Band {
+    fn from(freq: u32) -> Self {
+        Band::from(freq as u64)
+    }
 }
 #[repr(u8)]
 #[derive(PartialEq, Debug)]
@@ -63,74 +78,60 @@ pub struct LmsTransceiverConfig {
     tx_bw: LmsBandwidth,
     rx_bw: LmsBandwidth,
 }
-#[derive(Clone)]
-pub struct LMS6002D {
-    interface: Arc<Mutex<NiosInterface>>,
+pub(crate) fn read(nios: &mut NiosClient, addr: u8) -> Result<u8> {
+    nios.nios_read::<u8, u8>(NiosPkt8x8Target::Lms6, addr)
 }
-impl LMS6002D {
-    pub fn new(interface: Arc<Mutex<NiosInterface>>) -> Self {
-        Self { interface }
+pub(crate) fn write(nios: &mut NiosClient, addr: u8, data: u8) -> Result<()> {
+    nios.nios_write::<u8, u8>(NiosPkt8x8Target::Lms6, addr, data)
+}
+pub(crate) fn set(nios: &mut NiosClient, addr: u8, mask: u8) -> Result<()> {
+    let data = read(nios, addr)?;
+    write(nios, addr, data | mask)
+}
+pub(crate) fn clear(nios: &mut NiosClient, addr: u8, mask: u8) -> Result<()> {
+    let data = read(nios, addr)?;
+    write(nios, addr, data & !mask)
+}
+#[allow(dead_code)]
+pub(crate) fn soft_reset(nios: &mut NiosClient) -> Result<()> {
+    write(nios, 0x05, 0x12)?;
+    write(nios, 0x05, 0x32)
+}
+pub(crate) fn enable_rffe(nios: &mut NiosClient, channel: Channel, enable: bool) -> Result<()> {
+    let (addr, shift) = if channel == Channel::Tx {
+        (0x40u8, 1u8)
+    } else {
+        (0x70u8, 0u8)
+    };
+    let mut data = read(nios, addr)?;
+    if enable {
+        data |= 1 << shift;
+    } else {
+        data &= !(1 << shift);
     }
-    pub fn read(&self, addr: u8) -> Result<u8> {
-        self.interface
-            .lock()
-            .unwrap()
-            .nios_read::<u8, u8>(NiosPkt8x8Target::Lms6, addr)
+    write(nios, addr, data)
+}
+pub(crate) fn select_band(nios: &mut NiosClient, channel: Channel, band: Band) -> Result<()> {
+    if loopback::is_loopback_enabled(nios)? {
+        log::debug!("Loopback enabled!");
+        return Ok(());
     }
-    pub fn write(&self, addr: u8, data: u8) -> Result<()> {
-        self.interface
-            .lock()
-            .unwrap()
-            .nios_write::<u8, u8>(NiosPkt8x8Target::Lms6, addr, data)
-    }
-    pub fn set(&self, addr: u8, mask: u8) -> Result<()> {
-        let data = self.read(addr)?;
-        self.write(addr, data | mask)
-    }
-    pub fn clear(&self, addr: u8, mask: u8) -> Result<()> {
-        let data = self.read(addr)?;
-        self.write(addr, data & !mask)
-    }
-    pub fn soft_reset(&self) -> Result<()> {
-        self.write(0x05, 0x12)?;
-        self.write(0x05, 0x32)
-    }
-    pub fn enable_rffe(&self, channel: Channel, enable: bool) -> Result<()> {
-        let (addr, shift) = if channel == Channel::Tx {
-            (0x40u8, 1u8)
-        } else {
-            (0x70u8, 0u8)
-        };
-        let mut data = self.read(addr)?;
-        if enable {
-            data |= 1 << shift;
-        } else {
-            data &= !(1 << shift);
+    match channel {
+        Channel::Tx => {
+            let lms_pa = if band == Band::Low {
+                LmsPowerAmplifier::Pa1
+            } else {
+                LmsPowerAmplifier::Pa2
+            };
+            gain::select_pa(nios, lms_pa)
         }
-        self.write(addr, data)
-    }
-    pub fn select_band(&self, channel: Channel, band: Band) -> Result<()> {
-        if self.is_loopback_enabled()? {
-            log::debug!("Loopback enabled!");
-            return Ok(());
-        }
-        match channel {
-            Channel::Tx => {
-                let lms_pa = if band == Band::Low {
-                    LmsPowerAmplifier::Pa1
-                } else {
-                    LmsPowerAmplifier::Pa2
-                };
-                self.select_pa(lms_pa)
-            }
-            Channel::Rx => {
-                let lms_lna = if band == Band::Low {
-                    LmsLowNoiseAmplifier::Lna1
-                } else {
-                    LmsLowNoiseAmplifier::Lna2
-                };
-                self.select_lna(lms_lna)
-            }
+        Channel::Rx => {
+            let lms_lna = if band == Band::Low {
+                LmsLowNoiseAmplifier::Lna1
+            } else {
+                LmsLowNoiseAmplifier::Lna2
+            };
+            gain::select_lna(nios, lms_lna)
         }
     }
 }

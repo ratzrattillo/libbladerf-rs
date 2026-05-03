@@ -1,0 +1,5 @@
+publish = false
+pre-release-hook = ["bash", "check.sh"]
+tag-prefix = ""
+consolidate-commits = true
+dependent-version = "upgrade"

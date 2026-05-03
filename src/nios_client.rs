@@ -28,7 +28,7 @@ impl<T: Transport> NiosCore<T> {
     ) -> Result<D> {
         let out_buf = self.transport.out_buffer()?;
         log::trace!("nios_read: DMA buffer len = {} bytes", out_buf.len());
-        nios_encode_read::<A, D>(out_buf, id.into(), addr);
+        nios_encode_read::<A, D>(out_buf, id.into(), addr)?;
         let response = self.transport.submit(None)?;
         log::trace!("nios_read: response len = {} bytes", response.len());
         nios_decode_read::<A, D>(response)
@@ -40,9 +40,9 @@ impl<T: Transport> NiosCore<T> {
         data: D,
     ) -> Result<()> {
         let out_buf = self.transport.out_buffer()?;
-        nios_encode_write::<A, D>(out_buf, id.into(), addr, data);
+        nios_encode_write::<A, D>(out_buf, id.into(), addr, data)?;
         let response = self.transport.submit(None)?;
-        nios_decode_write(response)
+        nios_decode_write::<A, D>(response)
     }
     pub fn nios_config_read(&mut self) -> Result<u32> {
         self.nios_read::<u8, u32>(NiosPkt8x32Target::Control, 0)

@@ -1,10 +1,8 @@
 use crate::bladerf1::BladeRf1;
-use crate::bladerf1::board::xb::detect_xb_board;
-use crate::bladerf1::nios_client::NiosInterface;
+use crate::bladerf1::board::xb;
 use crate::channel::Channel;
 use crate::error::{Error, Result};
 use std::ops::RangeInclusive;
-use std::sync::{Arc, Mutex};
 pub(crate) const BLADERF_XB_CONFIG_TX_PATH_MIX: u32 = 0x04;
 pub(crate) const BLADERF_XB_CONFIG_TX_PATH_BYPASS: u32 = 0x08;
 pub(crate) const BLADERF_XB_CONFIG_TX_BYPASS: u32 = 0x04;
@@ -23,12 +21,12 @@ pub(crate) const BLADERF_XB_RX_SHIFT: u32 = 28;
 pub(crate) const LMS_RX_SWAP: u8 = 0x40;
 pub(crate) const LMS_TX_SWAP: u8 = 0x08;
 type FilterEntry = (RangeInclusive<u64>, Xb200Filter);
-const AUTO_1DB_FILTERS: &[FilterEntry] = &[
+pub(crate) const AUTO_1DB_FILTERS: &[FilterEntry] = &[
     (37_774_405..=59_535_436, Xb200Filter::_50M),
     (128_326_173..=166_711_171, Xb200Filter::_144M),
     (187_593_160..=245_346_403, Xb200Filter::_222M),
 ];
-const AUTO_3DB_FILTERS: &[FilterEntry] = &[
+pub(crate) const AUTO_3DB_FILTERS: &[FilterEntry] = &[
     (34_782_924..=61_899_260, Xb200Filter::_50M),
     (121_956_957..=178_444_099, Xb200Filter::_144M),
     (177_522_675..=260_140_935, Xb200Filter::_222M),
@@ -54,21 +52,18 @@ impl TryFrom<u32> for Xb200Filter {
             5 => Ok(Xb200Filter::Auto3db),
             _ => {
                 log::error!("invalid filter selection!");
-                Err(Error::Invalid)
+                Err(Error::Argument("invalid XB200 filter value".into()))
             }
         }
     }
 }
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone, Copy)]
 pub enum Xb200Path {
     Bypass = 0,
     Mix = 1,
 }
 impl BladeRf1 {
-    pub fn xb200_is_enabled(interface: &Arc<Mutex<NiosInterface>>) -> Result<bool> {
-        detect_xb_board(interface, BLADERF_XB_RF_ON)
-    }
-    pub fn xb200_attach(&self) -> Result<()> {
+    pub fn xb200_attach(&mut self) -> Result<()> {
         let muxout: usize = 6;
         let mux_lut = [
             "THREE-STATE OUTPUT",
@@ -81,38 +76,38 @@ impl BladeRf1 {
             "RESERVED",
         ];
         log::trace!("Attaching XB200 transverter board");
-        let mut val8 = self.si5338.read(39)?;
+        let mut val8 = crate::bladerf1::hardware::si5338::read(&mut self.nios, 39)?;
         log::trace!("[xb200_attach] si5338_read: {val8}");
         val8 |= 2;
-        self.si5338.write(39, val8)?;
-        self.si5338.write(34, 0x22)?;
+        crate::bladerf1::hardware::si5338::write(&mut self.nios, 39, val8)?;
+        crate::bladerf1::hardware::si5338::write(&mut self.nios, 34, 0x22)?;
         let mut val = self.config_gpio_read()?;
         val |= 0x80000000;
         self.config_gpio_write(val)?;
-        let mut interface = self.interface.lock().unwrap();
-        interface.nios_expansion_gpio_dir_write(0xffffffff, 0x3C00383E)?;
-        interface.nios_expansion_gpio_write(0xffffffff, 0x800)?;
-        interface.nios_xb200_synth_write(0x580005)?;
-        interface.nios_xb200_synth_write(0x99A16C)?;
-        interface.nios_xb200_synth_write(0xC004B3)?;
+        self.nios
+            .nios_expansion_gpio_dir_write(0xffffffff, 0x3C00383E)?;
+        self.nios.nios_expansion_gpio_write(0xffffffff, 0x800)?;
+        self.nios.nios_xb200_synth_write(0x580005)?;
+        self.nios.nios_xb200_synth_write(0x99A16C)?;
+        self.nios.nios_xb200_synth_write(0xC004B3)?;
         log::trace!("MUXOUT: {}", mux_lut[muxout]);
         let value = 0x60008E42 | (1 << 8) | ((muxout as u32) << 26);
-        interface.nios_xb200_synth_write(value)?;
-        interface.nios_xb200_synth_write(0x08008011)?;
-        interface.nios_xb200_synth_write(0x00410000)?;
-        val = interface.nios_expansion_gpio_read()?;
+        self.nios.nios_xb200_synth_write(value)?;
+        self.nios.nios_xb200_synth_write(0x08008011)?;
+        self.nios.nios_xb200_synth_write(0x00410000)?;
+        val = self.nios.nios_expansion_gpio_read()?;
         log::trace!("[xb200_attach] expansion_gpio_read: {val}");
         if (val & 0x1) != 0 {
             log::debug!("MUXOUT Bit set: OK")
         } else {
             log::debug!("MUXOUT Bit not set: FAIL");
         }
-        interface.nios_expansion_gpio_write(0xffffffff, 0x3C000800)?;
+        self.nios
+            .nios_expansion_gpio_write(0xffffffff, 0x3C000800)?;
         Ok(())
     }
-    pub fn xb200_enable(&self, enable: bool) -> Result<()> {
-        let mut interface = self.interface.lock().unwrap();
-        let orig = interface.nios_expansion_gpio_read()?;
+    pub fn xb200_enable(&mut self, enable: bool) -> Result<()> {
+        let orig = self.nios.nios_expansion_gpio_read()?;
         log::trace!("[xb200_enable] expansion_gpio_read: {orig}");
         let mut val = orig;
         if enable {
@@ -123,10 +118,10 @@ impl BladeRf1 {
         if val == orig {
             Ok(())
         } else {
-            interface.nios_expansion_gpio_write(0xffffffff, val)
+            self.nios.nios_expansion_gpio_write(0xffffffff, val)
         }
     }
-    pub fn xb200_init(&self) -> Result<()> {
+    pub fn xb200_init(&mut self) -> Result<()> {
         log::trace!("Setting RX path");
         self.xb200_set_path(Channel::Rx, Xb200Path::Bypass)?;
         log::trace!("Setting TX path");
@@ -136,12 +131,8 @@ impl BladeRf1 {
         log::trace!("Setting TX filter");
         self.xb200_set_filterbank(Channel::Tx, Xb200Filter::Auto1db)
     }
-    pub fn xb200_get_filterbank(&self, ch: Channel) -> Result<Xb200Filter> {
-        if ch != Channel::Rx && ch != Channel::Tx {
-            log::error!("invalid channel");
-            return Err(Error::Invalid);
-        }
-        let val = self.interface.lock().unwrap().nios_expansion_gpio_read()?;
+    pub fn xb200_get_filterbank(&mut self, ch: Channel) -> Result<Xb200Filter> {
+        let val = self.nios.nios_expansion_gpio_read()?;
         log::trace!("[xb200_get_filterbank] expansion_gpio_read: {val}");
         let shift = if ch == Channel::Rx {
             BLADERF_XB_RX_SHIFT
@@ -150,14 +141,13 @@ impl BladeRf1 {
         };
         Xb200Filter::try_from((val >> shift) & 3)
     }
-    pub fn set_filterbank_mux(&self, ch: Channel, filter: Xb200Filter) -> Result<()> {
+    pub fn set_filterbank_mux(&mut self, ch: Channel, filter: Xb200Filter) -> Result<()> {
         let (mask, shift) = if ch == Channel::Rx {
             (BLADERF_XB_RX_MASK, BLADERF_XB_RX_SHIFT)
         } else {
             (BLADERF_XB_TX_MASK, BLADERF_XB_TX_SHIFT)
         };
-        let mut interface = self.interface.lock().unwrap();
-        let orig = interface.nios_expansion_gpio_read()?;
+        let orig = self.nios.nios_expansion_gpio_read()?;
         log::trace!("[set_filterbank_mux] expansion_gpio_read: {orig}");
         let mut val = orig & !mask;
         val |= (filter as u32) << shift;
@@ -168,18 +158,14 @@ impl BladeRf1 {
                 "RX"
             };
             log::trace!("Engaging {filter:?} band XB-200 {dir} filter");
-            interface.nios_expansion_gpio_write(0xffffffff, val)?;
+            self.nios.nios_expansion_gpio_write(0xffffffff, val)?;
         }
         Ok(())
     }
-    pub fn xb200_set_filterbank(&self, ch: Channel, filter: Xb200Filter) -> Result<()> {
-        if ch != Channel::Rx && ch != Channel::Tx {
-            log::error!("invalid channel");
-            return Err(Error::Invalid);
-        }
-        if !BladeRf1::xb200_is_enabled(&self.interface)? {
+    pub fn xb200_set_filterbank(&mut self, ch: Channel, filter: Xb200Filter) -> Result<()> {
+        if !xb::xb200_is_enabled(&mut self.nios)? {
             log::error!("xb_200 not enabled! need to enable?");
-            return Err(Error::Invalid);
+            return Err(Error::Unsupported("XB200 not enabled"));
         }
         if filter == Xb200Filter::Auto1db || filter == Xb200Filter::Auto3db {
             let frequency = self.get_frequency(ch)?;
@@ -189,17 +175,13 @@ impl BladeRf1 {
             self.set_filterbank_mux(ch, filter)
         }
     }
-    pub fn xb200_auto_filter_selection(&self, channel: Channel, frequency: u64) -> Result<()> {
-        if frequency >= 300000000 {
+    pub fn xb200_auto_filter_selection(&mut self, channel: Channel, frequency: u64) -> Result<()> {
+        if frequency >= 300_000_000 {
             return Ok(());
         }
-        if channel != Channel::Rx && channel != Channel::Tx {
-            log::error!("invalid channel");
-            return Err(Error::Invalid);
-        }
-        if !BladeRf1::xb200_is_enabled(&self.interface)? {
+        if !xb::xb200_is_enabled(&mut self.nios)? {
             log::error!("xb_200 not enabled! need to enable?");
-            return Err(Error::Invalid);
+            return Err(Error::Unsupported("XB200 not enabled"));
         }
         let fb = self.xb200_get_filterbank(channel)?;
         log::trace!("xb_200 current filterbank: {fb:?}");
@@ -213,12 +195,8 @@ impl BladeRf1 {
         };
         self.set_filterbank_mux(channel, filter)
     }
-    pub fn xb200_set_path(&self, ch: Channel, path: Xb200Path) -> Result<()> {
-        if ch != Channel::Rx && ch != Channel::Tx {
-            log::error!("invalid channel");
-            return Err(Error::Invalid);
-        }
-        let mut lval = self.lms.read(0x5A)?;
+    pub fn xb200_set_path(&mut self, ch: Channel, path: Xb200Path) -> Result<()> {
+        let mut lval = crate::bladerf1::hardware::lms6002d::read(&mut self.nios, 0x5A)?;
         let swap_mask = if ch == Channel::Rx {
             LMS_RX_SWAP
         } else {
@@ -229,8 +207,8 @@ impl BladeRf1 {
         } else {
             lval &= !swap_mask;
         }
-        self.lms.write(0x5A, lval)?;
-        let mut val = self.interface.lock().unwrap().nios_expansion_gpio_read()?;
+        crate::bladerf1::hardware::lms6002d::write(&mut self.nios, 0x5A, lval)?;
+        let mut val = self.nios.nios_expansion_gpio_read()?;
         log::trace!("[xb200_set_path] expansion_gpio_read: {val}");
         if (val & BLADERF_XB_RF_ON) == 0 {
             self.xb200_attach()?;
@@ -253,31 +231,30 @@ impl BladeRf1 {
         } else {
             val |= BLADERF_XB_CONFIG_TX_PATH_BYPASS;
         }
-        self.interface
-            .lock()
-            .unwrap()
-            .nios_expansion_gpio_write(0xffffffff, val)
+        self.nios.nios_expansion_gpio_write(0xffffffff, val)
     }
-    pub fn xb200_get_path(&self, ch: Channel) -> Result<Xb200Path> {
-        if ch != Channel::Rx && ch != Channel::Tx {
-            log::error!("invalid channel");
-            return Err(Error::Invalid);
-        }
-        let val = self.interface.lock().unwrap().nios_expansion_gpio_read()?;
-        log::trace!("[xb200_get_path] expansion_gpio_read: {val}");
+    pub fn xb200_get_path(&mut self, ch: Channel) -> Result<Xb200Path> {
+        let val = self.nios.nios_expansion_gpio_read()?;
+        log::trace!("[xb200_get_path] expansion_gpio_read: {val:#010x}");
         let bypass_bit = if ch == Channel::Rx {
             BLADERF_XB_CONFIG_RX_BYPASS
         } else {
             BLADERF_XB_CONFIG_TX_BYPASS
         };
+        log::trace!(
+            "[xb200_get_path] bypass_bit={bypass_bit:#x}, val & bypass_bit = {:#x}",
+            val & bypass_bit
+        );
         if val & bypass_bit != 0 {
+            log::trace!("[xb200_get_path] returning Mix");
             Ok(Xb200Path::Mix)
         } else {
+            log::trace!("[xb200_get_path] returning Bypass");
             Ok(Xb200Path::Bypass)
         }
     }
 }
-fn select_filter_from_table(frequency: u64, table: &[FilterEntry]) -> Xb200Filter {
+pub(crate) fn select_filter_from_table(frequency: u64, table: &[FilterEntry]) -> Xb200Filter {
     for (range, filter) in table {
         if range.contains(&frequency) {
             return *filter;

@@ -8,8 +8,8 @@ fn main() -> Result<()> {
         .filter_module("nusb", log::LevelFilter::Info)
         .init();
 
-    let bladerf = BladeRf1::from_first()?;
-    bladerf.initialize()?;
+    let mut bladerf = BladeRf1::from_first()?;
+    bladerf.initialize(false)?;
 
     let dc_cals = bladerf.get_dc_cals()?;
     log::debug!("{dc_cals}");

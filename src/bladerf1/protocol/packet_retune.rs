@@ -32,14 +32,13 @@ impl<'a> NiosPktRetuneRequest<'a> {
     const MASK_VCOCAP: u8 = 0x3f;
     pub(crate) const RETUNE_NOW: u64 = 0x00;
     pub(crate) const CLEAR_QUEUE: u64 = u64::MAX;
-    pub fn new(buf: &'a mut [u8]) -> Self {
-        assert!(
-            buf.len() >= Self::NIOS_PKT_SIZE,
-            "buffer must be at least 16 bytes"
-        );
-        Self {
-            buf: &mut buf[..Self::NIOS_PKT_SIZE],
+    pub fn new(buf: &'a mut [u8]) -> Result<Self> {
+        if buf.len() < Self::NIOS_PKT_SIZE {
+            return Err(NiosPacketError::InvalidSize(buf.len()).into());
         }
+        Ok(Self {
+            buf: &mut buf[..Self::NIOS_PKT_SIZE],
+        })
     }
     #[allow(clippy::too_many_arguments)]
     pub fn prepare(
@@ -178,11 +177,9 @@ impl<'a> NiosPktRetuneResponse<'a> {
         })
     }
     pub fn duration(&self) -> u64 {
-        u64::from_le_bytes(
-            self.buf[Self::IDX_TIMESTAMP..Self::IDX_TIMESTAMP + 8]
-                .try_into()
-                .unwrap(),
-        )
+        let mut bytes = [0u8; 8];
+        bytes.copy_from_slice(&self.buf[Self::IDX_TIMESTAMP..Self::IDX_TIMESTAMP + 8]);
+        u64::from_le_bytes(bytes)
     }
     pub fn vcocap_valid(&self) -> bool {
         self.buf[Self::IDX_FLAGS] & Self::FLAG_DURATION_VCOCAP_VALID != 0

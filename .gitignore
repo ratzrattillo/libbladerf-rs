@@ -9,4 +9,15 @@ Cargo.lock
 *.pdb
 .DS_Store
 
+
 TODO.md
+MAINTAINERS.md
+resources/
+fuzz/
+benches/
+tests/
+.github/
+.cargo/
+examples/kalibrate
+examples/kalibrate-5g
+examples/bench-stream

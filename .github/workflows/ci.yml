@@ -34,10 +34,16 @@ jobs:
         key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
 
     - name: Run clippy
-      run: cargo clippy --all-features -- -D warnings
+      run: cargo clippy --features bladerf1 --all-targets -- -D warnings
 
     - name: Check formatting
       run: cargo fmt --all -- --check
+
+    - name: Run cargo-audit
+      uses: rustsec/audit-action@v2
+
+    - name: Run cargo-deny
+      uses: EmbarkStudios/cargo-deny-action@v2
 
   docs:
     name: Documentation
@@ -46,4 +52,4 @@ jobs:
       - uses: actions/checkout@v5
 
       - name: Build documentation
-        run: cargo doc --all-features --no-deps
+        run: cargo doc --features bladerf1 --no-deps

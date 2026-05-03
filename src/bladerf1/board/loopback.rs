@@ -1,38 +1,38 @@
 use crate::bladerf1::BladeRf1;
-use crate::bladerf1::hardware::lms6002d::loopback::Loopback;
+use crate::bladerf1::hardware::lms6002d;
+pub use crate::bladerf1::hardware::lms6002d::loopback::Loopback;
 use crate::error::Result;
 use crate::transport::usb::BladeRf1UsbInterfaceCommands;
 impl BladeRf1 {
-    pub fn set_loopback(&self, lb: Loopback) -> Result<()> {
+    pub fn set_loopback(&mut self, lb: Loopback) -> Result<()> {
         match lb {
             Loopback::Firmware => {
-                self.lms.set_loopback_mode(Loopback::Lna3)?;
-                self.interface
-                    .lock()
-                    .unwrap()
-                    .usb_set_firmware_loopback(true)
+                lms6002d::loopback::set_loopback_mode(&mut self.nios, Loopback::Lna3)?;
+                self.nios.usb_set_firmware_loopback(true)
             }
             _ => {
-                let fw_lb_enabled: bool =
-                    self.interface.lock().unwrap().usb_get_firmware_loopback()?;
+                let fw_lb_enabled: bool = self.nios.usb_get_firmware_loopback()?;
                 if fw_lb_enabled {
-                    self.interface
-                        .lock()
-                        .unwrap()
-                        .usb_set_firmware_loopback(false)?;
+                    self.nios.usb_set_firmware_loopback(false)?;
                 }
-                self.lms.set_loopback_mode(lb)
+                lms6002d::loopback::set_loopback_mode(&mut self.nios, lb)
             }
         }
     }
-    pub fn get_loopback(&self) -> Result<Loopback> {
+    pub fn set_lms_loopback(&mut self, lb: Loopback) -> Result<()> {
+        lms6002d::loopback::set_loopback_mode(&mut self.nios, lb)
+    }
+    pub fn get_lms_loopback(&mut self) -> Result<Loopback> {
+        lms6002d::loopback::get_loopback_mode(&mut self.nios)
+    }
+    pub fn get_loopback(&mut self) -> Result<Loopback> {
         let mut lb = Loopback::None;
-        let fw_lb_enabled = self.interface.lock().unwrap().usb_get_firmware_loopback()?;
+        let fw_lb_enabled = self.nios.usb_get_firmware_loopback()?;
         if fw_lb_enabled {
             lb = Loopback::Firmware;
         }
         if lb == Loopback::None {
-            lb = self.lms.get_loopback_mode()?;
+            lb = lms6002d::loopback::get_loopback_mode(&mut self.nios)?;
         }
         Ok(lb)
     }

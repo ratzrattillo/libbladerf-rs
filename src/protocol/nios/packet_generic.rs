@@ -83,31 +83,22 @@ impl<'a, A: NiosNum, D: NiosNum> NiosPkt<'a, A, D> {
     const MAGIC_16X64: u8 = 0x45;
     const MAGIC_32X32: u8 = 0x4B;
     const NIOS_PKT_SIZE: usize = 16;
-    const fn magic() -> u8 {
+    const fn magic() -> Option<u8> {
         match (A::SIZE, D::SIZE) {
-            (1, 1) => Self::MAGIC_8X8,
-            (1, 2) => Self::MAGIC_8X16,
-            (1, 4) => Self::MAGIC_8X32,
-            (1, 8) => Self::MAGIC_8X64,
-            (2, 8) => Self::MAGIC_16X64,
-            (4, 4) => Self::MAGIC_32X32,
-            _ => panic!("unsupported address/data size combination"),
+            (1, 1) => Some(Self::MAGIC_8X8),
+            (1, 2) => Some(Self::MAGIC_8X16),
+            (1, 4) => Some(Self::MAGIC_8X32),
+            (1, 8) => Some(Self::MAGIC_8X64),
+            (2, 8) => Some(Self::MAGIC_16X64),
+            (4, 4) => Some(Self::MAGIC_32X32),
+            _ => None,
         }
     }
-    pub fn new(buf: &'a mut [u8]) -> Self {
-        assert!(
-            buf.len() >= Self::NIOS_PKT_SIZE,
-            "buffer must be at least 16 bytes"
-        );
-        Self {
-            buf: &mut buf[..Self::NIOS_PKT_SIZE],
-            phantom: PhantomData,
-        }
-    }
-    pub fn try_new(buf: &'a mut [u8]) -> Result<Self> {
+    pub fn new(buf: &'a mut [u8]) -> Result<Self> {
         if buf.len() < Self::NIOS_PKT_SIZE {
             return Err(NiosPacketError::InvalidSize(buf.len()).into());
         }
+        let _magic = Self::magic().ok_or(NiosPacketError::InvalidTypeCombination)?;
         Ok(Self {
             buf: &mut buf[..Self::NIOS_PKT_SIZE],
             phantom: PhantomData,
@@ -127,7 +118,7 @@ impl<'a, A: NiosNum, D: NiosNum> NiosPkt<'a, A, D> {
         self.set_data(data);
     }
     fn set_magic(&mut self) {
-        self.buf[Self::IDX_MAGIC] = Self::magic();
+        self.buf[Self::IDX_MAGIC] = Self::magic().unwrap();
     }
     fn set_target(&mut self, target: u8) {
         self.buf[Self::IDX_TARGET] = target;
@@ -164,12 +155,6 @@ impl<'a, A: NiosNum, D: NiosNum> NiosPkt<'a, A, D> {
             .copy_from_slice(&self.buf[data_offset..data_offset + D::SIZE]);
         D::from_le_bytes(bytes)
     }
-    pub fn is_write(&self) -> bool {
-        self.buf[Self::IDX_FLAGS] & (NiosPktFlags::Write as u8) != 0
-    }
-    pub fn is_read(&self) -> bool {
-        !self.is_write()
-    }
     pub fn is_success(&self) -> bool {
         self.buf[Self::IDX_FLAGS] & (NiosPktStatus::Success as u8) != 0
     }
@@ -195,11 +180,5 @@ impl NiosPktDecoder {
             .as_mut()
             .copy_from_slice(&buf[data_offset..data_offset + D::SIZE]);
         Ok(D::from_le_bytes(bytes))
-    }
-    pub fn is_success(buf: &[u8]) -> bool {
-        const IDX_FLAGS: usize = 2;
-        buf.get(IDX_FLAGS)
-            .map(|&f| f & (NiosPktStatus::Success as u8) != 0)
-            .unwrap_or(false)
     }
 }

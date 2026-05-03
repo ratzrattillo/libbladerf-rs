@@ -1,13 +1,37 @@
 use crate::bladerf1::BladeRf1;
-use crate::bladerf1::board::xb::{
-    BLADERF_XB100_LED_D1, BLADERF_XB100_LED_D2, BLADERF_XB100_LED_D3, BLADERF_XB100_LED_D4,
-    BLADERF_XB100_LED_D5, BLADERF_XB100_LED_D6, BLADERF_XB100_LED_D7, BLADERF_XB100_LED_D8,
-    BLADERF_XB100_TLED_BLUE, BLADERF_XB100_TLED_GREEN, BLADERF_XB100_TLED_RED, detect_xb_board,
-};
-use crate::bladerf1::nios_client::NiosInterface;
 use crate::error::Result;
-use std::sync::{Arc, Mutex};
-const XB100_LED_MASK: u32 = (BLADERF_XB100_LED_D1
+
+macro_rules! bladerf_xb_gpio {
+    ($n:expr) => {
+        (1 << ($n - 1)) as u8
+    };
+}
+
+const BLADERF_XB_GPIO_20: u8 = bladerf_xb_gpio!(20);
+const BLADERF_XB_GPIO_21: u8 = bladerf_xb_gpio!(21);
+const BLADERF_XB_GPIO_22: u8 = bladerf_xb_gpio!(22);
+const BLADERF_XB_GPIO_23: u8 = bladerf_xb_gpio!(23);
+const BLADERF_XB_GPIO_24: u8 = bladerf_xb_gpio!(24);
+const BLADERF_XB_GPIO_25: u8 = bladerf_xb_gpio!(25);
+const BLADERF_XB_GPIO_28: u8 = bladerf_xb_gpio!(28);
+const BLADERF_XB_GPIO_29: u8 = bladerf_xb_gpio!(29);
+const BLADERF_XB_GPIO_30: u8 = bladerf_xb_gpio!(30);
+const BLADERF_XB_GPIO_31: u8 = bladerf_xb_gpio!(31);
+const BLADERF_XB_GPIO_32: u8 = bladerf_xb_gpio!(32);
+
+const BLADERF_XB100_LED_D1: u8 = BLADERF_XB_GPIO_24;
+const BLADERF_XB100_LED_D2: u8 = BLADERF_XB_GPIO_32;
+const BLADERF_XB100_LED_D3: u8 = BLADERF_XB_GPIO_30;
+const BLADERF_XB100_LED_D4: u8 = BLADERF_XB_GPIO_28;
+const BLADERF_XB100_LED_D5: u8 = BLADERF_XB_GPIO_23;
+const BLADERF_XB100_LED_D6: u8 = BLADERF_XB_GPIO_25;
+const BLADERF_XB100_LED_D7: u8 = BLADERF_XB_GPIO_31;
+const BLADERF_XB100_LED_D8: u8 = BLADERF_XB_GPIO_29;
+const BLADERF_XB100_TLED_RED: u8 = BLADERF_XB_GPIO_22;
+const BLADERF_XB100_TLED_GREEN: u8 = BLADERF_XB_GPIO_21;
+const BLADERF_XB100_TLED_BLUE: u8 = BLADERF_XB_GPIO_20;
+
+pub(crate) const XB100_DETECT_MASK: u32 = (BLADERF_XB100_LED_D1
     | BLADERF_XB100_LED_D2
     | BLADERF_XB100_LED_D3
     | BLADERF_XB100_LED_D4
@@ -18,22 +42,23 @@ const XB100_LED_MASK: u32 = (BLADERF_XB100_LED_D1
     | BLADERF_XB100_TLED_RED
     | BLADERF_XB100_TLED_GREEN
     | BLADERF_XB100_TLED_BLUE) as u32;
+
+const XB100_LED_MASK: u32 = XB100_DETECT_MASK;
+
 impl BladeRf1 {
-    pub fn xb100_is_enabled(interface: &Arc<Mutex<NiosInterface>>) -> Result<bool> {
-        detect_xb_board(interface, XB100_LED_MASK)
-    }
-    pub fn xb100_attach(&self) -> Result<()> {
+    pub fn xb100_attach(&mut self) -> Result<()> {
         Ok(())
     }
-    pub fn xb100_enable(&self, enable: bool) -> Result<()> {
+    pub fn xb100_enable(&mut self, enable: bool) -> Result<()> {
         if enable {
-            let mut interface = self.interface.lock().unwrap();
-            interface.nios_expansion_gpio_dir_write(XB100_LED_MASK, XB100_LED_MASK)?;
-            interface.nios_expansion_gpio_write(XB100_LED_MASK, XB100_LED_MASK)?;
+            self.nios
+                .nios_expansion_gpio_dir_write(XB100_LED_MASK, XB100_LED_MASK)?;
+            self.nios
+                .nios_expansion_gpio_write(XB100_LED_MASK, XB100_LED_MASK)?;
         }
         Ok(())
     }
-    pub fn xb100_init(&self) -> Result<()> {
+    pub fn xb100_init(&mut self) -> Result<()> {
         Ok(())
     }
 }

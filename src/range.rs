@@ -71,7 +71,7 @@ impl Range {
                     }
                 }
                 RangeItem::Value(v) => {
-                    if (v - value).abs() <= f64::EPSILON {
+                    if (v - value).abs() <= v.abs().max(value.abs()) * f64::EPSILON * 2.0 {
                         return true;
                     }
                 }
@@ -81,7 +81,7 @@ impl Range {
                     }
                     let mut v = min + ((value - min) / step).floor() * step;
                     while v <= max && v <= value {
-                        if (v - value).abs() <= f64::EPSILON {
+                        if (v - value).abs() <= v.abs().max(value.abs()) * f64::EPSILON * 2.0 {
                             return true;
                         }
                         v += step;
@@ -277,7 +277,7 @@ mod tests {
             RangeItem::Step(100.0, 110.0, 1.0, 1.0),
         ]);
         assert_eq!(r.closest(122.0), Some(123.0));
-        assert_eq!(r.closest(1000.0), Some(123.0));
+        assert_eq!(r.closest(1_000.0), Some(123.0));
         assert_eq!(r.closest(30.0), Some(30.0));
         assert_eq!(r.closest(20.0), Some(23.0));
         assert_eq!(r.closest(50.0), Some(42.0));
@@ -295,7 +295,7 @@ mod tests {
             RangeItem::Step(100.0, 110.0, 1.0, 1.0),
         ]);
         assert_eq!(r.at_least(120.0), Some(123.0));
-        assert_eq!(r.at_least(1000.0), None);
+        assert_eq!(r.at_least(1_000.0), None);
         assert_eq!(r.at_least(30.0), Some(30.0));
         assert_eq!(r.at_least(10.0), Some(23.0));
         assert_eq!(r.at_least(99.0), Some(100.0));

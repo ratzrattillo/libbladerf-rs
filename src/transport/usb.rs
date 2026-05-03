@@ -12,11 +12,19 @@ pub const STREAM_ENDPOINT_RX: u8 = 0x81;
 pub const STREAM_ENDPOINT_TX: u8 = 0x01;
 pub const USB_IF_NULL: u8 = 0;
 pub const USB_IF_RF_LINK: u8 = 1;
+pub const USB_IF_SPI_FLASH: u8 = 2;
+pub const USB_IF_CONFIG: u8 = 3;
 pub const BLADE_USB_CMD_RF_RX: u8 = 4;
 pub const BLADE_USB_CMD_RF_TX: u8 = 5;
+pub const BLADE_USB_CMD_QUERY_DEVICE_READY: u8 = 6;
+pub const BLADE_USB_CMD_FLASH_READ: u8 = 100;
+pub const BLADE_USB_CMD_FLASH_WRITE: u8 = 101;
+pub const BLADE_USB_CMD_FLASH_ERASE: u8 = 102;
+pub const BLADE_USB_CMD_READ_PAGE_BUFFER: u8 = 107;
+pub const BLADE_USB_CMD_WRITE_PAGE_BUFFER: u8 = 108;
+pub const BLADE_USB_CMD_READ_CAL_CACHE: u8 = 110;
 pub const BLADE_USB_CMD_SET_LOOPBACK: u8 = 113;
 pub const BLADE_USB_CMD_GET_LOOPBACK: u8 = 114;
-pub const BLADE_USB_CMD_QUERY_DEVICE_READY: u8 = 6;
 pub const BLADE_USB_CMD_RESET: u8 = 105;
 const TIMEOUT: Duration = Duration::from_secs(1);
 #[repr(u8)]
@@ -26,13 +34,8 @@ pub enum StringDescriptors {
     Serial,
     Fx3Firmware,
 }
-#[repr(u8)]
-pub enum DescriptorTypes {
-    Configuration = 0x2,
-}
 pub trait DeviceCommands {
     fn get_supported_languages(&self) -> Result<Vec<u16>>;
-    fn get_configuration_descriptor(&self, descriptor_index: u8) -> Result<Vec<u8>>;
     fn get_string_descriptor_simple(&self, descriptor_index: NonZero<u8>) -> Result<String>;
     fn serial(&self) -> Result<String>;
     fn manufacturer(&self) -> Result<String>;
@@ -42,43 +45,32 @@ impl DeviceCommands for Device {
     fn get_supported_languages(&self) -> Result<Vec<u16>> {
         let languages = self
             .get_string_descriptor_supported_languages(TIMEOUT)
-            .wait()
-            .map_err(|_| Error::Invalid)?
+            .wait()?
             .collect();
         Ok(languages)
-    }
-    fn get_configuration_descriptor(&self, descriptor_index: u8) -> Result<Vec<u8>> {
-        let descriptor = self
-            .get_descriptor(
-                DescriptorTypes::Configuration as u8,
-                descriptor_index,
-                0x00,
-                TIMEOUT,
-            )
-            .wait()
-            .map_err(|_| Error::Invalid)?;
-        Ok(descriptor)
     }
     fn get_string_descriptor_simple(&self, descriptor_index: NonZero<u8>) -> Result<String> {
         let descriptor = self
             .get_string_descriptor(descriptor_index, 0x409, TIMEOUT)
-            .wait()
-            .map_err(|_| Error::Invalid)?;
+            .wait()?;
         Ok(descriptor)
     }
     fn serial(&self) -> Result<String> {
         self.get_string_descriptor_simple(
-            NonZero::try_from(StringDescriptors::Serial as u8).map_err(|_| Error::Invalid)?,
+            NonZero::new(StringDescriptors::Serial as u8)
+                .expect("Serial descriptor index is non-zero"),
         )
     }
     fn manufacturer(&self) -> Result<String> {
         self.get_string_descriptor_simple(
-            NonZero::try_from(StringDescriptors::Manufacturer as u8).map_err(|_| Error::Invalid)?,
+            NonZero::new(StringDescriptors::Manufacturer as u8)
+                .expect("Manufacturer descriptor index is non-zero"),
         )
     }
     fn product(&self) -> Result<String> {
         self.get_string_descriptor_simple(
-            NonZero::try_from(StringDescriptors::Product as u8).map_err(|_| Error::Invalid)?,
+            NonZero::new(StringDescriptors::Product as u8)
+                .expect("Product descriptor index is non-zero"),
         )
     }
 }
@@ -88,69 +80,80 @@ pub trait BladeRf1DeviceCommands: DeviceCommands {
 impl BladeRf1DeviceCommands for Device {
     fn fx3_firmware_version(&self) -> Result<String> {
         self.get_string_descriptor_simple(
-            NonZero::try_from(StringDescriptors::Fx3Firmware as u8).map_err(|_| Error::Invalid)?,
+            NonZero::new(StringDescriptors::Fx3Firmware as u8)
+                .expect("Fx3Firmware descriptor index is non-zero"),
         )
     }
 }
 pub trait UsbInterfaceCommands {
     fn usb_vendor_cmd_int(&self, cmd: u8) -> Result<u32>;
-    fn usb_vendor_cmd_int_wvalue(&self, cmd: u8, wvalue: u16) -> Result<u32>;
+    fn usb_vendor_cmd_int_w_value(&self, cmd: u8, w_value: u16) -> Result<u32>;
+    fn usb_vendor_cmd_int_w_index(&self, cmd: u8, w_index: u16) -> Result<u32>;
+    fn usb_vendor_cmd_out_w_index(&self, cmd: u8, w_index: u16, data: &[u8]) -> Result<()>;
+    fn usb_vendor_cmd_in_w_index_data(&self, cmd: u8, w_index: u16, buf: &mut [u8]) -> Result<()>;
     fn usb_change_setting(&mut self, setting: u8) -> Result<()>;
-    fn usb_set_configuration(&self, configuration: u16) -> Result<()>;
 }
 impl UsbInterfaceCommands for Interface {
     fn usb_vendor_cmd_int(&self, cmd: u8) -> Result<u32> {
-        let pkt = ControlIn {
+        let vec = vendor_cmd_in(self, cmd, 0, 0, 4)?;
+        Ok(u32::from_le_bytes(vec[0..4].try_into().unwrap()))
+    }
+    fn usb_vendor_cmd_int_w_value(&self, cmd: u8, w_value: u16) -> Result<u32> {
+        let vec = vendor_cmd_in(self, cmd, w_value, 0, 4)?;
+        Ok(u32::from_le_bytes(vec[0..4].try_into().unwrap()))
+    }
+    fn usb_vendor_cmd_int_w_index(&self, cmd: u8, w_index: u16) -> Result<u32> {
+        let vec = vendor_cmd_in(self, cmd, 0, w_index, 4)?;
+        Ok(u32::from_le_bytes(vec[0..4].try_into().unwrap()))
+    }
+    fn usb_vendor_cmd_out_w_index(&self, cmd: u8, w_index: u16, data: &[u8]) -> Result<()> {
+        let pkt = ControlOut {
             control_type: ControlType::Vendor,
             recipient: Recipient::Device,
             request: cmd,
             value: 0,
-            index: 0,
-            length: 0x4,
+            index: w_index,
+            data,
         };
-        let vec = self.control_in(pkt, TIMEOUT).wait()?;
-        log::debug!("get_vendor_cmd_int response data: {vec:?}");
-        Ok(u32::from_le_bytes(
-            vec.as_slice()[0..4]
-                .try_into()
-                .map_err(|_| Error::Invalid)?,
-        ))
+        self.control_out(pkt, TIMEOUT).wait()?;
+        Ok(())
     }
-    fn usb_vendor_cmd_int_wvalue(&self, cmd: u8, wvalue: u16) -> Result<u32> {
-        let pkt = ControlIn {
-            control_type: ControlType::Vendor,
-            recipient: Recipient::Device,
-            request: cmd,
-            value: wvalue,
-            index: 0,
-            length: 0x4,
-        };
-        let vec = self.control_in(pkt, TIMEOUT).wait()?;
-        log::trace!("vendor_cmd_int_wvalue response data: {vec:?}");
-        Ok(u32::from_le_bytes(
-            vec.as_slice()[0..4]
-                .try_into()
-                .map_err(|_| Error::Invalid)?,
-        ))
+    fn usb_vendor_cmd_in_w_index_data(&self, cmd: u8, w_index: u16, buf: &mut [u8]) -> Result<()> {
+        let length = u16::try_from(buf.len())
+            .map_err(|_| Error::Argument("buffer length exceeds u16 maximum".into()))?;
+        let vec = vendor_cmd_in(self, cmd, 0, w_index, length)?;
+        let copy_len = buf.len().min(vec.len());
+        buf[..copy_len].copy_from_slice(&vec[..copy_len]);
+        Ok(())
     }
     fn usb_change_setting(&mut self, setting: u8) -> Result<()> {
         Ok(self.set_alt_setting(setting).wait()?)
     }
-    fn usb_set_configuration(&self, configuration: u16) -> Result<()> {
-        Ok(self
-            .control_out(
-                ControlOut {
-                    control_type: ControlType::Standard,
-                    recipient: Recipient::Device,
-                    request: 0x09,
-                    value: configuration,
-                    index: 0x00,
-                    data: &[],
-                },
-                TIMEOUT,
-            )
-            .wait()?)
+}
+
+fn vendor_cmd_in(
+    iface: &Interface,
+    cmd: u8,
+    value: u16,
+    index: u16,
+    length: u16,
+) -> Result<Vec<u8>> {
+    let pkt = ControlIn {
+        control_type: ControlType::Vendor,
+        recipient: Recipient::Device,
+        request: cmd,
+        value,
+        index,
+        length,
+    };
+    let vec = iface.control_in(pkt, TIMEOUT).wait()?;
+    if length as usize >= 4 && vec.len() < 4 {
+        return Err(Error::UsbControlResponseTooShort {
+            expected: 4,
+            actual: vec.len(),
+        });
     }
+    Ok(vec)
 }
 pub trait BladeRf1UsbInterfaceCommands: UsbInterfaceCommands {
     fn usb_enable_module(&self, channel: Channel, enable: bool) -> Result<()>;
@@ -167,11 +170,17 @@ impl BladeRf1UsbInterfaceCommands for Interface {
         } else {
             BLADE_USB_CMD_RF_TX
         };
-        let _fx3_ret = self.usb_vendor_cmd_int_wvalue(cmd, val)?;
+        let fx3_ret = self.usb_vendor_cmd_int_w_value(cmd, val)?;
+        if fx3_ret != 0 {
+            log::warn!("usb_enable_module({channel:?}, {enable}): firmware returned {fx3_ret:#x}");
+        }
         Ok(())
     }
     fn usb_set_firmware_loopback(&mut self, enable: bool) -> Result<()> {
-        self.usb_vendor_cmd_int_wvalue(BLADE_USB_CMD_SET_LOOPBACK, enable as u16)?;
+        let fx3_ret = self.usb_vendor_cmd_int_w_value(BLADE_USB_CMD_SET_LOOPBACK, enable as u16)?;
+        if fx3_ret != 0 {
+            log::warn!("usb_set_firmware_loopback({enable}): firmware returned {fx3_ret:#x}");
+        }
         self.usb_change_setting(USB_IF_NULL)?;
         self.usb_change_setting(USB_IF_RF_LINK)?;
         Ok(())
@@ -200,25 +209,40 @@ impl UsbInterfaceCommands for UsbTransport {
     fn usb_vendor_cmd_int(&self, cmd: u8) -> Result<u32> {
         self.interface.usb_vendor_cmd_int(cmd)
     }
-    fn usb_vendor_cmd_int_wvalue(&self, cmd: u8, wvalue: u16) -> Result<u32> {
-        self.interface.usb_vendor_cmd_int_wvalue(cmd, wvalue)
+    fn usb_vendor_cmd_int_w_value(&self, cmd: u8, wvalue: u16) -> Result<u32> {
+        self.interface.usb_vendor_cmd_int_w_value(cmd, wvalue)
+    }
+    fn usb_vendor_cmd_int_w_index(&self, cmd: u8, windex: u16) -> Result<u32> {
+        self.interface.usb_vendor_cmd_int_w_index(cmd, windex)
+    }
+    fn usb_vendor_cmd_out_w_index(&self, cmd: u8, windex: u16, data: &[u8]) -> Result<()> {
+        self.interface.usb_vendor_cmd_out_w_index(cmd, windex, data)
+    }
+    fn usb_vendor_cmd_in_w_index_data(&self, cmd: u8, windex: u16, buf: &mut [u8]) -> Result<()> {
+        self.interface
+            .usb_vendor_cmd_in_w_index_data(cmd, windex, buf)
     }
     fn usb_change_setting(&mut self, setting: u8) -> Result<()> {
         self.release_endpoints();
         self.interface.set_alt_setting(setting).wait()?;
         Ok(())
     }
-    fn usb_set_configuration(&self, configuration: u16) -> Result<()> {
-        self.interface.usb_set_configuration(configuration)
-    }
 }
 impl BladeRf1UsbInterfaceCommands for UsbTransport {
     fn usb_enable_module(&self, channel: Channel, enable: bool) -> Result<()> {
         self.interface.usb_enable_module(channel, enable)
     }
+    // Does NOT delegate to self.interface.usb_set_firmware_loopback()
+    // because this impl must call self.usb_change_setting() (which
+    // releases NiosPkt URBs via release_endpoints()) before the
+    // alt-setting change. The Interface impl lacks NiosPkt endpoints.
     fn usb_set_firmware_loopback(&mut self, enable: bool) -> Result<()> {
-        self.interface
-            .usb_vendor_cmd_int_wvalue(BLADE_USB_CMD_SET_LOOPBACK, enable as u16)?;
+        let fx3_ret = self
+            .interface
+            .usb_vendor_cmd_int_w_value(BLADE_USB_CMD_SET_LOOPBACK, enable as u16)?;
+        if fx3_ret != 0 {
+            log::warn!("usb_set_firmware_loopback({enable}): firmware returned {fx3_ret:#x}");
+        }
         self.usb_change_setting(USB_IF_NULL)?;
         self.usb_change_setting(USB_IF_RF_LINK)?;
         Ok(())
@@ -255,18 +279,50 @@ impl UsbTransport {
         &self.interface
     }
     pub fn release_endpoints(&mut self) {
-        self.nios_endpoints = None;
+        if let Some(mut endpoints) = self.nios_endpoints.take() {
+            endpoints.ep_out.cancel_all();
+            endpoints.ep_in.cancel_all();
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            while endpoints.ep_out.pending() > 0 || endpoints.ep_in.pending() > 0 {
+                let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+                let timeout = remaining.min(Duration::from_secs(1));
+                if timeout.is_zero() {
+                    log::warn!(
+                        "Timeout collecting cancelled NiosPkt transfers, OUT={} IN={} remain",
+                        endpoints.ep_out.pending(),
+                        endpoints.ep_in.pending()
+                    );
+                    break;
+                }
+                if endpoints.ep_out.pending() > 0
+                    && let Some(completion) = endpoints.ep_out.wait_next_complete(timeout)
+                {
+                    match completion.status {
+                        Ok(()) | Err(nusb::transfer::TransferError::Cancelled) => {}
+                        Err(e) => log::warn!("NiosPkt OUT transfer error during release: {e}"),
+                    }
+                }
+                if endpoints.ep_in.pending() > 0
+                    && let Some(completion) = endpoints.ep_in.wait_next_complete(timeout)
+                {
+                    match completion.status {
+                        Ok(()) | Err(nusb::transfer::TransferError::Cancelled) => {}
+                        Err(e) => log::warn!("NiosPkt IN transfer error during release: {e}"),
+                    }
+                }
+            }
+        }
     }
     fn ensure_nios_endpoints(&mut self) -> Result<&mut NiosEndpoints> {
         if self.nios_endpoints.is_none() {
             let ep_out = self
                 .interface
                 .endpoint::<Bulk, Out>(CONTROL_ENDPOINT_OUT)
-                .map_err(|_| Error::EndpointBusy)?;
+                .map_err(Error::EndpointBusy)?;
             let ep_in = self
                 .interface
                 .endpoint::<Bulk, In>(CONTROL_ENDPOINT_IN)
-                .map_err(|_| Error::EndpointBusy)?;
+                .map_err(Error::EndpointBusy)?;
             let buf_out = Some(ep_out.allocate(Self::NIOS_PKT_SIZE));
             let buf_in = Some(ep_in.allocate(ep_in.max_packet_size()));
             self.nios_endpoints = Some(NiosEndpoints {
@@ -276,7 +332,9 @@ impl UsbTransport {
                 buf_in,
             });
         }
-        Ok(self.nios_endpoints.as_mut().unwrap())
+        self.nios_endpoints
+            .as_mut()
+            .ok_or(Error::EndpointNotAvailable)
     }
     pub fn out_buffer(&mut self) -> Result<&mut [u8]> {
         Transport::out_buffer(self)
@@ -284,18 +342,21 @@ impl UsbTransport {
     pub fn acquire_streaming_rx_endpoint(&self) -> Result<Endpoint<Bulk, In>> {
         self.interface
             .endpoint::<Bulk, In>(STREAM_ENDPOINT_RX)
-            .map_err(|_| Error::EndpointBusy)
+            .map_err(Error::EndpointBusy)
     }
     pub fn acquire_streaming_tx_endpoint(&self) -> Result<Endpoint<Bulk, Out>> {
         self.interface
             .endpoint::<Bulk, Out>(STREAM_ENDPOINT_TX)
-            .map_err(|_| Error::EndpointBusy)
+            .map_err(Error::EndpointBusy)
     }
 }
 impl Transport for UsbTransport {
     fn out_buffer(&mut self) -> Result<&mut [u8]> {
         let endpoints = self.ensure_nios_endpoints()?;
-        let buf = endpoints.buf_out.as_mut().ok_or(Error::EndpointBusy)?;
+        let buf = endpoints
+            .buf_out
+            .as_mut()
+            .ok_or(Error::EndpointNotAvailable)?;
         buf.clear();
         buf.extend_fill(Self::NIOS_PKT_SIZE, 0);
         Ok(buf)
@@ -303,7 +364,10 @@ impl Transport for UsbTransport {
     fn submit(&mut self, timeout: Option<Duration>) -> Result<&[u8]> {
         let endpoints = self.ensure_nios_endpoints()?;
         let t = timeout.unwrap_or(TIMEOUT);
-        let buf_out = endpoints.buf_out.take().ok_or(Error::EndpointBusy)?;
+        let buf_out = endpoints
+            .buf_out
+            .take()
+            .ok_or(Error::EndpointNotAvailable)?;
         log::trace!("submit: OUT buffer len = {}", buf_out.len());
         endpoints.ep_out.submit(buf_out);
         let mut response = endpoints
@@ -312,7 +376,7 @@ impl Transport for UsbTransport {
             .ok_or(Error::Timeout)?;
         response.status?;
         endpoints.buf_out = Some(response.buffer);
-        let mut buf_in = endpoints.buf_in.take().ok_or(Error::EndpointBusy)?;
+        let mut buf_in = endpoints.buf_in.take().ok_or(Error::EndpointNotAvailable)?;
         buf_in.set_requested_len(endpoints.ep_in.max_packet_size());
         endpoints.ep_in.submit(buf_in);
         response = endpoints
@@ -321,7 +385,10 @@ impl Transport for UsbTransport {
             .ok_or(Error::Timeout)?;
         response.status?;
         endpoints.buf_in = Some(response.buffer);
-        let in_buf = endpoints.buf_in.as_ref().unwrap();
+        let in_buf = endpoints
+            .buf_in
+            .as_ref()
+            .ok_or(Error::EndpointNotAvailable)?;
         let in_len = in_buf.len();
         if in_len < Self::NIOS_PKT_SIZE {
             return Err(NiosPacketError::InvalidSize(in_len).into());

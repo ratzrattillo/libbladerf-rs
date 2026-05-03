@@ -19,10 +19,7 @@ impl TryFrom<u8> for Channel {
         match value {
             0 => Ok(Channel::Rx),
             1 => Ok(Channel::Tx),
-            _ => {
-                log::error!("unsupported channel!");
-                Err(Error::Invalid)
-            }
+            _ => Err(Error::Argument("invalid channel value".into())),
         }
     }
 }

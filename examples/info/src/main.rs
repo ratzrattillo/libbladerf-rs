@@ -1,7 +1,7 @@
 use anyhow::Result;
 use libbladerf_rs::Channel;
-use libbladerf_rs::bladerf1::BladeRf1;
 use libbladerf_rs::bladerf1::hardware::lms6002d::gain::GainDb;
+use libbladerf_rs::bladerf1::{BladeRf1, TuningMode};
 
 fn main() -> Result<()> {
     env_logger::builder()
@@ -9,11 +9,11 @@ fn main() -> Result<()> {
         .filter_module("nusb", log::LevelFilter::Info)
         .init();
 
-    let bladerf = BladeRf1::from_first()?;
+    let mut bladerf = BladeRf1::from_first()?;
 
     log::debug!("FX3 Firmware: {}", bladerf.fx3_firmware_version()?);
 
-    bladerf.initialize()?;
+    bladerf.initialize(false)?;
 
     log::debug!("FPGA: {}", bladerf.fpga_version()?);
 
@@ -30,8 +30,16 @@ fn main() -> Result<()> {
     log::debug!("Frequency Range: {frequency_range:?}");
 
     // Set Frequency to minimum frequency
-    bladerf.set_frequency(Channel::Rx, frequency_range.min().unwrap() as u64)?;
-    bladerf.set_frequency(Channel::Tx, frequency_range.min().unwrap() as u64)?;
+    bladerf.set_frequency(
+        Channel::Rx,
+        frequency_range.min().unwrap() as u64,
+        TuningMode::Fpga,
+    )?;
+    bladerf.set_frequency(
+        Channel::Tx,
+        frequency_range.min().unwrap() as u64,
+        TuningMode::Fpga,
+    )?;
 
     let frequency_rx = bladerf.get_frequency(Channel::Rx)?;
     let frequency_tx = bladerf.get_frequency(Channel::Tx)?;

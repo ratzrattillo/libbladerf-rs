@@ -4,6 +4,7 @@ pub mod bladerf1;
 pub mod bladerf2;
 pub mod channel;
 pub mod error;
+pub mod flash;
 pub mod nios_client;
 pub mod protocol;
 pub mod range;
@@ -12,15 +13,13 @@ pub mod version;
 pub use channel::Channel;
 pub use error::{Error, Result};
 pub use version::SemanticVersion;
-macro_rules! khz {
-    ($value:expr) => {
-        ($value * 1000u32)
-    };
+pub(crate) const fn khz(value: u32) -> u32 {
+    value * 1_000
 }
-pub(crate) use khz;
-macro_rules! mhz {
-    ($value:expr) => {
-        ($value * 1000000u32)
-    };
+pub(crate) const fn mhz(value: u32) -> u32 {
+    value * 1_000_000
 }
-pub(crate) use mhz;
+#[allow(dead_code)]
+pub(crate) const fn ghz(value: u32) -> u32 {
+    value * 1_000_000_000
+}

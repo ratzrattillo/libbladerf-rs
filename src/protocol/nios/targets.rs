@@ -1,17 +1,24 @@
+macro_rules! impl_from_for_u8 {
+    ($t:ty) => {
+        impl From<$t> for u8 {
+            fn from(t: $t) -> Self {
+                t as u8
+            }
+        }
+    };
+}
+
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NiosPkt8x8Target {
     Lms6 = 0x00,
-    Si5338 = 0x01,
+    Si5_338 = 0x01,
     VctcxoTamer = 0x02,
     TxTriggerCtl = 0x03,
     RxTriggerCtl = 0x04,
 }
-impl From<NiosPkt8x8Target> for u8 {
-    fn from(t: NiosPkt8x8Target) -> Self {
-        t as u8
-    }
-}
+impl_from_for_u8!(NiosPkt8x8Target);
+
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NiosPkt8x16Target {
@@ -21,11 +28,8 @@ pub enum NiosPkt8x16Target {
     Ad56x1Dac = 0x03,
     Ina219 = 0x04,
 }
-impl From<NiosPkt8x16Target> for u8 {
-    fn from(t: NiosPkt8x16Target) -> Self {
-        t as u8
-    }
-}
+impl_from_for_u8!(NiosPkt8x16Target);
+
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NiosPkt8x16AddrIqCorr {
@@ -34,26 +38,20 @@ pub enum NiosPkt8x16AddrIqCorr {
     TxGain = 0x02,
     TxPhase = 0x03,
 }
-impl From<NiosPkt8x16AddrIqCorr> for u8 {
-    fn from(t: NiosPkt8x16AddrIqCorr) -> Self {
-        t as u8
-    }
-}
+impl_from_for_u8!(NiosPkt8x16AddrIqCorr);
+
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NiosPkt8x32Target {
     Version = 0x00,
     Control = 0x01,
-    Adf4351 = 0x02,
+    Adf4_351 = 0x02,
     RffeCsr = 0x03,
     Adf400x = 0x04,
     Fastlock = 0x05,
 }
-impl From<NiosPkt8x32Target> for u8 {
-    fn from(t: NiosPkt8x32Target) -> Self {
-        t as u8
-    }
-}
+impl_from_for_u8!(NiosPkt8x32Target);
+
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NiosPkt32x32Target {
@@ -62,8 +60,4 @@ pub enum NiosPkt32x32Target {
     AdiAxi = 0x02,
     WbMstr = 0x03,
 }
-impl From<NiosPkt32x32Target> for u8 {
-    fn from(t: NiosPkt32x32Target) -> Self {
-        t as u8
-    }
-}
+impl_from_for_u8!(NiosPkt32x32Target);

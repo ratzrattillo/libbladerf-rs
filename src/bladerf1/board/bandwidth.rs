@@ -1,27 +1,32 @@
 use crate::bladerf1::BladeRf1;
-use crate::bladerf1::hardware::lms6002d::LMS6002D;
+use crate::bladerf1::hardware::lms6002d;
 use crate::bladerf1::hardware::lms6002d::bandwidth::LmsBandwidth;
 use crate::channel::Channel;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::range::Range;
 impl BladeRf1 {
-    pub fn set_bandwidth(&self, channel: Channel, mut bandwidth: u32) -> Result<()> {
-        let bandwidth_range = LMS6002D::get_bandwidth_range();
+    pub fn set_bandwidth(&mut self, channel: Channel, mut bandwidth: u32) -> Result<u32> {
+        let bandwidth_range = lms6002d::bandwidth::get_bandwidth_range();
         bandwidth = bandwidth.clamp(
-            bandwidth_range.min().unwrap() as u32,
-            bandwidth_range.max().unwrap() as u32,
+            bandwidth_range
+                .min()
+                .ok_or(Error::HardwareState("bandwidth range has no minimum"))? as u32,
+            bandwidth_range
+                .max()
+                .ok_or(Error::HardwareState("bandwidth range has no maximum"))? as u32,
         );
         log::trace!("Clamped bandwidth to {bandwidth}");
         let bw: LmsBandwidth = bandwidth.into();
-        self.lms.lpf_enable(channel, true)?;
-        self.lms.set_bandwidth(channel, bw)?;
-        Ok(())
+        lms6002d::filters::lpf_enable(&mut self.nios, channel, true)?;
+        lms6002d::bandwidth::set_bandwidth(&mut self.nios, channel, bw)?;
+        let actual: u32 = bw.into();
+        Ok(actual)
     }
-    pub fn get_bandwidth(&self, channel: Channel) -> Result<u32> {
-        let bw: LmsBandwidth = self.lms.get_bandwidth(channel)?;
+    pub fn get_bandwidth(&mut self, channel: Channel) -> Result<u32> {
+        let bw: LmsBandwidth = lms6002d::bandwidth::get_bandwidth(&mut self.nios, channel)?;
         Ok(bw.into())
     }
     pub fn get_bandwidth_range() -> Range {
-        LMS6002D::get_bandwidth_range()
+        lms6002d::bandwidth::get_bandwidth_range()
     }
 }

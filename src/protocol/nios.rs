@@ -17,17 +17,41 @@ pub enum NiosPacketError {
     VcocapOverflow(u8, u8),
     #[error("invalid packet size: expected 16 bytes, got {0}")]
     InvalidSize(usize),
+    #[error("unsupported address/data size combination")]
+    InvalidTypeCombination,
+    #[error("NIOS write command failed")]
+    WriteFailed,
 }
-pub const MIN_RESPONSE_SIZE: usize = 16;
-pub fn nios_encode_read<A: NiosNum, D: NiosNum>(buf: &mut [u8], target: u8, addr: A) {
-    NiosPkt::<A, D>::new(buf).prepare_read(target, addr);
+pub fn nios_encode_read<A: NiosNum, D: NiosNum>(
+    buf: &mut [u8],
+    target: u8,
+    addr: A,
+) -> Result<(), Error> {
+    NiosPkt::<A, D>::new(buf)?.prepare_read(target, addr);
+    Ok(())
 }
-pub fn nios_encode_write<A: NiosNum, D: NiosNum>(buf: &mut [u8], target: u8, addr: A, data: D) {
-    NiosPkt::<A, D>::new(buf).prepare_write(target, addr, data);
+pub fn nios_encode_write<A: NiosNum, D: NiosNum>(
+    buf: &mut [u8],
+    target: u8,
+    addr: A,
+    data: D,
+) -> Result<(), Error> {
+    NiosPkt::<A, D>::new(buf)?.prepare_write(target, addr, data);
+    Ok(())
 }
 pub fn nios_decode_read<A: NiosNum, D: NiosNum>(response: &[u8]) -> Result<D, Error> {
     NiosPktDecoder::decode_data::<A, D>(response)
 }
-pub fn nios_decode_write(_response: &[u8]) -> Result<(), Error> {
-    Ok(())
+pub fn nios_decode_write<A: NiosNum, D: NiosNum>(response: &[u8]) -> Result<(), Error> {
+    if response.len() < 16 {
+        return Err(Error::NiosPacket(NiosPacketError::InvalidSize(
+            response.len(),
+        )));
+    }
+    const IDX_FLAGS: usize = 2;
+    if response[IDX_FLAGS] & (NiosPktStatus::Success as u8) != 0 {
+        Ok(())
+    } else {
+        Err(Error::NiosPacket(NiosPacketError::WriteFailed))
+    }
 }

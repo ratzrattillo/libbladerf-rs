@@ -16,7 +16,7 @@ pub fn nios_encode_retune(
     tune: Tune,
     xb_gpio: u8,
 ) -> Result<()> {
-    NiosPktRetuneRequest::new(buf).prepare(
+    NiosPktRetuneRequest::new(buf)?.prepare(
         channel, timestamp, nint, nfrac, freqsel, vcocap, band, tune, xb_gpio,
     )
 }

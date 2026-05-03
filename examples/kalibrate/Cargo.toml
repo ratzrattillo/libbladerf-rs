@@ -1,0 +1,13 @@
+[package]
+name = "kalibrate"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0"
+clap = { version = "4.6", features = ["derive"] }
+env_logger = "0.11"
+libbladerf-rs = { path = "../.." }
+minreq = { version = "3.0.0-rc.0", features = ["https-rustls"] }
+nusb = "0.2"
+rustfft = "6.4"

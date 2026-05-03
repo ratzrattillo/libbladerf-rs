@@ -9,7 +9,8 @@ find . -name "Cargo.lock" -delete
 # TEST
 ###########################################################
 # standard tests
-cargo test --examples --all-features --all-targets -- # --no-capture
+# Use --jobs=1 because integration tests all share the same BladeRF hardware device
+cargo test --features bladerf1 --examples --lib --tests --jobs=1 -- --test-threads=1
 
 ###########################################################
 # CLIPPY
@@ -24,7 +25,12 @@ cargo fmt --all --check
 ###########################################################
 # DOC
 ###########################################################
-cargo doc --all-features --no-deps --lib --bins --examples
+cargo doc --features bladerf1 --no-deps --lib --bins --examples
+
+###########################################################
+# BENCH
+###########################################################
+cargo bench --features bladerf1 --bench nios_packet_bench --bench sample_format_bench --bench metadata_header_bench
 
 ###########################################################
 # AUDIT
