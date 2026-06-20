@@ -1,7 +1,7 @@
 use criterion::{Criterion, criterion_group, criterion_main};
 use libbladerf_rs::bladerf1::{METADATA_HEADER_SIZE, MetadataHeader};
 
-fn bench_from_bytes_valid(c: &mut Criterion) {
+fn bench_from_bytes(c: &mut Criterion) {
     let mut buf = [0u8; METADATA_HEADER_SIZE];
     buf[2] = 0x00;
     buf[14] = 0x01;
@@ -10,28 +10,12 @@ fn bench_from_bytes_valid(c: &mut Criterion) {
         *byte = (i * 17) as u8;
     }
 
-    c.bench_function("metadata_header_from_bytes_valid", |b| {
+    c.bench_function("metadata_header_from_bytes", |b| {
         b.iter(|| MetadataHeader::from_bytes(&buf))
     });
 }
 
-fn bench_from_bytes_zero(c: &mut Criterion) {
-    let buf = [0u8; METADATA_HEADER_SIZE];
-
-    c.bench_function("metadata_header_from_bytes_zero", |b| {
-        b.iter(|| MetadataHeader::from_bytes(&buf))
-    });
-}
-
-fn bench_from_bytes_short(c: &mut Criterion) {
-    let buf = [0u8; 8];
-
-    c.bench_function("metadata_header_from_bytes_short", |b| {
-        b.iter(|| MetadataHeader::from_bytes(&buf))
-    });
-}
-
-fn bench_from_bytes_full_parse(c: &mut Criterion) {
+fn bench_full_parse(c: &mut Criterion) {
     let mut buf = [0u8; METADATA_HEADER_SIZE];
     buf[0] = 0x42;
     buf[1] = 0x00;
@@ -57,11 +41,5 @@ fn bench_from_bytes_full_parse(c: &mut Criterion) {
     });
 }
 
-criterion_group!(
-    benches,
-    bench_from_bytes_valid,
-    bench_from_bytes_zero,
-    bench_from_bytes_short,
-    bench_from_bytes_full_parse,
-);
+criterion_group!(benches, bench_from_bytes, bench_full_parse,);
 criterion_main!(benches);

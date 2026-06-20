@@ -3,7 +3,7 @@
 # Bash debug mode
 set -xe
 
-find . -name "Cargo.lock" -delete
+# cargo clean
 
 ###########################################################
 # TEST
@@ -30,7 +30,7 @@ cargo doc --features bladerf1 --no-deps --lib --bins --examples
 ###########################################################
 # BENCH
 ###########################################################
-cargo bench --features bladerf1 --bench nios_packet_bench --bench sample_format_bench --bench metadata_header_bench
+# cargo bench --features bladerf1 --bench nios_packet_bench --bench sample_format_bench --bench metadata_header_bench
 
 ###########################################################
 # AUDIT

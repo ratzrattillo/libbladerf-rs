@@ -1,4 +1,11 @@
-use crate::bladerf1::BladeRf1;
+//! XB-300 amplifier board support.
+//!
+//! The XB-300 provides a TSS-53LNB+ low-noise amplifier (LNA) on the RX path,
+//! a SE2623L power amplifier (PA) on the TX path, and an auxiliary amplifier
+//! (Amp 3) for the antenna connector. It also includes a power detector that
+//! measures RF output power via SPI-over-GPIO.
+
+use crate::bladerf1::board::RfLinkSession;
 use crate::error::Result;
 pub(crate) const BLADERF_XB_AUX_EN: u32 = 0x000002;
 pub(crate) const BLADERF_XB_TX_LED: u32 = 0x000010;
@@ -13,20 +20,21 @@ pub(crate) const BLADERF_XB_CSEL: u32 = 0x040000;
 pub(crate) const BLADERF_XB_DOUT: u32 = 0x100000;
 pub(crate) const BLADERF_XB_SCLK: u32 = 0x400000;
 pub(crate) const XB300_DETECT_MASK: u32 = BLADERF_XB_CS | BLADERF_XB_CSEL | BLADERF_XB_LNA_EN;
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BladeRfXb300Trx {
     Tx = 0,
     Rx,
     Unset,
 }
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BladeRfXb300Amplifier {
     Pa = 0,
     Lna,
     Aux,
 }
-impl BladeRf1 {
+impl RfLinkSession<'_> {
     pub fn xb300_attach(&mut self) -> Result<()> {
+        self.require_initialized()?;
         let mut val = BLADERF_XB_TX_LED
             | BLADERF_XB_RX_LED
             | BLADERF_XB_TRX_MASK
@@ -41,16 +49,19 @@ impl BladeRf1 {
         Ok(())
     }
     pub fn xb300_enable(&mut self, _enable: bool) -> Result<()> {
+        self.require_initialized()?;
         let val = BLADERF_XB_CS | BLADERF_XB_CSEL | BLADERF_XB_LNA_EN;
         self.nios.nios_expansion_gpio_write(0xffffffff, val)?;
         let _pwr = self.xb300_get_output_power()?;
         Ok(())
     }
     pub fn xb300_init(&mut self) -> Result<()> {
+        self.require_initialized()?;
         log::debug!("Setting TRX path to TX");
         self.xb300_set_trx(BladeRfXb300Trx::Tx)
     }
     pub fn xb300_set_trx(&mut self, trx: BladeRfXb300Trx) -> Result<()> {
+        self.require_initialized()?;
         let mut val = self.nios.nios_expansion_gpio_read()?;
         val &= !BLADERF_XB_TRX_MASK;
         match trx {
@@ -61,11 +72,12 @@ impl BladeRf1 {
         self.nios.nios_expansion_gpio_write(0xffffffff, val)
     }
     pub fn xb300_get_trx(&mut self) -> Result<BladeRfXb300Trx> {
+        self.require_initialized()?;
         let mut val = self.nios.nios_expansion_gpio_read()?;
         val &= BLADERF_XB_TRX_MASK;
         let trx = if val == 0 {
             BladeRfXb300Trx::Unset
-        } else if val & BLADERF_XB_TRX_RXN != 0 {
+        } else if (val & BLADERF_XB_TRX_RXN) != 0 {
             BladeRfXb300Trx::Rx
         } else {
             BladeRfXb300Trx::Tx
@@ -77,6 +89,7 @@ impl BladeRf1 {
         amp: BladeRfXb300Amplifier,
         enable: bool,
     ) -> Result<()> {
+        self.require_initialized()?;
         let mut val = self.nios.nios_expansion_gpio_read()?;
         match amp {
             BladeRfXb300Amplifier::Pa => {
@@ -108,14 +121,16 @@ impl BladeRf1 {
         self.nios.nios_expansion_gpio_write(0xffffffff, val)
     }
     pub fn xb300_get_amplifier_enable(&mut self, amp: BladeRfXb300Amplifier) -> Result<bool> {
+        self.require_initialized()?;
         let val = self.nios.nios_expansion_gpio_read()?;
         match amp {
-            BladeRfXb300Amplifier::Pa => Ok(val & BLADERF_XB_PA_EN != 0),
-            BladeRfXb300Amplifier::Lna => Ok(val & BLADERF_XB_LNA_EN != 0),
-            BladeRfXb300Amplifier::Aux => Ok(val & BLADERF_XB_AUX_EN != 0),
+            BladeRfXb300Amplifier::Pa => Ok((val & BLADERF_XB_PA_EN) != 0),
+            BladeRfXb300Amplifier::Lna => Ok((val & BLADERF_XB_LNA_EN) != 0),
+            BladeRfXb300Amplifier::Aux => Ok((val & BLADERF_XB_AUX_EN) != 0),
         }
     }
     pub fn xb300_get_output_power(&mut self) -> Result<f32> {
+        self.require_initialized()?;
         let mut ret = 0;
         let mut val = self.nios.nios_expansion_gpio_read()?;
         val &= !(BLADERF_XB_CS | BLADERF_XB_SCLK | BLADERF_XB_CSEL);

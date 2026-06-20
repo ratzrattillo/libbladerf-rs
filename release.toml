@@ -1,4 +1,4 @@
-publish = false
+publish = true
 pre-release-hook = ["bash", "check.sh"]
 tag-prefix = ""
 consolidate-commits = true

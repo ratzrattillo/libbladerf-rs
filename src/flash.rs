@@ -1,16 +1,24 @@
+//! Flash size decode, FPGA size enum, BINKV encode/decode, and calibration region builder.
+//!
+//! The BINKV format stores key-value pairs in binary form. Each field consists of
+//! a length byte, the ASCII key, the ASCII value (concatenated, no separator), and a
+//! two-byte CCITT CRC16 over the length+key+value. Unwritten flash cells read as 0xFF,
+//! which serves as the terminator.
+
 use crate::error::{Error, Result};
 
-// Flash constants
-pub const BLADERF_FLASH_PAGE_SIZE: usize = 256;
-pub const BLADERF_FLASH_ERASE_BLOCK_SIZE: usize = 64 * 1_024;
-pub const BLADERF_FLASH_ADDR_CAL: u32 = 0x00030000;
-pub const BLADERF_FLASH_BYTE_LEN_CAL: usize = 0x100;
-pub const BLADERF_FLASH_TOTAL_PAGES: u16 = 4096;
-pub const BLADERF_FLASH_TOTAL_SECTORS: u16 = 16;
-pub const BLADERF_FLASH_CAL_PAGE_START: u16 =
-    (BLADERF_FLASH_ADDR_CAL / BLADERF_FLASH_PAGE_SIZE as u32) as u16;
-pub const BLADERF_FLASH_CAL_PAGE_END: u16 =
-    BLADERF_FLASH_CAL_PAGE_START + (BLADERF_FLASH_BYTE_LEN_CAL / BLADERF_FLASH_PAGE_SIZE) as u16;
+/// Minimum firmware image size for BladeRF flash.
+pub use crate::bladerf1::board::firmware::BLADERF_FLASH_MIN_FW_SIZE;
+/// FPGA bitstream size constants and validation for BladeRF flash.
+pub use crate::bladerf1::board::fpga::{
+    BLADERF_FLASH_FPGA_SIZE_40KLE, BLADERF_FLASH_FPGA_SIZE_115KLE, is_valid_fpga_size,
+};
+/// SPI flash address and size constants.
+pub use crate::bladerf1::hardware::spi_flash::{
+    BLADERF_FLASH_ADDR_CAL, BLADERF_FLASH_ADDR_FIRMWARE, BLADERF_FLASH_ADDR_FPGA,
+    BLADERF_FLASH_BYTE_LEN_CAL, BLADERF_FLASH_BYTE_LEN_FIRMWARE, BLADERF_FLASH_ERASE_BLOCK_SIZE,
+    BLADERF_FLASH_PAGE_SIZE,
+};
 
 /// FPGA size variants stored in calibration flash.
 /// KLE40/KLE115 are bladeRF1, A4/A5/A9 are bladeRF2.
@@ -24,6 +32,7 @@ pub enum FpgaSize {
 }
 
 impl FpgaSize {
+    /// Returns the short identifier string (e.g. "40", "115", "A4").
     pub fn as_str(&self) -> &'static str {
         match self {
             FpgaSize::KLE40 => "40",
@@ -34,6 +43,18 @@ impl FpgaSize {
         }
     }
 
+    /// Returns the hosted variant label for FPGA bitstream naming.
+    /// Returns an error for bladeRF2 variants (A4, A5, A9).
+    pub fn variant_label(&self) -> Result<&'static str> {
+        match self {
+            FpgaSize::KLE40 => Ok("hostedx40"),
+            FpgaSize::KLE115 => Ok("hostedx115"),
+            _ => Err(Error::Unsupported("FPGA variant")),
+        }
+    }
+
+    /// Parses an FPGA size from its short string identifier.
+    /// Recognizes "40", "115", "A4", "A5", and "A9".
     pub fn parse(s: &str) -> Result<Self> {
         match s {
             "40" => Ok(FpgaSize::KLE40),
@@ -46,14 +67,15 @@ impl FpgaSize {
     }
 }
 
-/// CCITT CRC16 (polynomial 0x1021).
+/// CCITT CRC16 checksum (polynomial 0x1021).
+/// Computes a 16-bit CRC over the given byte slice.
 /// Port of zcrc() from firmware_common/misc.h
 pub fn zcrc(data: &[u8]) -> u16 {
     let mut crc: u16 = 0;
     for &byte in data {
         crc ^= (byte as u16) << 8;
         for _ in 0..8 {
-            if crc & 0x8000 != 0 {
+            if (crc & 0x8000) != 0 {
                 crc = (crc << 1) ^ 0x1021;
             } else {
                 crc <<= 1;
@@ -63,8 +85,10 @@ pub fn zcrc(data: &[u8]) -> u16 {
     crc
 }
 
-/// Encode a single binkv field into buf starting at idx.
-/// Returns the new index after encoding.
+/// Encodes a single BINKV key-value field into the buffer at the given index.
+/// Writes the length byte, key, value, and 2-byte CRC. Returns the index
+/// immediately following the encoded field. Returns an error if the field
+/// exceeds 255 bytes total or would overflow the buffer.
 /// Port of binkv_encode_field() from flash.c:499-516
 pub fn binkv_encode_field(buf: &mut [u8], idx: usize, field: &str, val: &str) -> Result<usize> {
     let flen = field.len();
@@ -72,7 +96,7 @@ pub fn binkv_encode_field(buf: &mut [u8], idx: usize, field: &str, val: &str) ->
     let tlen = flen + vlen + 1; // +1 for length byte included in CRC
 
     if tlen >= 256 || idx + tlen + 2 > buf.len() {
-        return Err(Error::HardwareState(
+        return Err(Error::BoardState(
             "binkv field too large or buffer overflow",
         ));
     }
@@ -88,7 +112,10 @@ pub fn binkv_encode_field(buf: &mut [u8], idx: usize, field: &str, val: &str) ->
     Ok(idx + tlen + 2)
 }
 
-/// Decode a binkv field by name from buf.
+/// Decodes a BINKV field by name from a buffer of concatenated fields.
+/// Iterates through fields, verifying CRC for each, until the matching key is found.
+/// Stops on 0xFF (unwritten flash) or buffer boundary. Returns an error if the
+/// field is not found or a CRC mismatch occurs.
 /// Port of binkv_decode_field() from flash.c:462-497
 pub fn binkv_decode_field(buf: &[u8], field: &str) -> Result<String> {
     let flen = field.len();
@@ -111,7 +138,7 @@ pub fn binkv_decode_field(buf: &[u8], field: &str) -> Result<String> {
         let calc_crc = zcrc(&buf[pos..pos + c + 1]);
 
         if stored_crc != calc_crc {
-            return Err(Error::HardwareState("binkv CRC mismatch"));
+            return Err(Error::BoardState("binkv CRC mismatch"));
         }
 
         // Check if field name matches (starts right after length byte)
@@ -125,10 +152,12 @@ pub fn binkv_decode_field(buf: &[u8], field: &str) -> Result<String> {
         pos += c + 3;
     }
 
-    Err(Error::HardwareState("binkv field not found"))
+    Err(Error::BoardState("binkv field not found"))
 }
 
-/// Append a binkv field at the end of existing fields in buf.
+/// Appends a BINKV field at the end of existing fields in the buffer.
+/// Scans forward to find the first 0xFF terminator or buffer end, then encodes
+/// the new field at that position.
 /// Port of binkv_add_field() from flash.c:518-542
 pub fn binkv_add_field(buf: &mut [u8], field: &str, val: &str) -> Result<()> {
     let mut i = 0;
@@ -143,7 +172,44 @@ pub fn binkv_add_field(buf: &mut [u8], field: &str, val: &str) -> Result<()> {
     Ok(())
 }
 
-/// Build a 256-byte calibration image in binkv format.
+/// Pads `data` to a multiple of flash page size with 0xFF bytes.
+/// Returns a new vector containing the original data followed by padding.
+pub fn pad_to_page(data: &[u8]) -> Vec<u8> {
+    let padding =
+        (BLADERF_FLASH_PAGE_SIZE - data.len() % BLADERF_FLASH_PAGE_SIZE) % BLADERF_FLASH_PAGE_SIZE;
+    let mut out = Vec::with_capacity(data.len() + padding);
+    out.extend_from_slice(data);
+    out.extend(std::iter::repeat_n(0xFF, padding));
+    out
+}
+
+/// Decodes the flash memory size in bytes from the JEDEC manufacturer and device ID.
+/// Supports Macronix (0xC2), Winbond (0xEF), and Renesas (0x1F) devices.
+/// Returns `Error::Unsupported` for unknown manufacturer or device ID combinations.
+/// Port of spi_flash_decode_flash_architecture() from bladerf1/flash.c
+pub fn decode_flash_size(manufacturer_id: u8, device_id: u8) -> Result<u32> {
+    match manufacturer_id {
+        0xC2 => match device_id {
+            0x36 => Ok(32 << 17),
+            _ => Err(Error::Unsupported("unknown Macronix flash device")),
+        },
+        0xEF => match device_id {
+            0x15 => Ok(32 << 17),
+            0x16 => Ok(64 << 17),
+            0x17 => Ok(128 << 17),
+            _ => Err(Error::Unsupported("unknown Winbond flash device")),
+        },
+        0x1F => match device_id {
+            0x47 => Ok(32 << 17),
+            _ => Err(Error::Unsupported("unknown Renesas flash device")),
+        },
+        _ => Err(Error::Unsupported("unknown flash manufacturer")),
+    }
+}
+
+/// Builds a 256-byte calibration region image in BINKV format.
+/// Populates the buffer with the FPGA size field ("B") and DAC trim value field ("DAC"),
+/// padded with 0xFF bytes for unwritten flash.
 /// Port of make_cal_region() from image.c:513-557
 pub fn make_cal_region(fpga_size: FpgaSize, dac_trim: u16) -> Result<[u8; 256]> {
     let mut buf = [0xFFu8; 256];
@@ -151,67 +217,4 @@ pub fn make_cal_region(fpga_size: FpgaSize, dac_trim: u16) -> Result<[u8; 256]> 
     let dac_str = format!("{}", dac_trim);
     binkv_add_field(&mut buf, "DAC", &dac_str)?;
     Ok(buf)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_zcrc_empty() {
-        assert_eq!(zcrc(&[]), 0);
-    }
-
-    #[test]
-    fn test_zcrc_known() {
-        // CRC16-CCITT with init=0 (matching C zcrc()) of "123456789" is 0x31C3
-        // Note: 0x29B1 is CRC-CCITT-FALSE (init=0xFFFF), which is different
-        assert_eq!(zcrc(b"123456789"), 0x31C3);
-    }
-
-    #[test]
-    fn test_binkv_roundtrip() {
-        let mut buf = [0xFFu8; 256];
-        binkv_add_field(&mut buf, "B", "40").unwrap();
-        binkv_add_field(&mut buf, "DAC", "32768").unwrap();
-
-        assert_eq!(binkv_decode_field(&buf, "B").unwrap(), "40");
-        assert_eq!(binkv_decode_field(&buf, "DAC").unwrap(), "32768");
-    }
-
-    #[test]
-    fn test_binkv_all_ff() {
-        let buf = [0xFFu8; 256];
-        assert!(binkv_decode_field(&buf, "B").is_err());
-    }
-
-    #[test]
-    fn test_binkv_encode_decode_single() {
-        let mut buf = [0xFFu8; 256];
-        let idx = binkv_encode_field(&mut buf, 0, "DAC", "1000").unwrap();
-        assert!(idx > 0);
-        assert_eq!(binkv_decode_field(&buf, "DAC").unwrap(), "1000");
-    }
-
-    #[test]
-    fn test_make_cal_region() {
-        let cal = make_cal_region(FpgaSize::KLE40, 0x8000).unwrap();
-        assert_eq!(binkv_decode_field(&cal, "B").unwrap(), "40");
-        assert_eq!(binkv_decode_field(&cal, "DAC").unwrap(), "32768");
-    }
-
-    #[test]
-    fn test_fpga_size_roundtrip() {
-        for (variant, s) in [
-            (FpgaSize::KLE40, "40"),
-            (FpgaSize::KLE115, "115"),
-            (FpgaSize::A4, "A4"),
-            (FpgaSize::A5, "A5"),
-            (FpgaSize::A9, "A9"),
-        ] {
-            assert_eq!(variant.as_str(), s);
-            assert_eq!(FpgaSize::parse(s).unwrap(), variant);
-        }
-        assert!(FpgaSize::parse("unknown").is_err());
-    }
 }

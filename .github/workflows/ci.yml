@@ -33,6 +33,15 @@ jobs:
         path: target
         key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
 
+    - name: Build
+      run: cargo build --features bladerf1
+
+    - name: Run unit tests
+      run: cargo test --lib
+
+    - name: Run protocol tests
+      run: cargo test --test unit
+
     - name: Run clippy
       run: cargo clippy --features bladerf1 --all-targets -- -D warnings
 
@@ -40,10 +49,10 @@ jobs:
       run: cargo fmt --all -- --check
 
     - name: Run cargo-audit
-      uses: rustsec/audit-action@v2
+      run: cargo install cargo-audit && cargo audit
 
     - name: Run cargo-deny
-      uses: EmbarkStudios/cargo-deny-action@v2
+      run: cargo install cargo-deny && cargo deny check
 
   docs:
     name: Documentation
