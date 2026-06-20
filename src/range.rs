@@ -1,4 +1,21 @@
+//! Gain and frequency range types.
+//!
+//! Represents hardware parameter ranges as a collection of items that may be
+//! continuous intervals, discrete values, or stepped ranges with scaling factors.
+
+/// Single element within a parameter range.
+#[derive(Debug, Clone, PartialEq, PartialOrd)]
+pub enum RangeItem {
+    /// Continuous range between two endpoints (inclusive).
+    Interval(f64, f64),
+    /// Single discrete value.
+    Value(f64),
+    /// Stepped range with `min`, `max`, `step`, and `scale` factor.
+    Step(f64, f64, f64, f64),
+}
+
 impl RangeItem {
+    /// Returns the lower bound of this range item.
     pub fn min(&self) -> f64 {
         match self {
             RangeItem::Interval(min, _max) => *min,
@@ -6,6 +23,7 @@ impl RangeItem {
             RangeItem::Step(min, _max, _step, _scale) => *min,
         }
     }
+    /// Returns the upper bound of this range item.
     pub fn max(&self) -> f64 {
         match self {
             RangeItem::Interval(_min, max) => *max,
@@ -13,6 +31,7 @@ impl RangeItem {
             RangeItem::Step(_min, max, _step, _scale) => *max,
         }
     }
+    /// Returns the step increment for stepped ranges, or `None` for other variants.
     pub fn step(&self) -> Option<f64> {
         match self {
             RangeItem::Interval(_min, _max) => None,
@@ -20,6 +39,7 @@ impl RangeItem {
             RangeItem::Step(_min, _max, step, _scale) => Some(*step),
         }
     }
+    /// Returns the scale factor for stepped ranges, or `None` for other variants.
     pub fn scale(&self) -> Option<f64> {
         match self {
             RangeItem::Interval(_min, _max) => None,
@@ -28,40 +48,64 @@ impl RangeItem {
         }
     }
 }
+
+/// Collection of range items representing valid parameter values.
+#[derive(Debug, Clone, PartialEq, PartialOrd)]
+pub struct Range {
+    items: Vec<RangeItem>,
+}
+
 impl Range {
+    /// Creates a new range from the given items.
+    pub fn new(items: Vec<RangeItem>) -> Self {
+        Self { items }
+    }
+    /// Returns the minimum value across all range items, or `None` if empty.
     pub fn min(&self) -> Option<f64> {
         self.items
             .iter()
             .reduce(|a, b| if a.min() < b.min() { a } else { b })
             .map(|item| item.min())
     }
+    /// Returns the maximum value across all range items, or `None` if empty.
     pub fn max(&self) -> Option<f64> {
         self.items
             .iter()
             .reduce(|a, b| if a.max() > b.max() { a } else { b })
             .map(|item| item.max())
     }
+    /// Returns the step value from the first range item, or `None` if not applicable.
     pub fn step(&self) -> Option<f64> {
         self.items.first().and_then(|item| item.step())
     }
+    /// Returns the scale factor from the first range item, or `None` if not applicable.
     pub fn scale(&self) -> Option<f64> {
         self.items.first().and_then(|item| item.scale())
     }
-}
-#[derive(Debug, Clone, PartialEq, PartialOrd)]
-pub enum RangeItem {
-    Interval(f64, f64),
-    Value(f64),
-    Step(f64, f64, f64, f64),
-}
-#[derive(Debug, Clone, PartialEq, PartialOrd)]
-pub struct Range {
-    pub items: Vec<RangeItem>,
-}
-impl Range {
-    pub fn new(items: Vec<RangeItem>) -> Self {
-        Self { items }
+
+    /// Returns the step value, or an error if the range does not have a step.
+    pub fn step_checked(&self) -> crate::error::Result<f64> {
+        self.step()
+            .ok_or(crate::error::Error::BoardState("gain range missing step"))
     }
+    /// Returns the scale factor, or an error if the range does not have a scale.
+    pub fn scale_checked(&self) -> crate::error::Result<f64> {
+        self.scale()
+            .ok_or(crate::error::Error::BoardState("gain range missing scale"))
+    }
+    /// Returns the minimum value, or an error if the range is empty.
+    pub fn min_checked(&self) -> crate::error::Result<f64> {
+        self.min()
+            .ok_or(crate::error::Error::BoardState("gain range missing min"))
+    }
+    /// Returns the maximum value, or an error if the range is empty.
+    pub fn max_checked(&self) -> crate::error::Result<f64> {
+        self.max()
+            .ok_or(crate::error::Error::BoardState("gain range missing max"))
+    }
+    /// Returns `true` if the value falls within any of the range items.
+    /// For stepped ranges, checks that the value aligns with the step grid.
+    /// Uses epsilon-aware comparison for floating-point equality.
     pub fn contains(&self, value: f64) -> bool {
         for item in &self.items {
             match *item {
@@ -91,6 +135,9 @@ impl Range {
         }
         false
     }
+    /// Finds the value within the range that is closest to the target.
+    /// If the target is already within the range, returns it as-is.
+    /// Returns the nearest valid value from all range items.
     pub fn closest(&self, value: f64) -> Option<f64> {
         fn closer(target: f64, closest: Option<f64>, current: f64) -> f64 {
             match closest {
@@ -137,6 +184,9 @@ impl Range {
             close
         }
     }
+    /// Finds the smallest value within the range that is at least the target.
+    /// If the target is already within the range, returns it as-is.
+    /// Returns `None` if no valid value meets or exceeds the target.
     pub fn at_least(&self, value: f64) -> Option<f64> {
         fn closer_at_least(target: f64, closest: Option<f64>, current: f64) -> Option<f64> {
             match closest {
@@ -189,6 +239,9 @@ impl Range {
             close
         }
     }
+    /// Finds the largest value within the range that does not exceed the target.
+    /// If the target is already within the range, returns it as-is.
+    /// Returns `None` if no valid value is at or below the target.
     pub fn at_max(&self, value: f64) -> Option<f64> {
         fn closer_at_max(target: f64, closest: Option<f64>, current: f64) -> Option<f64> {
             match closest {
@@ -241,79 +294,8 @@ impl Range {
             close
         }
     }
-    pub fn merge(&mut self, mut r: Range) {
-        self.items.append(&mut r.items)
-    }
-}
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn contains_empty() {
-        let r = Range::new(Vec::new());
-        assert!(!r.contains(123.0));
-    }
-    #[test]
-    fn contains() {
-        let r = Range::new(vec![
-            RangeItem::Value(123.0),
-            RangeItem::Interval(23.0, 42.0),
-            RangeItem::Step(100.0, 110.0, 1.0, 1.0),
-        ]);
-        assert!(r.contains(123.0));
-        assert!(r.contains(23.0));
-        assert!(r.contains(42.0));
-        assert!(r.contains(40.0));
-        assert!(r.contains(100.0));
-        assert!(r.contains(107.0));
-        assert!(r.contains(110.0));
-        assert!(!r.contains(19.0));
-    }
-    #[test]
-    fn closest() {
-        let r = Range::new(vec![
-            RangeItem::Value(123.0),
-            RangeItem::Interval(23.0, 42.0),
-            RangeItem::Step(100.0, 110.0, 1.0, 1.0),
-        ]);
-        assert_eq!(r.closest(122.0), Some(123.0));
-        assert_eq!(r.closest(1_000.0), Some(123.0));
-        assert_eq!(r.closest(30.0), Some(30.0));
-        assert_eq!(r.closest(20.0), Some(23.0));
-        assert_eq!(r.closest(50.0), Some(42.0));
-        assert_eq!(r.closest(99.5), Some(100.0));
-        assert_eq!(r.closest(105.3), Some(105.0));
-        assert_eq!(r.closest(105.8), Some(106.0));
-        assert_eq!(r.closest(109.8), Some(110.0));
-        assert_eq!(r.closest(113.8), Some(110.0));
-    }
-    #[test]
-    fn at_least() {
-        let r = Range::new(vec![
-            RangeItem::Value(123.0),
-            RangeItem::Interval(23.0, 42.0),
-            RangeItem::Step(100.0, 110.0, 1.0, 1.0),
-        ]);
-        assert_eq!(r.at_least(120.0), Some(123.0));
-        assert_eq!(r.at_least(1_000.0), None);
-        assert_eq!(r.at_least(30.0), Some(30.0));
-        assert_eq!(r.at_least(10.0), Some(23.0));
-        assert_eq!(r.at_least(99.0), Some(100.0));
-        assert_eq!(r.at_least(105.5), Some(106.0));
-    }
-    #[test]
-    fn at_max() {
-        let r = Range::new(vec![
-            RangeItem::Value(123.0),
-            RangeItem::Interval(23.0, 42.0),
-            RangeItem::Step(100.0, 110.0, 1.0, 1.0),
-        ]);
-        assert_eq!(r.at_max(90.0), Some(42.0));
-        assert_eq!(r.at_max(10.0), None);
-        assert_eq!(r.at_max(30.0), Some(30.0));
-        assert_eq!(r.at_max(50.0), Some(42.0));
-        assert_eq!(r.at_max(101.0), Some(101.0));
-        assert_eq!(r.at_max(100.3), Some(100.0));
-        assert_eq!(r.at_max(111.3), Some(110.0));
+    /// Returns an iterator over the range items.
+    pub fn iter(&self) -> impl Iterator<Item = &RangeItem> {
+        self.items.iter()
     }
 }

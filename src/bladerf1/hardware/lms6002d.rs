@@ -1,20 +1,26 @@
+//! LMS6002D RF transceiver driver.
+//!
+//! Core analog signal chain for BladeRF1 — a 0.3–3.8 GHz transceiver with
+//! 12-bit ADC/DAC and programmable modulation bandwidth.
+
 pub mod bandwidth;
 pub mod dc_calibration;
 pub mod filters;
 pub mod frequency;
 pub mod gain;
 pub mod loopback;
-use crate::bladerf1::hardware::lms6002d::bandwidth::LmsBandwidth;
-use crate::bladerf1::hardware::lms6002d::gain::{LmsLowNoiseAmplifier, LmsPowerAmplifier};
-use crate::bladerf1::hardware::lms6002d::loopback::Loopback;
-use crate::bladerf1::nios_client::NiosClient;
 use crate::channel::Channel;
-use crate::error::Result;
+use crate::error::{Error, Result};
+use crate::nios_client::NiosCore;
 use crate::protocol::nios::NiosPkt8x8Target;
-#[repr(u8)]
-#[derive(PartialEq, Debug)]
+pub use filters::LpfMode;
+use gain::{LmsLowNoiseAmplifier, LmsPowerAmplifier};
+/// Frequency band: Low (<1.5 GHz) or High (>=1.5 GHz).
+#[derive(PartialEq, Eq, Debug, Clone, Copy)]
 pub enum Band {
+    /// Low band: frequencies below 1.5 GHz.
     Low = 0,
+    /// High band: frequencies at or above 1.5 GHz.
     High = 1,
 }
 
@@ -33,12 +39,15 @@ impl From<u32> for Band {
         Band::from(freq as u64)
     }
 }
-#[repr(u8)]
-#[derive(PartialEq, Debug)]
+/// PLL tuning strategy.
+#[derive(PartialEq, Eq, Debug, Clone, Copy)]
 pub enum Tune {
+    /// Full tuning with VCOCAP search.
     Normal = 0,
+    /// Quick tuning using previously determined VCOCAP.
     Quick = 1,
 }
+/// LMS6002D register addresses used for dump/restore operations.
 pub const LMS_REG_DUMPSET: [u8; 107] = [
     0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0E, 0x0F, 0x10, 0x11,
     0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F, 0x20, 0x21,
@@ -48,90 +57,136 @@ pub const LMS_REG_DUMPSET: [u8; 107] = [
     0x5B, 0x5C, 0x5D, 0x5E, 0x5F, 0x60, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67, 0x68, 0x70, 0x71,
     0x72, 0x73, 0x74, 0x75, 0x76, 0x77, 0x78, 0x79, 0x7A, 0x7B, 0x7C,
 ];
+/// Maximum VCOCAP register value.
 pub const VCOCAP_MAX_VALUE: u8 = 0x3f;
+/// Minimum VCOCAP estimate value for interpolation.
 pub const VCOCAP_EST_MIN: u8 = 15;
+/// Maximum VCOCAP estimate value for interpolation.
 pub const VCOCAP_EST_MAX: u8 = 55;
+/// VCOCAP estimation range (EST_MAX - EST_MIN).
 pub const VCOCAP_EST_RANGE: u8 = VCOCAP_EST_MAX - VCOCAP_EST_MIN;
+/// VCOCAP estimation threshold for convergence.
 pub const VCOCAP_EST_THRESH: u8 = 7;
+/// Frequency flag indicating low band operation.
 pub const LMS_FREQ_FLAGS_LOW_BAND: u8 = 1 << 0;
+/// Frequency flag to force use of estimated VCOCAP without searching.
 pub const LMS_FREQ_FLAGS_FORCE_VCOCAP: u8 = 1 << 1;
+/// XB-200 expansion GPIO: enable bit.
 pub const LMS_FREQ_XB_200_ENABLE: u8 = 1 << 7;
+/// XB-200 expansion GPIO: RX module bit.
 pub const LMS_FREQ_XB_200_MODULE_RX: u8 = 1 << 6;
+/// XB-200 expansion GPIO: filter switch mask.
 pub const LMS_FREQ_XB_200_FILTER_SW: u8 = 3 << 4;
+/// XB-200 expansion GPIO: filter switch bit shift.
 pub const LMS_FREQ_XB_200_FILTER_SW_SHIFT: u8 = 4;
+/// XB-200 expansion GPIO: signal path mask.
 pub const LMS_FREQ_XB_200_PATH: u8 = 3 << 2;
+/// XB-200 expansion GPIO: signal path bit shift.
 pub const LMS_FREQ_XB_200_PATH_SHIFT: u8 = 2;
+/// VTUNE status delay for large VCOCAP steps (microseconds).
 pub const VTUNE_DELAY_LARGE: u8 = 50;
+/// VTUNE status delay for small VCOCAP steps (microseconds).
 pub const VTUNE_DELAY_SMALL: u8 = 25;
+/// Maximum iterations for VTUNE convergence loops.
 pub const VTUNE_MAX_ITERATIONS: u8 = 20;
-pub const VCO_HIGH: u8 = 0x02;
-pub const VCO_NORM: u8 = 0x00;
-pub const VCO_LOW: u8 = 0x01;
+/// Maximum allowed VCOCAP distance between low and high limits.
 pub const VCOCAP_MAX_LOW_HIGH: u8 = 12;
-#[allow(dead_code)]
-pub struct LmsTransceiverConfig {
-    tx_freq_hz: u32,
-    rx_freq_hz: u32,
-    loopback_mode: Loopback,
-    lna: LmsLowNoiseAmplifier,
-    pa: LmsPowerAmplifier,
-    tx_bw: LmsBandwidth,
-    rx_bw: LmsBandwidth,
+
+/// VCO tuning (VTUNE) status read from LMS6002D.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VcoState {
+    /// VCO is within the nominal tuning range.
+    Norm = 0,
+    /// VCO is below the nominal tuning range (increase VCOCAP).
+    Low = 1,
+    /// VCO is above the nominal tuning range (decrease VCOCAP).
+    High = 2,
 }
-pub(crate) fn read(nios: &mut NiosClient, addr: u8) -> Result<u8> {
-    nios.nios_read::<u8, u8>(NiosPkt8x8Target::Lms6, addr)
-}
-pub(crate) fn write(nios: &mut NiosClient, addr: u8, data: u8) -> Result<()> {
-    nios.nios_write::<u8, u8>(NiosPkt8x8Target::Lms6, addr, data)
-}
-pub(crate) fn set(nios: &mut NiosClient, addr: u8, mask: u8) -> Result<()> {
-    let data = read(nios, addr)?;
-    write(nios, addr, data | mask)
-}
-pub(crate) fn clear(nios: &mut NiosClient, addr: u8, mask: u8) -> Result<()> {
-    let data = read(nios, addr)?;
-    write(nios, addr, data & !mask)
-}
-#[allow(dead_code)]
-pub(crate) fn soft_reset(nios: &mut NiosClient) -> Result<()> {
-    write(nios, 0x05, 0x12)?;
-    write(nios, 0x05, 0x32)
-}
-pub(crate) fn enable_rffe(nios: &mut NiosClient, channel: Channel, enable: bool) -> Result<()> {
-    let (addr, shift) = if channel == Channel::Tx {
-        (0x40u8, 1u8)
-    } else {
-        (0x70u8, 0u8)
-    };
-    let mut data = read(nios, addr)?;
-    if enable {
-        data |= 1 << shift;
-    } else {
-        data &= !(1 << shift);
-    }
-    write(nios, addr, data)
-}
-pub(crate) fn select_band(nios: &mut NiosClient, channel: Channel, band: Band) -> Result<()> {
-    if loopback::is_loopback_enabled(nios)? {
-        log::debug!("Loopback enabled!");
-        return Ok(());
-    }
-    match channel {
-        Channel::Tx => {
-            let lms_pa = if band == Band::Low {
-                LmsPowerAmplifier::Pa1
-            } else {
-                LmsPowerAmplifier::Pa2
-            };
-            gain::select_pa(nios, lms_pa)
+
+impl TryFrom<u8> for VcoState {
+    type Error = Error;
+
+    fn try_from(value: u8) -> std::result::Result<Self, Self::Error> {
+        match value {
+            0 => Ok(Self::Norm),
+            1 => Ok(Self::Low),
+            2 => Ok(Self::High),
+            _ => Err(Error::BoardState("invalid VCO state")),
         }
-        Channel::Rx => {
-            let lms_lna = if band == Band::Low {
-                LmsLowNoiseAmplifier::Lna1
-            } else {
-                LmsLowNoiseAmplifier::Lna2
-            };
-            gain::select_lna(nios, lms_lna)
+    }
+}
+/// LMS6002D RF transceiver interface.
+pub struct Lms6002d<'a> {
+    pub(crate) nios: &'a mut NiosCore,
+}
+
+impl<'a> Lms6002d<'a> {
+    pub(crate) fn read(&mut self, addr: u8) -> Result<u8> {
+        self.nios.nios_read::<u8, u8>(NiosPkt8x8Target::Lms6, addr)
+    }
+
+    pub(crate) fn write(&mut self, addr: u8, data: u8) -> Result<()> {
+        self.nios
+            .nios_write::<u8, u8>(NiosPkt8x8Target::Lms6, addr, data)
+    }
+
+    pub(crate) fn set(&mut self, addr: u8, mask: u8) -> Result<()> {
+        let data = self.read(addr)?;
+        self.write(addr, data | mask)
+    }
+
+    pub(crate) fn clear(&mut self, addr: u8, mask: u8) -> Result<()> {
+        let data = self.read(addr)?;
+        self.write(addr, data & !mask)
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn soft_reset(&mut self) -> Result<()> {
+        self.write(0x05, 0x12)?;
+        self.write(0x05, 0x32)
+    }
+
+    pub(crate) fn enable_rffe(&mut self, channel: Channel, enable: bool) -> Result<()> {
+        let (addr, shift) = if channel == Channel::Tx {
+            (0x40u8, 1u8)
+        } else {
+            (0x70u8, 0u8)
+        };
+        let mut data = self.read(addr)?;
+        if enable {
+            data |= 1 << shift;
+        } else {
+            data &= !(1 << shift);
         }
+        self.write(addr, data)
+    }
+
+    pub(crate) fn select_band(&mut self, channel: Channel, band: Band) -> Result<()> {
+        if self.is_loopback_enabled()? {
+            log::debug!("Loopback enabled!");
+            return Ok(());
+        }
+        match channel {
+            Channel::Tx => {
+                let lms_pa = if band == Band::Low {
+                    LmsPowerAmplifier::Pa1
+                } else {
+                    LmsPowerAmplifier::Pa2
+                };
+                self.select_pa(lms_pa)
+            }
+            Channel::Rx => {
+                let lms_lna = if band == Band::Low {
+                    LmsLowNoiseAmplifier::Lna1
+                } else {
+                    LmsLowNoiseAmplifier::Lna2
+                };
+                self.select_lna(lms_lna)
+            }
+        }
+    }
+
+    pub(crate) fn read_expansion_gpio(&mut self) -> Result<u32> {
+        self.nios.nios_expansion_gpio_read()
     }
 }

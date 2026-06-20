@@ -7,17 +7,24 @@ Cargo.lock
 **/*.rs.bk
 # MSVC Windows builds of rustc generate these, which store debugging information
 *.pdb
+# Calibration tables.
+*.json
+
 .DS_Store
 
 
 TODO.md
-MAINTAINERS.md
-resources/
-fuzz/
-benches/
-tests/
+.a2m
 .github/
 .cargo/
+.plans/
+docs/
+resources/
+fuzz/
+guidelines/
 examples/kalibrate
 examples/kalibrate-5g
 examples/bench-stream
+examples/diag_xb200
+examples/diagnose
+
