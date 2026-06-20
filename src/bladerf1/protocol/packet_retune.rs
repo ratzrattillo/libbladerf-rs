@@ -1,9 +1,26 @@
+//! BladeRF1 retune request and response packet builders.
+//!
+//! Provides `NiosPktRetuneRequest` for encoding LMS6002D retune commands
+//! and `NiosPktRetuneResponse` for decoding the device's retune response.
+//! The retune packet uses magic byte 0x54 and occupies the full 16-byte
+//! NIOS packet buffer.
+
 use crate::bladerf1::hardware::lms6002d::{Band, Tune};
 use crate::channel::Channel;
 use crate::error::Result;
 use crate::protocol::nios::NiosPacketError;
 use crate::protocol::nios::packet_generic::NiosPacket;
+
+/// Magic byte identifying a retune packet.
 pub const NIOS_PKT_RETUNE_MAGIC: u8 = 0x54;
+
+/// Builder for a NIOS retune request packet.
+///
+/// Wraps a 16-byte buffer and provides `prepare()` to populate all
+/// fields: timestamp, nint, nfrac, freqsel, vcocap, band, tune mode,
+/// and expansion board GPIO. Also offers accessor methods to inspect
+/// the encoded values.
+#[derive(Debug, PartialEq, Eq, Hash)]
 pub struct NiosPktRetuneRequest<'a> {
     buf: &'a mut [u8],
 }
@@ -30,8 +47,10 @@ impl<'a> NiosPktRetuneRequest<'a> {
     const MASK_NFRAC: u32 = 0x7fffff;
     const MASK_FREQSEL: u8 = 0x3f;
     const MASK_VCOCAP: u8 = 0x3f;
-    pub(crate) const RETUNE_NOW: u64 = 0x00;
-    pub(crate) const CLEAR_QUEUE: u64 = u64::MAX;
+    /// Creates a new retune request packet from a buffer.
+    ///
+    /// Requires `buf` to be at least 16 bytes. Returns an error if the
+    /// buffer is too small.
     pub fn new(buf: &'a mut [u8]) -> Result<Self> {
         if buf.len() < Self::NIOS_PKT_SIZE {
             return Err(NiosPacketError::InvalidSize(buf.len()).into());
@@ -40,6 +59,11 @@ impl<'a> NiosPktRetuneRequest<'a> {
             buf: &mut buf[..Self::NIOS_PKT_SIZE],
         })
     }
+    /// Populates the packet with all retune parameters.
+    ///
+    /// Encodes channel, timestamp, nint, nfrac, freqsel, vcocap, band,
+    /// tune mode, and xb_gpio into the packet buffer. Returns an error
+    /// if any value exceeds its field capacity.
     #[allow(clippy::too_many_arguments)]
     pub fn prepare(
         &mut self,
@@ -119,44 +143,58 @@ impl<'a> NiosPktRetuneRequest<'a> {
     fn set_xb_gpio(&mut self, xb_gpio: u8) {
         self.buf[Self::IDX_XB_GPIO] = xb_gpio;
     }
+    /// Returns the timestamp field of the packet.
     pub fn timestamp(&self) -> u64 {
         self.read_u64(Self::IDX_TIMESTAMP)
     }
+    /// Returns the nint (PLL integer divider) field of the packet.
     pub fn nint(&self) -> u16 {
         let mut nint = (self.buf[Self::IDX_INTFRAC] as u16) << 1;
         nint |= (self.buf[Self::IDX_INTFRAC + 1] as u16) >> 7;
         nint
     }
+    /// Returns the nfrac (PLL fractional divider) field of the packet.
     pub fn nfrac(&self) -> u32 {
         let mut nfrac: u32 = ((self.buf[Self::IDX_INTFRAC + 1] & 0x7f) as u32) << 16;
         nfrac |= (self.buf[Self::IDX_INTFRAC + 2] as u32) << 8;
         nfrac |= self.buf[Self::IDX_INTFRAC + 3] as u32;
         nfrac
     }
+    /// Returns the freqsel (frequency select) field of the packet.
     pub fn freqsel(&self) -> u8 {
         self.buf[Self::IDX_FREQSEL] & Self::MASK_FREQSEL
     }
+    /// Returns the vcocap (VCO capacitor) field of the packet.
     pub fn vcocap(&self) -> u8 {
         self.buf[Self::IDX_BANDSEL] & Self::MASK_VCOCAP
     }
+    /// Returns the band (high/low) selection of the packet.
     pub fn band(&self) -> Band {
-        if self.buf[Self::IDX_BANDSEL] & Self::FLAG_LOW_BAND == 0 {
+        if (self.buf[Self::IDX_BANDSEL] & Self::FLAG_LOW_BAND) == 0 {
             Band::High
         } else {
             Band::Low
         }
     }
+    /// Returns the tune mode (quick/normal) of the packet.
     pub fn tune(&self) -> Tune {
-        if self.buf[Self::IDX_BANDSEL] & Self::FLAG_QUICK_TUNE == 0 {
+        if (self.buf[Self::IDX_BANDSEL] & Self::FLAG_QUICK_TUNE) == 0 {
             Tune::Normal
         } else {
             Tune::Quick
         }
     }
+    /// Returns the expansion board GPIO value of the packet.
     pub fn xb_gpio(&self) -> u8 {
         self.buf[Self::IDX_XB_GPIO]
     }
 }
+
+/// Decoder for a NIOS retune response packet.
+///
+/// Provides access to the retune duration, VCO capacitor value,
+/// validity flags, and success status from the 16-byte response buffer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct NiosPktRetuneResponse<'a> {
     buf: &'a [u8],
 }
@@ -168,6 +206,9 @@ impl<'a> NiosPktRetuneResponse<'a> {
     const MASK_VCOCAP: u8 = 0x3f;
     const FLAG_DURATION_VCOCAP_VALID: u8 = 0x1;
     const FLAG_SUCCESS: u8 = 0x2;
+    /// Creates a new retune response decoder from a buffer.
+    ///
+    /// Requires `buf` to be at least 16 bytes.
     pub fn new(buf: &'a [u8]) -> Result<Self> {
         if buf.len() < Self::NIOS_PKT_SIZE {
             return Err(NiosPacketError::InvalidSize(buf.len()).into());
@@ -176,18 +217,22 @@ impl<'a> NiosPktRetuneResponse<'a> {
             buf: &buf[..Self::NIOS_PKT_SIZE],
         })
     }
+    /// Returns the retune duration in clock ticks.
     pub fn duration(&self) -> u64 {
         let mut bytes = [0u8; 8];
         bytes.copy_from_slice(&self.buf[Self::IDX_TIMESTAMP..Self::IDX_TIMESTAMP + 8]);
         u64::from_le_bytes(bytes)
     }
+    /// Returns `true` if the duration and vcocap fields are valid.
     pub fn vcocap_valid(&self) -> bool {
-        self.buf[Self::IDX_FLAGS] & Self::FLAG_DURATION_VCOCAP_VALID != 0
+        (self.buf[Self::IDX_FLAGS] & Self::FLAG_DURATION_VCOCAP_VALID) != 0
     }
+    /// Returns the VCO capacitor value from the retune response.
     pub fn vcocap(&self) -> u8 {
         self.buf[Self::IDX_VCOCAP] & Self::MASK_VCOCAP
     }
+    /// Returns `true` if the retune operation succeeded.
     pub fn is_success(&self) -> bool {
-        self.buf[Self::IDX_FLAGS] & Self::FLAG_SUCCESS != 0
+        (self.buf[Self::IDX_FLAGS] & Self::FLAG_SUCCESS) != 0
     }
 }

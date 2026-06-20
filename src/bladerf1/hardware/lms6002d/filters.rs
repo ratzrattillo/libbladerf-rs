@@ -1,63 +1,75 @@
-use crate::bladerf1::nios_client::NiosClient;
+//! LMS6002D LPF mode configuration.
+//!
+//! The digital LPF can be enabled in normal filtering mode, bypassed to
+//! pass the full signal chain, or disabled entirely.
+
+use crate::bladerf1::hardware::lms6002d::Lms6002d;
 use crate::{Channel, Error};
-#[derive(PartialEq)]
+
+/// LPF operating mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LpfMode {
+    /// LPF is enabled and actively filtering.
     Normal,
+    /// LPF is bypassed; signal passes through unfiltered.
     Bypassed,
+    /// LPF is disabled entirely.
     Disabled,
 }
-pub fn lpf_enable(nios: &mut NiosClient, channel: Channel, enable: bool) -> crate::Result<()> {
-    let addr = if channel == Channel::Rx { 0x54 } else { 0x34 };
-    let mut data = super::read(nios, addr)?;
-    if enable {
-        data |= 1 << 1;
-    } else {
-        data &= !(1 << 1);
+impl<'a> Lms6002d<'a> {
+    pub(crate) fn lpf_enable(&mut self, channel: Channel, enable: bool) -> crate::Result<()> {
+        let addr = if channel == Channel::Rx { 0x54 } else { 0x34 };
+        let mut data = self.read(addr)?;
+        if enable {
+            data |= 1 << 1;
+        } else {
+            data &= !(1 << 1);
+        }
+        self.write(addr, data)?;
+        let mut data = self.read(addr + 1)?;
+        if (data & (1 << 6)) != 0 {
+            data &= !(1 << 6);
+            self.write(addr + 1, data)?;
+        }
+        Ok(())
     }
-    super::write(nios, addr, data)?;
-    data = super::read(nios, addr + 1)?;
-    if data & (1 << 6) != 0 {
-        data &= !(1 << 6);
-        super::write(nios, addr + 1, data)?;
-    }
-    Ok(())
-}
-pub fn lpf_get_mode(nios: &mut NiosClient, channel: Channel) -> crate::Result<LpfMode> {
-    let reg: u8 = if channel == Channel::Rx { 0x54 } else { 0x34 };
-    let data_l = super::read(nios, reg)?;
-    let data_h = super::read(nios, reg + 1)?;
-    let lpf_enabled = (data_l & (1 << 1)) != 0;
-    let lpf_bypassed = (data_h & (1 << 6)) != 0;
-    match (lpf_enabled, lpf_bypassed) {
-        (true, false) => Ok(LpfMode::Normal),
-        (false, true) => Ok(LpfMode::Bypassed),
-        (false, false) => Ok(LpfMode::Disabled),
-        (true, true) => {
-            log::error!("Invalid LPF configuration: {data_l:x}, {data_h:x}");
-            Err(Error::HardwareState(
-                "LPF enabled and bypassed simultaneously",
-            ))
+
+    pub(crate) fn lpf_get_mode(&mut self, channel: Channel) -> crate::Result<LpfMode> {
+        let reg: u8 = if channel == Channel::Rx { 0x54 } else { 0x34 };
+        let data_l = self.read(reg)?;
+        let data_h = self.read(reg + 1)?;
+        let lpf_enabled = (data_l & (1 << 1)) != 0;
+        let lpf_bypassed = (data_h & (1 << 6)) != 0;
+        match (lpf_enabled, lpf_bypassed) {
+            (true, false) => Ok(LpfMode::Normal),
+            (false, true) => Ok(LpfMode::Bypassed),
+            (false, false) => Ok(LpfMode::Disabled),
+            (true, true) => {
+                log::error!("Invalid LPF configuration: {data_l:x}, {data_h:x}");
+                Err(Error::BoardState("LPF enabled and bypassed simultaneously"))
+            }
         }
     }
-}
-pub fn lpf_set_mode(nios: &mut NiosClient, channel: Channel, mode: LpfMode) -> crate::Result<()> {
-    let reg: u8 = if channel == Channel::Rx { 0x54 } else { 0x34 };
-    let mut data_l = super::read(nios, reg)?;
-    let mut data_h = super::read(nios, reg + 1)?;
-    match mode {
-        LpfMode::Normal => {
-            data_l |= 1 << 1;
-            data_h &= !(1 << 6);
+
+    pub(crate) fn lpf_set_mode(&mut self, channel: Channel, mode: LpfMode) -> crate::Result<()> {
+        let reg: u8 = if channel == Channel::Rx { 0x54 } else { 0x34 };
+        let mut data_l = self.read(reg)?;
+        let mut data_h = self.read(reg + 1)?;
+        match mode {
+            LpfMode::Normal => {
+                data_l |= 1 << 1;
+                data_h &= !(1 << 6);
+            }
+            LpfMode::Bypassed => {
+                data_l &= !(1 << 1);
+                data_h |= 1 << 6;
+            }
+            LpfMode::Disabled => {
+                data_l &= !(1 << 1);
+                data_h &= !(1 << 6);
+            }
         }
-        LpfMode::Bypassed => {
-            data_l &= !(1 << 1);
-            data_h |= 1 << 6;
-        }
-        LpfMode::Disabled => {
-            data_l &= !(1 << 1);
-            data_h &= !(1 << 6);
-        }
+        self.write(reg, data_l)?;
+        self.write(reg + 1, data_h)
     }
-    super::write(nios, reg, data_l)?;
-    super::write(nios, reg + 1, data_h)
 }

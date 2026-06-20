@@ -9,22 +9,23 @@ fn main() -> Result<()> {
         .init();
 
     let mut bladerf = BladeRf1::from_first()?;
-    bladerf.initialize(false)?;
+    let mut rf = bladerf.rf_link_session()?;
+    rf.initialize(false)?;
 
-    let dc_cals = bladerf.get_dc_cals()?;
+    let dc_cals = rf.get_dc_cals()?;
     log::debug!("{dc_cals}");
 
     log::debug!("Calibrating: {:?}", DcCalModule::RxVga2);
-    bladerf.calibrate_dc(DcCalModule::RxVga2)?;
+    rf.calibrate_dc(DcCalModule::RxVga2)?;
 
     log::debug!("Calibrating: {:?}", DcCalModule::RxLpf);
-    bladerf.calibrate_dc(DcCalModule::RxLpf)?;
+    rf.calibrate_dc(DcCalModule::RxLpf)?;
 
     log::debug!("Calibrating: {:?}", DcCalModule::TxLpf);
-    bladerf.cal_tx_lpf()?;
+    rf.cal_tx_lpf()?;
 
     log::debug!("Calibrating: {:?}", DcCalModule::LpfTuning);
-    bladerf.calibrate_dc(DcCalModule::LpfTuning)?;
+    rf.calibrate_dc(DcCalModule::LpfTuning)?;
 
     Ok(())
 }
