@@ -41,7 +41,6 @@ runs:
     - name: Build all examples
       run: |
         for manifest in examples/*/Cargo.toml; do
-          pkg=$(grep '^name = ' "$manifest" | head -1 | sed 's/name = "\(.*\)"/\1/')
-          cargo build -p "$pkg" 2>/dev/null || cargo build --manifest-path "$manifest"
+          cargo build --manifest-path "$manifest"
         done
       shell: bash
