@@ -2,63 +2,17 @@ name: CI
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v5
-
-    - name: Cache cargo registry
-      uses: actions/cache@v4
-      with:
-        path: ~/.cargo/registry
-        key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-
-    - name: Cache cargo index
-      uses: actions/cache@v4
-      with:
-        path: ~/.cargo/git
-        key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.lock') }}
-
-    - name: Cache cargo build
-      uses: actions/cache@v4
-      with:
-        path: target
-        key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
-
-    - name: Build
-      run: cargo build --features bladerf1
-
-    - name: Run unit tests
-      run: cargo test --lib
-
-    - name: Run protocol tests
-      run: cargo test --test unit
-
-    - name: Run clippy
-      run: cargo clippy --features bladerf1 --all-targets -- -D warnings
-
-    - name: Check formatting
-      run: cargo fmt --all -- --check
-
-    - name: Run cargo-audit
-      run: cargo install cargo-audit && cargo audit
-
-    - name: Run cargo-deny
-      run: cargo install cargo-deny && cargo deny check
-
-  docs:
-    name: Documentation
+  check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-
-      - name: Build documentation
-        run: cargo doc --features bladerf1 --no-deps
+      - uses: ./.github/actions/check

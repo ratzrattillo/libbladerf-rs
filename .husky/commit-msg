@@ -1,0 +1,24 @@
+#!/bin/sh
+# Validate the proposed commit message against Conventional Commits using git-cliff.
+# cliff.toml sets require_conventional=true, so git-cliff exits non-zero on a
+# non-conventional message.
+
+msg_file="$1"
+msg="$(head -n1 "$msg_file")"
+
+# Skip merge/revert/fixup/squash/empty commits.
+case "$msg" in
+  "Merge "*|"Revert "*|"fixup! "*|"squash! "*|"") exit 0 ;;
+esac
+
+if ! command -v git-cliff >/dev/null 2>&1; then
+  echo "commit-msg: git-cliff not found; install it (cargo install git-cliff) to validate commit messages." >&2
+  exit 1
+fi
+
+if ! git-cliff --unreleased --with-commit "$msg" --output /dev/null >/dev/null 2>&1; then
+  echo "commit-msg: '$msg' is not a valid Conventional Commit." >&2
+  echo "Format: <type>[optional scope]: <description>  (e.g. 'feat(parser): add arrays')" >&2
+  echo "See https://www.conventionalcommits.org/" >&2
+  exit 1
+fi
