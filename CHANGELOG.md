@@ -1,3 +1,8 @@
+## [unreleased]
+
+### ⚙️ Miscellaneous Tasks
+
+- Update release workflow
 ## [0.4.1] - 2026-06-20
 
 ### Changed
