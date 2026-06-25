@@ -28,27 +28,6 @@ The device is accessed through **session types** that switch the FX3 USB alterna
 setting and borrow `&mut NiosCore`. The borrow checker enforces exclusive access
 at compile time.
 
-```rust,ignore
-use libbladerf_rs::bladerf1::{BladeRf1, RfLinkSession, RxStream, SampleFormat};
-
-let mut dev = BladeRf1::from_first()?;
-let mut sess = dev.rf_link_session()?;
-sess.initialize(false)?;
-
-let mut rx = RxStream::builder(&mut sess)
-    .buffer_size(65536)
-    .buffer_count(8)
-    .format(SampleFormat::Sc16Q11)
-    .build()?;
-rx.start(&mut sess)?;
-
-let buf = rx.read(None)?;
-println!("Got {} bytes", buf.len());
-rx.recycle(buf);
-
-rx.close(&mut sess)?;
-```
-
 ### Session types
 
 | Session | USB alt setting | Capabilities |
@@ -110,6 +89,15 @@ cargo run -p rx_tx
 ## Developers
 
 Contributions are welcome. The architecture is documented in [`AGENTS.md`](AGENTS.md).
+The release and maintenance workflow is documented in [`docs/MAINTAINERS.md`](MAINTAINERS.md).
+
+### Commit messages
+
+Commits must follow [Conventional Commits](https://www.conventionalcommits.org/).
+A husky-rs `commit-msg` hook (`.husky/commit-msg`) validates each message with
+[`git-cliff`](https://git-cliff.org) (`cargo install git-cliff`). The hook
+installs automatically on `cargo build` / `cargo test`; set `NO_HUSKY_HOOKS=1`
+to skip installation.
 
 For debugging, compare USB traffic between [libbladeRF] and [libbladerf-rs] using
 [Wireshark](https://www.wireshark.org/download.html):

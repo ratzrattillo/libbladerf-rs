@@ -22,12 +22,17 @@ All commands run from the **repository root**:
 | Format check | `cargo fmt --all --check` |
 | Format (requires nightly) | `rustup run nightly -- cargo fmt` |
 | Docs | `cargo doc --features bladerf1 --no-deps --lib --bins --examples` |
-| Full CI check (local) | `bash check.sh` |
+| Full CI check (local) | `bash scripts/check.sh` |
+| Generate changelog | `bash scripts/changelog.sh` |
 | Fuzz | `cargo +nightly fuzz run <target>` |
 
-### check.sh vs CI
+### scripts/check.sh vs CI
 
-`check.sh` runs: test (`--features bladerf1 --examples --lib --tests --jobs=1 -- --test-threads=1`) → clippy → fmt → doc (`--lib --bins --examples`) → audit. CI does **not** run `check.sh` directly. CI runs these steps individually: build (`--features bladerf1`) → unit tests (`--lib`) → protocol tests (`--test unit`) → clippy (`--features bladerf1 --all-targets -- -D warnings`) → fmt check → audit → deny check (which check.sh omits) → docs (separate job: `--features bladerf1 --no-deps`).
+`scripts/check.sh` runs: test (`--features bladerf1 --examples --lib --tests --jobs=1 -- --test-threads=1`) → clippy → fmt → conventional-commits validation (`git-cliff --unreleased --output /dev/null`) → doc (`--lib --bins --examples`) → audit. CI does **not** run `scripts/check.sh` directly. CI runs these steps individually: build (`--features bladerf1`) → unit tests (`--lib`) → protocol tests (`--test unit`) → clippy (`--features bladerf1 --all-targets -- -D warnings`) → fmt check → audit → deny check (which check.sh omits) → docs (separate job: `--features bladerf1 --no-deps`). The conventional-commits validation is **local-only** — CI does not run it.
+
+### scripts/changelog.sh
+
+`scripts/changelog.sh` runs `git-cliff --unreleased --prepend CHANGELOG.md`, generating changelog entries for unreleased commits and prepending them to `CHANGELOG.md`. It mutates `CHANGELOG.md` in place, so it is a separate on-demand script — not part of `check.sh`. Both scripts `cd` to the repo root, so they work from any directory.
 
 ### Examples
 
@@ -191,8 +196,9 @@ Test helpers (backup/restore) use extension traits defined in each test file sin
 - **`.cargo/config.toml` sets `target-cpu=native`.** Builds are machine-specific. Remove this flag if distributing binaries.
 - **`bladerf2` feature is a stub.** `src/bladerf2.rs` exists but is not implemented. Don't try to use it.
 - **Integration tests require `--test-threads=1`.** `.cargo/config.toml` sets `test.threads = 1` but explicit `-- --test-threads=1` is still recommended.
-- **`check.sh` has `cargo clean` commented out.** It does NOT delete `Cargo.lock` or clean the target dir by default.
-- **Release process uses `cargo-release`.** Config in `release.toml`. Pre-release hook runs `check.sh`. See `MAINTAINERS.md` for full workflow. Publish is manual (`publish = false` in `release.toml`).
+- **`scripts/check.sh` has `cargo clean` commented out.** It does NOT delete `Cargo.lock` or clean the target dir by default.
+- **Release process uses `cargo-release`.** Config in `release.toml`. Pre-release hook runs `scripts/check.sh`. See `docs/MAINTAINERS.md` for full workflow. `cargo-release` itself does not publish (`publish = false` in `release.toml`); the `.github/workflows/release.yml` `workflow_dispatch` pipeline (`check` → `bump_and_tag` → `github_release` → `publish`) runs `cargo publish` for CI-driven releases.
+- **Conventional Commits enforced by a `commit-msg` hook.** `.husky/commit-msg` validates each message with `git-cliff` (`cliff.toml` sets `require_conventional=true`) via husky-rs (`core.hooksPath = .husky`, installs on `cargo build`/`cargo test`, skip with `NO_HUSKY_HOOKS=1`). `scripts/check.sh` re-checks all unreleased commits as a backstop (local-only — CI does not).
 - **No OTP region access.** Manufacturing-only operations. Don't add them.
 - **No gain calibration.** The table-based gain calibration API is bladeRF2-specific. BladeRF1 has no calibration tables.
 - **Stream build/teardown bench requires `BatchSize::PerIteration`.** `iter_batched` with `SmallInput` (the default) calls setup multiple times before running any routine, collecting results into a `Vec`. Since `BladeRf1::from_first()` claims the USB interface exclusively, the second setup call fails with EBUSY. `PerIteration` forces batch_size=1 so each setup→routine→close cycle completes before the next setup.

@@ -1,5 +1,5 @@
-publish = true
-pre-release-hook = ["bash", "check.sh"]
+publish = false
+pre-release-hook = ["bash", "scripts/check.sh"]
 tag-prefix = ""
 consolidate-commits = true
 dependent-version = "upgrade"

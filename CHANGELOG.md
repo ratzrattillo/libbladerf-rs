@@ -1,13 +1,4 @@
-# Changelog
-
-All notable changes to this project will be documented in this file.
-
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-
-## [Unreleased]
-
-## [0.5.0] - 2026-06-20
+## [0.4.1] - 2026-06-20
 
 ### Changed
 - Removed `Arc<Mutex<NiosCore>>`; `BladeRf1` holds `NiosCore` inline. Hardware wrappers (`Lms6002d`, `Si5338`, `Dac161s055`) are ephemeral `&'a mut NiosCore` borrows, enforcing exclusive access at compile time

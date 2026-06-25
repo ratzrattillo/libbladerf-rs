@@ -14,17 +14,11 @@ Cargo.lock
 
 
 TODO.md
-.a2m
-.github/
-.cargo/
 .plans/
 docs/
 resources/
 fuzz/
-guidelines/
 examples/kalibrate
 examples/kalibrate-5g
 examples/bench-stream
-examples/diag_xb200
-examples/diagnose
 
