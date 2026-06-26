@@ -133,10 +133,14 @@ impl NiosCore {
     pub fn nios_get_fpga_version(&mut self) -> Result<SemanticVersion> {
         let regval = self.nios_read::<u8, u32>(NiosPkt8x32Target::Version, 0)?;
         log::trace!("Read FPGA version word: {regval:#010x}");
+        // The FPGA builds this word as (major | minor << 8 | patch << 16), see
+        // hdl/.../bladeRF_nios/src/fpga_version.h. The NIOS packet transmits it
+        // little-endian, so `regval` (decoded via `from_le_bytes`) holds the
+        // same layout: major in bits 0-7, minor in bits 8-15, patch in 16-31.
         let version = SemanticVersion::new(
-            ((regval >> 24) & 0xff) as u16,
-            ((regval >> 16) & 0xff) as u16,
-            ((regval & 0xffff) as u16).to_be(),
+            (regval & 0xff) as u16,
+            ((regval >> 8) & 0xff) as u16,
+            ((regval >> 16) & 0xffff) as u16,
         );
         Ok(version)
     }

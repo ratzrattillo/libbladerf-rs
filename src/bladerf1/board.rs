@@ -80,7 +80,9 @@ impl TryFrom<u8> for FpgaSource {
     }
 }
 pub use gain::GainMode;
-use nusb::{Device, DeviceInfo, MaybeFuture, Speed};
+#[cfg(not(target_os = "android"))]
+use nusb::DeviceInfo;
+use nusb::{Device, MaybeFuture, Speed};
 pub use rx_mux::RxMux;
 pub use stream::{
     BLADERF_GPIO_8BIT_MODE, BLADERF_GPIO_HIGHLY_PACKED_MODE, BLADERF_GPIO_PACKET,
@@ -103,11 +105,14 @@ pub const BLADERF_GPIO_FEATURE_SMALL_DMA_XFER: u16 = 1 << 7;
 /// Construct via [`from_first`](BladeRf1::from_first),
 /// [`from_serial`](BladeRf1::from_serial),
 /// [`from_bus_addr`](BladeRf1::from_bus_addr), or
-/// [`from_fd`](BladeRf1::from_fd) (Linux only).
+/// [`from_fd`](BladeRf1::from_fd) (Linux and Android only).
 ///
 /// On construction the device waits for FX3 firmware readiness and
 /// auto-loads DC calibration tables from `<serial>_dc_rx.json` and
-/// `<serial>_dc_tx.json` if they exist in the current directory.
+/// `<serial>_dc_tx.json`. The directory searched defaults to the current
+/// directory; use [`load_dc_cal_tables_from_dir`](BladeRf1::load_dc_cal_tables_from_dir)
+/// to load from an explicit path, which is required on platforms without a
+/// meaningful working directory such as Android.
 ///
 /// On drop, RX and TX modules are disabled (best-effort).
 pub struct BladeRf1 {
@@ -118,12 +123,16 @@ pub struct BladeRf1 {
 }
 impl BladeRf1 {
     /// Lists all BladeRF1 devices currently connected to the host.
+    ///
+    /// Not available on Android, where USB enumeration is not permitted; open
+    /// devices with [`from_fd`](BladeRf1::from_fd) instead.
+    #[cfg(not(target_os = "android"))]
     pub fn list_bladerf1() -> crate::Result<impl Iterator<Item = DeviceInfo>> {
         Ok(nusb::list_devices().wait()?.filter(|dev: &DeviceInfo| {
             dev.vendor_id() == BLADERF1_USB_VID && dev.product_id() == BLADERF1_USB_PID
         }))
     }
-    fn build(device: Device) -> crate::Result<Self> {
+    fn build(device: Device, cal_table_dir: Option<&Path>) -> crate::Result<Self> {
         log::debug!("Manufacturer: {}", device.manufacturer()?);
         log::debug!("Product: {}", device.product()?);
         log::debug!("Serial: {}", device.serial()?);
@@ -145,7 +154,7 @@ impl BladeRf1 {
             dc_tx_table: None,
         };
         result.wait_until_ready()?;
-        Self::auto_load_tables(&mut result);
+        Self::auto_load_tables(&mut result, cal_table_dir);
         Ok(result)
     }
     fn wait_until_ready(&self) -> crate::Result<()> {
@@ -173,7 +182,7 @@ impl BladeRf1 {
         log::debug!("Timed out while waiting for device.");
         Err(Error::Timeout)
     }
-    fn auto_load_tables(result: &mut Self) {
+    fn auto_load_tables(result: &mut Self, dir: Option<&Path>) {
         let serial = match result.device.serial() {
             Ok(s) => s,
             Err(e) => {
@@ -181,59 +190,116 @@ impl BladeRf1 {
                 return;
             }
         };
-        let rx_path = format!("{serial}_dc_rx.json");
-        let tx_path = format!("{serial}_dc_tx.json");
-        if std::path::Path::new(&rx_path).exists() {
-            match DcCalTable::load(std::path::Path::new(&rx_path)) {
+        let base = dir.unwrap_or_else(|| Path::new("."));
+        let rx_path = base.join(format!("{serial}_dc_rx.json"));
+        let tx_path = base.join(format!("{serial}_dc_tx.json"));
+        if rx_path.exists() {
+            match DcCalTable::load(&rx_path) {
                 Ok(tbl) => {
-                    log::debug!("Loaded RX DC cal table from {rx_path}");
+                    log::debug!("Loaded RX DC cal table from {}", rx_path.display());
                     result.dc_rx_table = Some(tbl);
                 }
-                Err(e) => log::warn!("Failed to parse RX DC cal table {rx_path}: {e}"),
+                Err(e) => log::warn!("Failed to parse RX DC cal table {}: {e}", rx_path.display()),
             }
         }
-        if std::path::Path::new(&tx_path).exists() {
-            match DcCalTable::load(std::path::Path::new(&tx_path)) {
+        if tx_path.exists() {
+            match DcCalTable::load(&tx_path) {
                 Ok(tbl) => {
-                    log::debug!("Loaded TX DC cal table from {tx_path}");
+                    log::debug!("Loaded TX DC cal table from {}", tx_path.display());
                     result.dc_tx_table = Some(tbl);
                 }
-                Err(e) => log::warn!("Failed to parse TX DC cal table {tx_path}: {e}"),
+                Err(e) => log::warn!("Failed to parse TX DC cal table {}: {e}", tx_path.display()),
             }
         }
     }
     /// Opens the first BladeRF1 device found.
+    ///
+    /// DC calibration tables are auto-loaded from the current directory. Not
+    /// available on Android, which forbids USB enumeration; use
+    /// [`from_fd`](BladeRf1::from_fd) there.
+    #[cfg(not(target_os = "android"))]
     pub fn from_first() -> crate::Result<Self> {
         let device = Self::list_bladerf1()?
             .next()
             .ok_or(Error::NotFound)?
             .open()
             .wait()?;
-        Self::build(device)
+        Self::build(device, None)
     }
     /// Opens a BladeRF1 device matching the given serial number string.
+    ///
+    /// DC calibration tables are auto-loaded from the current directory. Not
+    /// available on Android, which forbids USB enumeration; use
+    /// [`from_fd`](BladeRf1::from_fd) there.
+    #[cfg(not(target_os = "android"))]
     pub fn from_serial(serial: &str) -> crate::Result<Self> {
         let device = Self::list_bladerf1()?
             .find(|dev| dev.serial_number() == Some(serial))
             .ok_or(Error::NotFound)?
             .open()
             .wait()?;
-        Self::build(device)
+        Self::build(device, None)
     }
     /// Opens a BladeRF1 device at the given USB bus number and address.
+    ///
+    /// DC calibration tables are auto-loaded from the current directory. Not
+    /// available on Android, which forbids USB enumeration; use
+    /// [`from_fd`](BladeRf1::from_fd) there.
+    #[cfg(not(target_os = "android"))]
     pub fn from_bus_addr(bus_number: &str, bus_addr: u8) -> crate::Result<Self> {
         let device = Self::list_bladerf1()?
             .find(|dev| dev.bus_id() == bus_number && dev.device_address() == bus_addr)
             .ok_or(Error::NotFound)?
             .open()
             .wait()?;
-        Self::build(device)
+        Self::build(device, None)
     }
-    /// Opens a BladeRF1 device from a pre-opened file descriptor (Linux only).
-    #[cfg(target_os = "linux")]
+    /// Opens a BladeRF1 device from a pre-opened file descriptor.
+    ///
+    /// Available on Linux and Android. On Android the file descriptor is
+    /// obtained from `UsbDeviceConnection.getFileDescriptor()`; the host
+    /// performs no USB enumeration. DC calibration tables are auto-loaded
+    /// from the current directory. On Android, use
+    /// [`load_dc_cal_tables_from_dir`](BladeRf1::load_dc_cal_tables_from_dir)
+    /// to specify an explicit directory.
+    ///
+    /// # Errors
+    /// Returns an error if the descriptor does not refer to a usable BladeRF1
+    /// device, if interface claiming fails, or if the device never becomes
+    /// ready.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn from_fd(fd: std::os::fd::OwnedFd) -> crate::Result<Self> {
         let device = Device::from_fd(fd).wait()?;
-        Self::build(device)
+        Self::build(device, None)
+    }
+
+    /// Loads DC calibration tables for this device from `dir` by serial number.
+    ///
+    /// Searches `dir` for `<serial>_dc_rx.json` and `<serial>_dc_tx.json` and
+    /// applies whichever are present, overwriting any currently loaded tables.
+    /// Missing or unparsable tables are logged and skipped. Useful when the
+    /// tables become available after construction, e.g. after the application
+    /// downloads them to its private storage.
+    ///
+    /// # Errors
+    /// Returns an error only if the device serial number cannot be read.
+    pub fn load_dc_cal_tables_from_dir(&mut self, dir: &Path) -> crate::Result<()> {
+        let serial = self.device.serial()?;
+        let rx_path = dir.join(format!("{serial}_dc_rx.json"));
+        let tx_path = dir.join(format!("{serial}_dc_tx.json"));
+        if rx_path.exists() {
+            match DcCalTable::load(&rx_path) {
+                Ok(tbl) => self.dc_rx_table = Some(tbl),
+                Err(e) => log::warn!("Failed to parse RX DC cal table {}: {e}", rx_path.display()),
+            }
+        }
+        if tx_path.exists() {
+            match DcCalTable::load(&tx_path) {
+                Ok(tbl) => self.dc_tx_table = Some(tbl),
+                Err(e) => log::warn!("Failed to parse TX DC cal table {}: {e}", tx_path.display()),
+            }
+        }
+        Ok(())
     }
     /// Returns the device serial number string.
     pub fn serial(&self) -> crate::Result<String> {
