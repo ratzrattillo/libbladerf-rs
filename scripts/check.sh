@@ -15,6 +15,14 @@ cd "$(dirname "$0")/.."
 cargo build --features bladerf1
 
 ###########################################################
+# CROSS-COMPILE BUILD (verify supported targets)
+###########################################################
+rustup target add x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-pc-windows-gnu
+cargo build --target x86_64-unknown-linux-gnu --features bladerf1 --lib
+cargo build --target aarch64-unknown-linux-gnu --features bladerf1 --lib
+cargo build --target x86_64-pc-windows-gnu --features bladerf1 --lib
+
+###########################################################
 # TEST
 ###########################################################
 # Unit tests (no hardware)

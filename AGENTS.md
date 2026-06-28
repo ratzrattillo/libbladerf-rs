@@ -26,6 +26,20 @@ All commands run from the **repository root**:
 | Generate changelog | `bash scripts/changelog.sh` |
 | Fuzz | `cargo +nightly fuzz run <target>` |
 
+### Cross-compilation prerequisites
+
+`check.sh` builds for all supported architectures. System linkers must be
+installed manually before running the script:
+
+```bash
+# Arch Linux
+sudo pacman -S aarch64-linux-gnu-gcc mingw-w64-gcc
+# Ubuntu/Debian
+sudo apt install gcc-aarch64-linux-gnu gcc-mingw-w64-x86-64
+```
+
+Rust targets are installed automatically by `check.sh`.
+
 ### scripts/check.sh vs CI
 
 `scripts/check.sh` runs: test (`--features bladerf1 --examples --lib --tests --jobs=1 -- --test-threads=1`) → clippy → fmt → conventional-commits validation (`git-cliff --unreleased --output /dev/null`) → doc (`--lib --bins --examples`) → audit. CI does **not** run `scripts/check.sh` directly. CI runs these steps individually: build (`--features bladerf1`) → unit tests (`--lib`) → protocol tests (`--test unit`) → clippy (`--features bladerf1 --all-targets -- -D warnings`) → fmt check → audit → deny check (which check.sh omits) → docs (separate job: `--features bladerf1 --no-deps`). The conventional-commits validation is **local-only** — CI does not run it.

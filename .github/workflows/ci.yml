@@ -11,8 +11,91 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  check:
+  fmt:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: ./.github/actions/check
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo fmt --all --check
+
+  clippy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --features bladerf1 --all-targets -- -D warnings
+
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo install cargo-audit && cargo audit
+
+  deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo install cargo-deny && cargo deny check
+
+  doc:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo doc --features bladerf1 --no-deps
+
+  build-examples:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: |
+          for manifest in examples/*/Cargo.toml; do
+            cargo build --manifest-path "$manifest"
+          done
+
+  test-linux:
+    name: Unit Tests Linux
+    runs-on: ubuntu-latest
+    env:
+      RUST_BACKTRACE: full
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --features bladerf1
+      - run: cargo test --lib
+      - run: cargo test --test unit
+
+  test-macos:
+    name: Unit Tests macOS
+    runs-on: macos-latest
+    env:
+      RUST_BACKTRACE: full
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --features bladerf1
+      - run: cargo test --lib
+      - run: cargo test --test unit
+
+  test-windows:
+    name: Unit Tests Windows
+    runs-on: windows-latest
+    env:
+      RUST_BACKTRACE: full
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --features bladerf1
+      - run: cargo test --lib
+      - run: cargo test --test unit
