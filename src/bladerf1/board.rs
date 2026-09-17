@@ -45,7 +45,7 @@ use crate::bladerf1::hardware::spi_flash::FlashMeta;
 use crate::channel::Channel;
 use crate::error::Error;
 use crate::flash::decode_flash_size;
-use crate::maybe_future::{Op, blocking_op, sleep};
+use crate::maybe_future::{Op, sleep};
 use crate::nios_client::NiosCore;
 use crate::usb::{
     BladeRf1DeviceCommands, BladeRf1UsbInterfaceCommands, DeviceCommands, UsbAltSetting,
@@ -100,6 +100,10 @@ pub const BLADERF1_USB_PID: u16 = 0x5246;
 /// GPIO bit that enables small DMA transfers on Hi-Speed USB.
 pub const BLADERF_GPIO_FEATURE_SMALL_DMA_XFER: u16 = 1 << 7;
 
+fn is_bladerf1(dev: &DeviceInfo) -> bool {
+    dev.vendor_id() == BLADERF1_USB_VID && dev.product_id() == BLADERF1_USB_PID
+}
+
 /// Primary device handle for the BladeRF1.
 ///
 /// Owns the USB device and the internal [`NiosCore`].
@@ -139,13 +143,9 @@ impl BladeRf1 {
     #[cfg(not(target_os = "android"))]
     pub fn list_bladerf1()
     -> impl MaybeFuture<Output = crate::Result<impl Iterator<Item = DeviceInfo>>> {
-        Op::new(async move {
-            Ok(blocking_op(nusb::list_devices())
-                .await?
-                .filter(|dev: &DeviceInfo| {
-                    dev.vendor_id() == BLADERF1_USB_VID && dev.product_id() == BLADERF1_USB_PID
-                }))
-        })
+        nusb::list_devices()
+            .map_ok(|devices| devices.filter(is_bladerf1))
+            .map_err(Error::from)
     }
     fn build(
         device: Device,
@@ -157,7 +157,7 @@ impl BladeRf1 {
             log::debug!("Serial: {}", device.serial().await?);
             log::debug!("Speed: {:?}", device.speed());
             log::debug!("Languages: {:x?}", device.get_supported_languages().await?);
-            let interface = blocking_op(device.detach_and_claim_interface(0)).await?;
+            let interface = device.detach_and_claim_interface(0).await?;
             let speed = match device.speed() {
                 Some(speed) => speed,
                 None => {
@@ -265,7 +265,7 @@ impl BladeRf1 {
     pub fn from_first() -> impl MaybeFuture<Output = crate::Result<Self>> {
         Op::new(async move {
             let info = Self::list_bladerf1().await?.next().ok_or(Error::NotFound)?;
-            let device = blocking_op(info.open()).await?;
+            let device = info.open().await?;
             Self::build(device, None).await
         })
     }
@@ -281,7 +281,7 @@ impl BladeRf1 {
                 .await?
                 .find(|dev| dev.serial_number() == Some(serial))
                 .ok_or(Error::NotFound)?;
-            let device = blocking_op(info.open()).await?;
+            let device = info.open().await?;
             Self::build(device, None).await
         })
     }
@@ -301,7 +301,7 @@ impl BladeRf1 {
                 .await?
                 .find(|dev| dev.bus_id() == bus_number && dev.device_address() == bus_addr)
                 .ok_or(Error::NotFound)?;
-            let device = blocking_op(info.open()).await?;
+            let device = info.open().await?;
             Self::build(device, None).await
         })
     }
@@ -335,7 +335,7 @@ impl BladeRf1 {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn from_fd(fd: std::os::fd::OwnedFd) -> impl MaybeFuture<Output = crate::Result<Self>> {
         Op::new(async move {
-            let device = blocking_op(Device::from_fd(fd)).await?;
+            let device = Device::from_fd(fd).await?;
             Self::build(device, None).await
         })
     }

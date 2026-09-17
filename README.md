@@ -21,6 +21,13 @@ used synchronously or asynchronously.
 | `xb100`     | yes     | XB-100 LED expansion board             |
 | `xb200`     | yes     | XB-200 transverter board               |
 | `xb300`     | yes     | XB-300 amplifier board                 |
+| `smol`      | yes     | nusb `smol` integration (`blocking` thread pool) |
+| `tokio`     | no      | nusb `tokio` integration (`spawn_blocking`)     |
+
+Exactly like every nusb-based driver, one of `smol`/`tokio` is required on
+native targets: nusb resolves device open, interface claim, alternate-setting
+switches and clear-halt through the selected runtime's blocking pool. Neither
+is needed on wasm32. If both are enabled nusb uses `smol`.
 
 \* Enabled implicitly by `xb100`, `xb200`, or `xb300`.
 
@@ -74,12 +81,13 @@ rx.close(&mut rf).await?;
 dev.close().await?;
 ```
 
-The async path is executor-agnostic: it works under tokio, smol,
-`futures::executor`, or `wasm-bindgen-futures` without enabling any runtime
-feature. A few nusb operations backed by blocking syscalls (device open,
-interface claim, alternate-setting switch, clear halt) run synchronously on
-native targets; they are configuration-time operations, not on the streaming
-path.
+The crate mirrors [nusb]'s semantics exactly: transfers are real futures
+completed by nusb's event thread, and the handful of blocking syscalls (device
+open, interface claim, alternate-setting switch, clear halt) are offloaded
+through nusb's `smol` or `tokio` integration. With the default `smol` feature
+both `.wait()` and `.await` work under any executor. With `tokio` instead,
+`.await` must run inside a tokio runtime; `.wait()` works anywhere (the crate
+enters a private runtime context for callers outside tokio).
 
 Streaming timeouts (`RxStream::read`, `TxStream::get_buffer`,
 `TxStream::wait_completion`) apply to the blocking path only. The awaited
@@ -110,7 +118,7 @@ Git-tracked examples (build and run from the repository root):
 |---------|---------|
 | `info` | Basic device info and FPGA version |
 | `rx_tx` | Streaming RX/TX with metadata headers |
-| `rx_async` | RX streaming with the awaited API on tokio |
+| `rx_async` | RX streaming with the awaited API on tokio (`--features tokio`) |
 | `calibrate` | DC calibration on LMS6002D |
 | `dc_cal_table` | DC calibration table management |
 | `flash_firmware` | FX3 firmware flashing |

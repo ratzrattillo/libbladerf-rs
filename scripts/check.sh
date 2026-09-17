@@ -31,13 +31,16 @@ cargo check --target wasm32-unknown-unknown --features bladerf1 --lib
 cargo test --lib
 # Protocol encode/decode tests (no hardware)
 cargo test --test unit
-# Hardware integration tests (single-threaded, shared device)
+# Hardware integration tests (single-threaded, shared device), default `smol`
 cargo test --features bladerf1 --tests -- --test-threads=1
+# Same suite plus the async tests with nusb's tokio integration only
+cargo test --no-default-features --features bladerf1,xb100,xb200,xb300,tokio --tests -- --test-threads=1
 
 ###########################################################
 # CLIPPY
 ###########################################################
 cargo clippy --features bladerf1 --all-targets -- -D warnings
+cargo clippy --no-default-features --features bladerf1,xb100,xb200,xb300,tokio --all-targets -- -D warnings
 
 ###########################################################
 # FMT

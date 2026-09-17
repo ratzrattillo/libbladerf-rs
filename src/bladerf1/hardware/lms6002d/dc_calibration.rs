@@ -477,10 +477,7 @@ impl<'a> Lms6002d<'a> {
         channel: Channel,
         value: i16,
     ) -> impl MaybeFuture<Output = Result<()>> {
-        Op::new(async move {
-            self.set_dc_offset(channel, dc_offset_i_addr(channel), value)
-                .await
-        })
+        self.set_dc_offset(channel, dc_offset_i_addr(channel), value)
     }
 
     pub(crate) fn set_dc_offset_q(
@@ -488,10 +485,7 @@ impl<'a> Lms6002d<'a> {
         channel: Channel,
         value: i16,
     ) -> impl MaybeFuture<Output = Result<()>> {
-        Op::new(async move {
-            self.set_dc_offset(channel, dc_offset_q_addr(channel), value)
-                .await
-        })
+        self.set_dc_offset(channel, dc_offset_q_addr(channel), value)
     }
 
     pub(crate) fn get_dc_offset_i(

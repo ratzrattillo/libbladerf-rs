@@ -17,7 +17,8 @@ All commands run from the **repository root**:
 | Protocol tests (no hardware) | `cargo test --test unit` |
 | Run a single unit test | `cargo test --test unit -- <test_name>` |
 | Test (with hardware) | `cargo test --features bladerf1 --tests -- --test-threads=1` |
-| Async hardware tests only | `cargo test --features bladerf1 --test bladerf1_async -- --test-threads=1` |
+| Async hardware tests only | `cargo test --features bladerf1,tokio --test bladerf1_async -- --test-threads=1` |
+| Hardware tests, tokio only | `cargo test --no-default-features --features bladerf1,xb200,tokio --tests -- --test-threads=1` |
 | wasm32 check | `cargo +stable check --target wasm32-unknown-unknown --features bladerf1 --lib` |
 | Run a single hardware test | `cargo test --features bladerf1 --test bladerf1 -- <test_name>` |
 | Clippy | `cargo clippy --all-targets -- -D warnings` |
@@ -157,13 +158,15 @@ Best-effort disable of RX/TX modules via `self.nios.usb_enable_module(..).wait()
 
 ### Sync/async model (`MaybeFuture`)
 
-Every I/O method, at every layer (`BladeRf1`, sessions, streams, `NiosCore`, chip drivers, flash), returns `impl MaybeFuture<Output = Result<T>>` (`nusb::MaybeFuture`, re-exported at the crate root). Callers `.wait()` (native) or `.await`. There is no `_async` twin API and no `smol`/`tokio` feature.
+Every I/O method, at every layer (`BladeRf1`, sessions, streams, `NiosCore`, chip drivers, flash), returns `impl MaybeFuture<Output = Result<T>>` (`nusb::MaybeFuture`, re-exported at the crate root). Callers `.wait()` (native) or `.await`. There is no `_async` twin API.
+
+**Principle: mirror nusb's semantics exactly.** Expose nusb's `MaybeFuture` shape, forward nusb's runtime features (`smol`, `tokio`) under the same names, and never add adapters that change how a nusb operation resolves. If nusb's own example is `list_devices().wait()?.find(..)`, ours should read the same way.
 
 Implementation rules (see `src/maybe_future.rs` and `ASYNC_PLAN.md`):
 
-- Write the body as plain async code inside `Op::new(async move { .. })`. Internal calls `.await` the public method directly (`Op<F>: IntoFuture<IntoFuture = F>`, zero cost, no boxing). Direct delegations return the inner `MaybeFuture` without wrapping.
-- `Op::wait()` runs a crate-private thread-parking `block_on`. It works because nusb completes transfers on its own event thread and `futures-timer` on its own timer thread.
-- nusb operations backed by blocking syscalls (`DeviceInfo::open`, `Device::from_fd`, `detach_and_claim_interface`, `set_alt_setting`, `Endpoint::clear_halt`, `list_devices`) **must** go through `blocking_op(..)`, which `.wait()`s them on native and `.await`s on wasm. Awaiting them directly panics without nusb's `smol`/`tokio` feature. Never `.wait()` anything else inside async code.
+- Single-call methods return the combinator chain directly: `nusb_op().map_ok(..).map_err(Error::from)`, `self.nios.nios_read(..).map_ok(..)`. `Op::new(async move { .. })` is only for bodies with two or more awaits or control flow between them. Direct delegations return the inner `MaybeFuture` unchanged.
+- Inside async blocks, internal calls `.await` the public method directly (`Op<F>: IntoFuture<IntoFuture = F>`, zero cost, no boxing).
+- `Op::wait()` runs a crate-private thread-parking `block_on`. It works because nusb completes transfers on its own event thread, `futures-timer` on its own timer thread, and nusb's blocking syscalls (open, claim, alt setting, clear halt, `list_devices` on Windows) on the `smol` (`blocking` crate) or `tokio` (`spawn_blocking`) pool. That is why one of the two features is mandatory on native (`compile_error!` otherwise); `smol` is the default. With `tokio` alone, `Op::wait()` enters a lazily created private runtime context for callers outside tokio (`tokio_context()`), because `spawn_blocking` needs one; awaited use must already be inside a tokio runtime.
 - Sleeps use `crate::maybe_future::sleep` (futures-timer; `thread::sleep` for sub-millisecond delays on native). No `std::thread::sleep`, no `Instant` outside `cfg(not(target_arch = "wasm32"))` blocks.
 - Closures held across an await need `+ Send` (`config_gpio_modify`, `nios_config_modify`).
 - Streaming hot paths (`RxStream::read`, `TxStream::get_buffer`, `TxStream::wait_completion`) are hand-written `Future` structs that also implement `MaybeFuture`: `wait()` runs the original blocking code with timeouts; `poll()` uses `Endpoint::poll_next_complete`. Awaited variants ignore `timeout` and consume one completion per await (matches hackrf-nusb/hydrasdr-rs; seify applies its own timeout).
@@ -182,8 +185,10 @@ Implementation rules (see `src/maybe_future.rs` and `ASYNC_PLAN.md`):
 | `xb100` | yes | XB-100 expansion board (implies `bladerf1`) |
 | `xb200` | yes | XB-200 expansion board (implies `bladerf1`) |
 | `xb300` | yes | XB-300 expansion board (implies `bladerf1`) |
+| `smol` | yes | `nusb/smol` — blocking syscalls on the `blocking` thread pool |
+| `tokio` | no | `nusb/tokio` — blocking syscalls via `spawn_blocking` |
 
-Default features enable all three expansion board features (which each imply `bladerf1`).
+Default features enable all three expansion board features (which each imply `bladerf1`) and `smol`. One of `smol`/`tokio` is required on native targets (compile error otherwise); neither on wasm32.
 
 ## C reference implementation
 
@@ -212,7 +217,7 @@ Default features enable all three expansion board features (which each imply `bl
 - **Unified `close_stream()`.** `RfLinkSession::close_stream(channel, pool)` contains all teardown logic, shared by both `RxStream::close()` and `TxStream::close()`.
 - **Stream-active counter.** `NiosCore` tracks `active_streams: u8`. `flash_session()` and `config_session()` return `Error::StreamsActive` if any stream is running. `rf_link_session()` requires no special handling — if streams are active, the device is already in RfLink mode and the existing skip-if-already-correct optimization avoids a redundant `usb_change_setting`. Streams increment the counter on `build()`, decrement on `close()`. If a stream is dropped without `close()`, the counter stays elevated — consistent with the existing "no `Drop` on streams" principle.
 - **Single `MaybeFuture` API instead of sync + `_async` twins.** Matches hackrf-nusb / hydrasdr-rs so seify's bladerf1 backend can be two thin adapters (`.wait()` / `.await`) over one API. One definition per method, no drift.
-- **No `smol`/`tokio` features.** Blocking-class nusb calls are resolved with `.wait()` on native inside `blocking_op`, so the async path works with any executor and `.wait()` can never hit tokio's "no reactor" panic even if another crate enables `nusb/tokio`.
+- **nusb's `smol`/`tokio` features are forwarded, `smol` is default.** A `blocking_op` adapter that ran nusb's blocking syscalls inline on native was tried and removed: it diverged from nusb's semantics and forced async blocks around single nusb calls. The remaining wrinkle of "sync over an async core" — `tokio::spawn_blocking` needing a runtime context — is handled in one place (`tokio_context()` in `Op::wait`).
 - **`perform_format_config` / `perform_format_deconfig` are global.** The format GPIO bits (PACKET, TIMESTAMP, 8BIT_MODE, HIGHLY_PACKED) are global, not per-channel. These methods do not take a `channel` parameter.
 - **GPIO-based init state check, not a cached flag.** `RfLinkSession::require_initialized()` reads the config GPIO register and checks `(cfg & 0x7f) != 0`. This matches the C library's `CHECK_BOARD_STATE` pattern. A cached `initialized: bool` flag on `NiosCore` was tried and rejected because `initialize()` calls guarded methods internally (e.g. `set_frequency`, `set_gain_mode`), creating a circular dependency: the flag is `false` until the end of `initialize()`, but guarded sub-operations need it `true`. Working around this required setting the flag early and clearing on failure — a fragile pattern. The GPIO check eliminates the problem entirely: `initialize()` writes `0x57` to GPIO first, so subsequent `require_initialized()` calls naturally see the initialized state. No ordering issue, no flag management, no `mark_uninitialized()` needed at de-init sites (FPGA reload resets NIOS, which clears GPIO to `0x00`). The extra USB roundtrip per guard check is negligible — every guarded method already does USB I/O.
 

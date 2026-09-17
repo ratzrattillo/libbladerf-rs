@@ -20,7 +20,7 @@
 use crate::bladerf1::board::RfLinkSession;
 use crate::channel::Channel;
 use crate::error::{Error, Result};
-use crate::maybe_future::{Op, blocking_op};
+use crate::maybe_future::Op;
 use nusb::MaybeFuture;
 use nusb::transfer::{Buffer, Bulk, Completion, EndpointDirection, In, Out, TransferError};
 use std::collections::VecDeque;
@@ -143,9 +143,7 @@ impl<Dir: EndpointDirection> BufferPool<Dir> {
     /// Clears the halt condition on the endpoint.
     /// Returns an error if the clear-halt request fails.
     pub(crate) async fn clear_halt(&mut self) -> Result<()> {
-        blocking_op(self.endpoint.clear_halt())
-            .await
-            .map_err(Error::from)
+        self.endpoint.clear_halt().await.map_err(Error::from)
     }
 
     fn pickup_tx_completed(&mut self) -> Result<()> {

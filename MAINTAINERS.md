@@ -13,6 +13,7 @@ composite action `.github/actions/check`, which runs:
 2. Unit tests — `cargo test --lib`
 3. Protocol tests — `cargo test --test unit`
 4. Clippy — `cargo clippy --features bladerf1 --all-targets -- -D warnings`
+   (and once more with `--no-default-features --features bladerf1,xb100,xb200,xb300,tokio`)
 5. Format check — `cargo fmt --all --check`
 6. Security audit — `cargo install cargo-audit && cargo audit`
 7. License/deny check — `cargo install cargo-deny && cargo deny check`

@@ -66,11 +66,7 @@ fn trigger_target(channel: Channel) -> NiosPkt8x8Target {
 
 impl RfLinkSession<'_> {
     fn trigger_read(&mut self, channel: Channel) -> impl MaybeFuture<Output = Result<u8>> {
-        Op::new(async move {
-            self.nios
-                .nios_read::<u8, u8>(trigger_target(channel), 0)
-                .await
-        })
+        self.nios.nios_read::<u8, u8>(trigger_target(channel), 0)
     }
 
     fn trigger_write(
@@ -78,11 +74,8 @@ impl RfLinkSession<'_> {
         channel: Channel,
         value: u8,
     ) -> impl MaybeFuture<Output = Result<()>> {
-        Op::new(async move {
-            self.nios
-                .nios_write::<u8, u8>(trigger_target(channel), 0, value)
-                .await
-        })
+        self.nios
+            .nios_write::<u8, u8>(trigger_target(channel), 0, value)
     }
 
     /// Arms the trigger for a channel with the given role.

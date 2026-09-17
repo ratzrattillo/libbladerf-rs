@@ -124,19 +124,12 @@ pub struct Lms6002d<'a> {
 
 impl<'a> Lms6002d<'a> {
     pub(crate) fn read(&mut self, addr: u8) -> impl MaybeFuture<Output = Result<u8>> {
-        Op::new(async move {
-            self.nios
-                .nios_read::<u8, u8>(NiosPkt8x8Target::Lms6, addr)
-                .await
-        })
+        self.nios.nios_read::<u8, u8>(NiosPkt8x8Target::Lms6, addr)
     }
 
     pub(crate) fn write(&mut self, addr: u8, data: u8) -> impl MaybeFuture<Output = Result<()>> {
-        Op::new(async move {
-            self.nios
-                .nios_write::<u8, u8>(NiosPkt8x8Target::Lms6, addr, data)
-                .await
-        })
+        self.nios
+            .nios_write::<u8, u8>(NiosPkt8x8Target::Lms6, addr, data)
     }
 
     pub(crate) fn set(&mut self, addr: u8, mask: u8) -> impl MaybeFuture<Output = Result<()>> {

@@ -17,11 +17,8 @@ pub struct Dac161s055<'a> {
 impl<'a> Dac161s055<'a> {
     /// Reads the current DAC register value.
     pub fn read(&mut self) -> impl MaybeFuture<Output = Result<u16>> {
-        Op::new(async move {
-            self.nios
-                .nios_read::<u8, u16>(NiosPkt8x16Target::VctcxoDac, 0x98)
-                .await
-        })
+        self.nios
+            .nios_read::<u8, u16>(NiosPkt8x16Target::VctcxoDac, 0x98)
     }
 
     /// Writes a 16-bit value to the DAC to set the VCTCXO trim voltage.

@@ -25,6 +25,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --features bladerf1 --all-targets -- -D warnings
+      - run: cargo clippy --no-default-features --features bladerf1,xb100,xb200,xb300,tokio --all-targets -- -D warnings
 
   audit:
     runs-on: ubuntu-latest
@@ -82,6 +83,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --features bladerf1
+      - run: cargo build --no-default-features --features bladerf1,tokio
       - run: cargo test --lib
       - run: cargo test --test unit
 

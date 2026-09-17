@@ -111,19 +111,13 @@ pub struct Si5338<'a> {
 
 impl<'a> Si5338<'a> {
     pub(crate) fn read(&mut self, addr: u8) -> impl MaybeFuture<Output = Result<u8>> {
-        Op::new(async move {
-            self.nios
-                .nios_read::<u8, u8>(NiosPkt8x8Target::Si5338, addr)
-                .await
-        })
+        self.nios
+            .nios_read::<u8, u8>(NiosPkt8x8Target::Si5338, addr)
     }
 
     pub(crate) fn write(&mut self, addr: u8, data: u8) -> impl MaybeFuture<Output = Result<()>> {
-        Op::new(async move {
-            self.nios
-                .nios_write::<u8, u8>(NiosPkt8x8Target::Si5338, addr, data)
-                .await
-        })
+        self.nios
+            .nios_write::<u8, u8>(NiosPkt8x8Target::Si5338, addr, data)
     }
 
     fn read_multisynth(&mut self, ms: &mut Multisynth) -> impl MaybeFuture<Output = Result<()>> {

@@ -155,30 +155,32 @@ Also in this module:
 #[cfg(target_arch = "wasm32")]      pub(crate) trait NonWasmSend {}  // blanket impl
 ```
 
-### 2.3 `blocking_op()` — resolving nusb `Blocking`-class calls
+### 2.3 nusb's blocking-class operations — mirror nusb, forward its features
 
-```rust
-pub(crate) async fn blocking_op<T: NonWasmSend>(op: impl MaybeFuture<Output = T>) -> T {
-    #[cfg(not(target_arch = "wasm32"))] { op.wait() }
-    #[cfg(target_arch = "wasm32")]      { op.await }
-}
-```
+(Revised after implementation; the first version used a crate-private
+`blocking_op` adapter that ran these syscalls inline on native. It was
+removed because it diverged from nusb's semantics and forced async blocks
+around single nusb calls.)
 
-Used for exactly: `DeviceInfo::open`, `Device::from_fd`,
-`detach_and_claim_interface`, `set_alt_setting`, `Endpoint::clear_halt`,
-`Device::reset` (if used). Everything else (`control_in`, `control_out`,
-`next_complete`, `get_string_descriptor*`) is `.await`ed directly.
+`DeviceInfo::open`, `Device::from_fd`, `detach_and_claim_interface`,
+`set_alt_setting`, `Endpoint::clear_halt` (and `list_devices` on Windows)
+are nusb `Blocking` operations: awaiting them requires nusb's `smol` or
+`tokio` feature. libbladerf-rs forwards both under the same names, exactly
+like hackrf-nusb and hydrasdr-rs:
 
-Consequences:
+* `smol = ["nusb/smol"]` — **default**; the `blocking` thread pool is
+  executor-agnostic, so both `.wait()` and `.await` work anywhere.
+* `tokio = ["nusb/tokio", "dep:tokio"]` — `spawn_blocking`; `.await` must run
+  inside a tokio runtime. Because our `.wait()` is `block_on` over an async
+  block (unlike nusb's inline `Blocking::wait`), `Op::wait()` enters a lazily
+  created private runtime context when the caller is outside tokio
+  (`tokio_context()`), so sync callers keep working with `tokio` alone.
+* Neither on native → `compile_error!`. Neither needed on wasm32.
 
-* libbladerf-rs needs **no `smol`/`tokio` features**; native async works with
-  any executor (tokio, smol, `futures::executor`, `wasm-bindgen-futures`).
-* `.wait()` from sync code can never hit tokio's "no reactor running" panic,
-  even if another crate in the build enables `nusb/tokio` (feature
-  unification).
-* Trade-off: `set_alt_setting`/`clear_halt`/`claim_interface` block the
-  executor thread for ms on native. They are config-time operations, never on
-  the streaming hot path. Documented in the crate docs.
+Single nusb calls are returned as combinator chains
+(`nusb::list_devices().map_ok(..).map_err(Error::from)`), not wrapped in
+`Op::new(async move { .. })`; the async block is reserved for bodies with two
+or more awaits.
 
 ### 2.4 Timers (`sleep()` helper)
 
@@ -222,7 +224,7 @@ survives, add `web-time` (drop-in shim) rather than cfg-forking.
 * Vendor control helpers (`vendor_cmd_in`, `usb_vendor_cmd_out_w_index`,
   device reset) → `.await` the nusb `MaybeFuture` (timeout built in).
 * `usb_change_setting` → `release_endpoints().await` then
-  `blocking_op(interface.set_alt_setting(..)).await`.
+  `interface.set_alt_setting(..).await`.
 * `release_endpoints` → native: `cancel_all` + await completions until
   `pending() == 0` (bounded by a 5 s timer race); wasm: NIOS endpoints never
   have pending transfers (strict request/response, no timeouts), so drop the
@@ -245,7 +247,7 @@ survives, add `web-time` (drop-in shim) rather than cfg-forking.
 | `wait_completion(timeout)` → `wait_next_complete` | `next_completion()` → `endpoint.next_complete().await` |
 | `drain_extras()` (`Duration::ZERO` polls) | `reap_ready()` → `poll_next_complete(&mut Context::from_waker(Waker::noop()))` loop |
 | `drain_cancelled()` (`cancel_all` + 5 s deadline) | native: `cancel_all` + await completions with timer race; wasm: await completions until `pending() == 0` |
-| `clear_halt()` → `.wait()` | `blocking_op(endpoint.clear_halt()).await` |
+| `clear_halt()` → `.wait()` | `endpoint.clear_halt().await` |
 
 Hot-path operations get **hand-written dual futures** (not `Op`), so the
 sync path runs today's code verbatim and keeps its timeout semantics:
@@ -403,7 +405,7 @@ Files: new `src/maybe_future.rs`, `src/usb.rs`, `src/nios_client.rs`,
 `src/lib.rs`.
 
 - [x] `src/maybe_future.rs`: `Op<F>`, `block_on`, `NonWasmSend`,
-      `blocking_op()`, `sleep()`, unit tests for `block_on` (ready future,
+      `sleep()`, unit tests for `block_on` (ready future,
       future woken from another thread) and `Op` (`wait()` and `.await` via
       a tiny hand-rolled poll).
 - [x] `src/lib.rs`: `pub use nusb::MaybeFuture;` (+ `pub use nusb;` if
@@ -479,7 +481,7 @@ Files: `src/bladerf1/board.rs`, `src/bladerf1/board/*.rs` (~20 files),
 - [x] New example `examples/rx_async` (tokio) mirroring `rx_tx` RX half.
 - [x] Docs: README (sync `.wait()` and async `.await` examples, executor
       notes, wasm notes), crate-level docs, `AGENTS.md` async section
-      (design rules from §2: `Op`, `blocking_op` policy, dual futures,
+      (design rules from §2: `Op`, nusb feature forwarding, dual futures,
       no timeout in async streaming, wasm cfgs), `CHANGELOG.md` via
       `scripts/changelog.sh` with a BREAKING CHANGE entry, `TODO.md`
       (drop the WASM transport item — superseded).

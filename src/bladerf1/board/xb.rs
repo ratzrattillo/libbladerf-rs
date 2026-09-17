@@ -101,11 +101,7 @@ impl RfLinkSession<'_> {
 
     /// Writes the full expansion GPIO direction register.
     pub fn expansion_gpio_dir_write(&mut self, val: u32) -> impl MaybeFuture<Output = Result<()>> {
-        Op::new(async move {
-            self.nios
-                .nios_expansion_gpio_dir_write(0xffffffff, val)
-                .await
-        })
+        self.nios.nios_expansion_gpio_dir_write(0xffffffff, val)
     }
 
     /// Writes the expansion GPIO direction register with a mask.

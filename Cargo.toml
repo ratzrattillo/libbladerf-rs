@@ -26,6 +26,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 futures-timer = "3"
 
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { version = "1", default-features = false, features = ["rt"], optional = true }
+
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 futures-timer = { version = "3", features = ["wasm-bindgen"] }
 
@@ -36,7 +39,7 @@ husky-rs = { version = "0.4"}
 tokio = { version = "1", features = ["rt", "macros", "time"] }
 
 [features]
-default = ["xb100", "xb200", "xb300"]
+default = ["xb100", "xb200", "xb300", "smol"]
 
 # BladeRF1 support (x40/x115)
 bladerf1 = []
@@ -48,6 +51,14 @@ bladerf2 = []
 xb100 = ["bladerf1"]
 xb200 = ["bladerf1"]
 xb300 = ["bladerf1"]
+
+# Runtime integration for nusb's blocking operations (device open, interface
+# claim, alternate setting, clear halt), mirroring nusb's own `smol`/`tokio`
+# features. One of them is required on native targets; `smol` (the
+# executor-agnostic `blocking` thread pool) is the default. If both are
+# enabled nusb uses `smol`. Neither is needed on wasm32.
+smol = ["nusb/smol"]
+tokio = ["nusb/tokio", "dep:tokio"]
 
 # Configure docs.rs to show all features
 [package.metadata.docs.rs]
@@ -67,7 +78,7 @@ required-features = ["bladerf1"]
 [[test]]
 name = "bladerf1_async"
 path = "tests/bladerf1_async/main.rs"
-required-features = ["bladerf1"]
+required-features = ["bladerf1", "tokio"]
 
 [[test]]
 name = "unit"

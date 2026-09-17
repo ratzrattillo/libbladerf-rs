@@ -5,11 +5,11 @@
 //! the driver is written as plain `async` code; [`Op`] wraps such a future
 //! so it satisfies `MaybeFuture` with a runtime-free executor for `wait()`.
 //!
-//! nusb performs bulk and control transfers on its own event thread, so a
-//! thread-parking executor is sufficient. The only nusb operations that
-//! require an async runtime when awaited (interface claim, alt setting,
-//! clear halt, device open) are resolved through [`blocking_op`], which
-//! runs them synchronously on native targets.
+//! nusb's semantics are mirrored exactly: bulk and control transfers are
+//! real futures completed by nusb's event thread, while device open,
+//! interface claim, alternate setting and clear halt are blocking syscalls
+//! that nusb offloads through its `smol` or `tokio` feature when awaited.
+//! Enable one of this crate's `smol`/`tokio` features for native async use.
 
 use nusb::MaybeFuture;
 use std::future::{Future, IntoFuture};
@@ -47,7 +47,32 @@ impl<F: Future> IntoFuture for Op<F> {
 impl<F: Future + NonWasmSend> MaybeFuture for Op<F> {
     #[cfg(not(target_arch = "wasm32"))]
     fn wait(self) -> F::Output {
+        #[cfg(feature = "tokio")]
+        let _context = tokio_context();
         block_on(self.0)
+    }
+}
+
+/// Enters a tokio runtime context if the current thread has none.
+///
+/// With the `tokio` feature nusb resolves blocking syscalls through
+/// `tokio::task::spawn_blocking`, which requires a runtime context even
+/// when the future is driven by [`block_on`]. Synchronous callers outside
+/// tokio get a lazily created runtime whose blocking pool serves them.
+#[cfg(all(feature = "tokio", not(target_arch = "wasm32")))]
+fn tokio_context() -> Option<tokio::runtime::EnterGuard<'static>> {
+    use std::sync::LazyLock;
+
+    static RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("failed to build the fallback tokio runtime")
+    });
+
+    if tokio::runtime::Handle::try_current().is_ok() {
+        None
+    } else {
+        Some(RUNTIME.enter())
     }
 }
 
@@ -83,23 +108,6 @@ pub(crate) fn block_on<F: Future>(future: F) -> F::Output {
             Poll::Ready(output) => return output,
             Poll::Pending => thread::park(),
         }
-    }
-}
-
-/// Resolves a nusb operation that is backed by a blocking syscall.
-///
-/// On native targets the operation runs synchronously on the calling
-/// thread; awaiting it would require nusb's `smol` or `tokio` feature and
-/// would panic otherwise. On wasm the operation is a JS promise and is
-/// awaited.
-pub(crate) async fn blocking_op<T>(op: impl MaybeFuture<Output = T>) -> T {
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        op.wait()
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
-        op.await
     }
 }
 
