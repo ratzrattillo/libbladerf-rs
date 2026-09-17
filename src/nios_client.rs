@@ -20,13 +20,10 @@ use crate::protocol::nios::{
     NiosPkt8x64TimestampAddr, NiosPkt32x32Target, nios_decode_read, nios_decode_write,
     nios_encode_read, nios_encode_write,
 };
+use crate::usb::UsbAltSetting;
 use crate::usb::UsbTransport;
-use crate::usb::{
-    BladeRf1UsbInterfaceCommands, UsbAltSetting, UsbInterfaceCommands, VendorRequest,
-};
 use crate::version::SemanticVersion;
 use nusb::MaybeFuture;
-use std::time::Duration;
 
 /// Central NIOS register I/O hub.
 ///
@@ -51,6 +48,24 @@ impl NiosCore {
     /// Returns a shared reference to the underlying `UsbTransport`.
     pub fn transport(&self) -> &UsbTransport {
         &self.transport
+    }
+    /// Returns the claimed nusb interface for vendor control requests.
+    pub fn interface(&self) -> &nusb::Interface {
+        self.transport.interface()
+    }
+    /// Switches the USB alternate setting, releasing NIOS endpoints first.
+    pub fn usb_change_setting(
+        &mut self,
+        setting: UsbAltSetting,
+    ) -> impl MaybeFuture<Output = Result<()>> {
+        self.transport.usb_change_setting(setting)
+    }
+    /// Sets the firmware loopback mode and cycles the USB alt setting.
+    pub fn usb_set_firmware_loopback(
+        &mut self,
+        enable: bool,
+    ) -> impl MaybeFuture<Output = Result<()>> {
+        self.transport.usb_set_firmware_loopback(enable)
     }
     /// Returns the current number of active streams.
     pub(crate) fn active_streams(&self) -> u8 {
@@ -283,105 +298,6 @@ impl NiosCore {
             Channel::Tx => NiosPkt8x64TimestampAddr::Tx,
         };
         self.nios_read::<u8, u64>(NiosPkt8x64Target::Timestamp, addr.into())
-    }
-}
-
-/// Core USB interface commands available on types that wrap an interface.
-///
-/// Implemented for `NiosCore` to delegate to the underlying transport.
-impl UsbInterfaceCommands for NiosCore {
-    /// Issues a vendor command and returns a 32-bit integer response.
-    fn usb_vendor_cmd_int(&self, cmd: VendorRequest) -> impl MaybeFuture<Output = Result<u32>> {
-        self.transport.usb_vendor_cmd_int(cmd)
-    }
-    /// Issues a vendor command with a `wValue` parameter and returns a 32-bit integer response.
-    fn usb_vendor_cmd_int_w_value(
-        &self,
-        cmd: VendorRequest,
-        wvalue: u16,
-    ) -> impl MaybeFuture<Output = Result<u32>> {
-        self.transport.usb_vendor_cmd_int_w_value(cmd, wvalue)
-    }
-    /// Issues a vendor command with a `wIndex` parameter and returns a 32-bit integer response.
-    fn usb_vendor_cmd_int_w_index(
-        &self,
-        cmd: VendorRequest,
-        windex: u16,
-    ) -> impl MaybeFuture<Output = Result<u32>> {
-        self.transport.usb_vendor_cmd_int_w_index(cmd, windex)
-    }
-    /// Issues an output vendor command with a `wIndex` parameter and data payload.
-    fn usb_vendor_cmd_out_w_index(
-        &self,
-        cmd: VendorRequest,
-        windex: u16,
-        data: &[u8],
-    ) -> impl MaybeFuture<Output = Result<()>> {
-        self.transport.usb_vendor_cmd_out_w_index(cmd, windex, data)
-    }
-    /// Issues an input vendor command with a `wIndex` parameter and fills `buf` with the response.
-    fn usb_vendor_cmd_in_w_index_data(
-        &self,
-        cmd: VendorRequest,
-        windex: u16,
-        buf: &mut [u8],
-    ) -> impl MaybeFuture<Output = Result<()>> {
-        self.transport
-            .usb_vendor_cmd_in_w_index_data(cmd, windex, buf)
-    }
-    /// Switches the USB interface to the specified alternate setting.
-    fn usb_change_setting(
-        &mut self,
-        setting: UsbAltSetting,
-    ) -> impl MaybeFuture<Output = Result<()>> {
-        self.transport.usb_change_setting(setting)
-    }
-}
-
-/// BladeRF1-specific USB interface commands.
-///
-/// Implemented for `NiosCore` to delegate to the underlying transport.
-impl BladeRf1UsbInterfaceCommands for NiosCore {
-    /// Enables or disables the USB streaming module for the given channel.
-    fn usb_enable_module(
-        &self,
-        channel: Channel,
-        enable: bool,
-    ) -> impl MaybeFuture<Output = Result<()>> {
-        self.transport.usb_enable_module(channel, enable)
-    }
-    /// Sets the firmware loopback mode and cycles the USB alt setting.
-    fn usb_set_firmware_loopback(&mut self, enable: bool) -> impl MaybeFuture<Output = Result<()>> {
-        self.transport.usb_set_firmware_loopback(enable)
-    }
-    /// Queries whether firmware loopback is currently enabled.
-    fn usb_get_firmware_loopback(&self) -> impl MaybeFuture<Output = Result<bool>> {
-        self.transport.usb_get_firmware_loopback()
-    }
-    /// Resets the FX3 USB controller.
-    fn usb_device_reset(&self) -> impl MaybeFuture<Output = Result<()>> {
-        self.transport.usb_device_reset()
-    }
-    /// Returns `true` if the firmware has reported readiness.
-    fn usb_is_firmware_ready(&self) -> impl MaybeFuture<Output = Result<bool>> {
-        self.transport.usb_is_firmware_ready()
-    }
-    /// Returns `true` if the FPGA has finished configuration.
-    fn usb_is_fpga_configured(&self) -> impl MaybeFuture<Output = Result<bool>> {
-        self.transport.usb_is_fpga_configured()
-    }
-    /// Signals the firmware to begin FPGA programming.
-    fn usb_begin_fpga_prog(&self) -> impl MaybeFuture<Output = Result<()>> {
-        self.transport.usb_begin_fpga_prog()
-    }
-    /// Sends a bulk OUT transfer to the specified endpoint.
-    fn usb_bulk_out(
-        &self,
-        endpoint: u8,
-        data: &[u8],
-        timeout: Duration,
-    ) -> impl MaybeFuture<Output = Result<()>> {
-        self.transport.usb_bulk_out(endpoint, data, timeout)
     }
 }
 

@@ -203,7 +203,7 @@ impl BladeRf1 {
         Op::new(async move {
             const MAX_RETRIES: u32 = 30;
             for i in 0..MAX_RETRIES {
-                match self.nios.usb_is_firmware_ready().await {
+                match self.nios.interface().usb_is_firmware_ready().await {
                     Ok(true) => return Ok(()),
                     Ok(false) => {
                         if i == 0 {
@@ -454,6 +454,7 @@ impl BladeRf1 {
             }
             let result = self
                 .nios
+                .interface()
                 .usb_vendor_cmd_int(crate::usb::VendorRequest::QueryFlashId)
                 .await?;
             let manufacturer_id = ((result >> 8) & 0xFF) as u8;
@@ -494,12 +495,12 @@ impl BladeRf1 {
 
     /// Resets the device, causing it to re-enumerate on the USB bus.
     pub fn device_reset(&mut self) -> impl MaybeFuture<Output = crate::Result<()>> {
-        Op::new(async move { self.nios.usb_device_reset().await })
+        Op::new(async move { self.nios.interface().usb_device_reset().await })
     }
 
     /// Returns `true` if the FPGA has been configured (loaded and ready).
     pub fn is_fpga_configured(&self) -> impl MaybeFuture<Output = crate::Result<bool>> {
-        Op::new(async move { self.nios.usb_is_fpga_configured().await })
+        Op::new(async move { self.nios.interface().usb_is_fpga_configured().await })
     }
 }
 
@@ -515,8 +516,16 @@ impl BladeRf1 {
     /// the device is released regardless.
     pub fn close(mut self) -> impl MaybeFuture<Output = crate::Result<()>> {
         Op::new(async move {
-            let rx = self.nios.usb_enable_module(Channel::Rx, false).await;
-            let tx = self.nios.usb_enable_module(Channel::Tx, false).await;
+            let rx = self
+                .nios
+                .interface()
+                .usb_enable_module(Channel::Rx, false)
+                .await;
+            let tx = self
+                .nios
+                .interface()
+                .usb_enable_module(Channel::Tx, false)
+                .await;
             self.closed = true;
             drop(self);
             rx.and(tx)
@@ -532,8 +541,16 @@ impl Drop for BladeRf1 {
         #[cfg(not(target_arch = "wasm32"))]
         {
             log::debug!("BladeRf1::drop — shutting down device");
-            let _ = self.nios.usb_enable_module(Channel::Rx, false).wait();
-            let _ = self.nios.usb_enable_module(Channel::Tx, false).wait();
+            let _ = self
+                .nios
+                .interface()
+                .usb_enable_module(Channel::Rx, false)
+                .wait();
+            let _ = self
+                .nios
+                .interface()
+                .usb_enable_module(Channel::Tx, false)
+                .wait();
         }
         #[cfg(target_arch = "wasm32")]
         log::warn!("BladeRf1 dropped without close(); RX/TX modules left enabled");
@@ -777,7 +794,10 @@ impl RfLinkSession<'_> {
         Op::new(async move {
             self.require_initialized().await?;
             self.lms().enable_rffe(channel, enable).await?;
-            self.nios.usb_enable_module(channel, enable).await
+            self.nios
+                .interface()
+                .usb_enable_module(channel, enable)
+                .await
         })
     }
 
@@ -804,6 +824,7 @@ impl RfLinkSession<'_> {
         Op::new(async move {
             let result = self
                 .nios
+                .interface()
                 .usb_vendor_cmd_int(crate::usb::VendorRequest::QueryFpgaSource)
                 .await?;
             FpgaSource::try_from(result as u8)

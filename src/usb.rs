@@ -187,11 +187,11 @@ impl BladeRf1DeviceCommands for Device {
     }
 }
 
-/// USB interface-level commands for vendor requests and alt setting changes.
+/// USB interface-level vendor control requests.
 ///
-/// Implemented for `Interface`, `UsbTransport`, and `NiosCore`. Provides
-/// a common interface for issuing vendor-specific control transfers and
-/// managing alternate settings.
+/// Implemented for `nusb::Interface`. `UsbTransport` and `NiosCore` expose
+/// their interface through `interface()`; alternate-setting changes live on
+/// `UsbTransport`, which must release its NIOS endpoints first.
 pub trait UsbInterfaceCommands {
     /// Issues a vendor IN command and returns the 32-bit integer response.
     fn usb_vendor_cmd_int(&self, cmd: VendorRequest) -> impl MaybeFuture<Output = Result<u32>>;
@@ -220,11 +220,6 @@ pub trait UsbInterfaceCommands {
         cmd: VendorRequest,
         w_index: u16,
         buf: &mut [u8],
-    ) -> impl MaybeFuture<Output = Result<()>>;
-    /// Switches the USB interface to the specified alternate setting.
-    fn usb_change_setting(
-        &mut self,
-        setting: UsbAltSetting,
     ) -> impl MaybeFuture<Output = Result<()>>;
 }
 impl UsbInterfaceCommands for Interface {
@@ -275,12 +270,6 @@ impl UsbInterfaceCommands for Interface {
             buf[..copy_len].copy_from_slice(&vec[..copy_len]);
             Ok(())
         })
-    }
-    fn usb_change_setting(
-        &mut self,
-        setting: UsbAltSetting,
-    ) -> impl MaybeFuture<Output = Result<()>> {
-        self.set_alt_setting(setting as u8).map_err(Error::from)
     }
 }
 
@@ -333,8 +322,6 @@ pub trait BladeRf1UsbInterfaceCommands: UsbInterfaceCommands {
         channel: Channel,
         enable: bool,
     ) -> impl MaybeFuture<Output = Result<()>>;
-    /// Sets the firmware loopback mode, cycling the alt setting to Null then RfLink.
-    fn usb_set_firmware_loopback(&mut self, enable: bool) -> impl MaybeFuture<Output = Result<()>>;
     /// Queries whether firmware loopback is currently enabled.
     fn usb_get_firmware_loopback(&self) -> impl MaybeFuture<Output = Result<bool>>;
     /// Resets the FX3 USB controller via a vendor control request.
@@ -375,19 +362,6 @@ impl BladeRf1UsbInterfaceCommands for Interface {
                     );
                 }
             })
-    }
-    fn usb_set_firmware_loopback(&mut self, enable: bool) -> impl MaybeFuture<Output = Result<()>> {
-        Op::new(async move {
-            let fx3_ret = self
-                .usb_vendor_cmd_int_w_value(VendorRequest::SetLoopback, enable as u16)
-                .await?;
-            if fx3_ret != 0 {
-                log::warn!("usb_set_firmware_loopback({enable}): firmware returned {fx3_ret:#x}");
-            }
-            self.usb_change_setting(UsbAltSetting::Null).await?;
-            self.usb_change_setting(UsbAltSetting::RfLink).await?;
-            Ok(())
-        })
     }
     fn usb_get_firmware_loopback(&self) -> impl MaybeFuture<Output = Result<bool>> {
         self.usb_vendor_cmd_int(VendorRequest::GetLoopback)
@@ -517,116 +491,6 @@ pub(crate) async fn drain_pending<Dir: EndpointDirection>(
     buffers
 }
 
-impl UsbInterfaceCommands for UsbTransport {
-    /// Delegates to the underlying interface.
-    fn usb_vendor_cmd_int(&self, cmd: VendorRequest) -> impl MaybeFuture<Output = Result<u32>> {
-        self.interface.usb_vendor_cmd_int(cmd)
-    }
-    /// Delegates to the underlying interface.
-    fn usb_vendor_cmd_int_w_value(
-        &self,
-        cmd: VendorRequest,
-        wvalue: u16,
-    ) -> impl MaybeFuture<Output = Result<u32>> {
-        self.interface.usb_vendor_cmd_int_w_value(cmd, wvalue)
-    }
-    /// Delegates to the underlying interface.
-    fn usb_vendor_cmd_int_w_index(
-        &self,
-        cmd: VendorRequest,
-        windex: u16,
-    ) -> impl MaybeFuture<Output = Result<u32>> {
-        self.interface.usb_vendor_cmd_int_w_index(cmd, windex)
-    }
-    /// Delegates to the underlying interface.
-    fn usb_vendor_cmd_out_w_index(
-        &self,
-        cmd: VendorRequest,
-        windex: u16,
-        data: &[u8],
-    ) -> impl MaybeFuture<Output = Result<()>> {
-        self.interface.usb_vendor_cmd_out_w_index(cmd, windex, data)
-    }
-    /// Delegates to the underlying interface.
-    fn usb_vendor_cmd_in_w_index_data(
-        &self,
-        cmd: VendorRequest,
-        windex: u16,
-        buf: &mut [u8],
-    ) -> impl MaybeFuture<Output = Result<()>> {
-        self.interface
-            .usb_vendor_cmd_in_w_index_data(cmd, windex, buf)
-    }
-    /// Releases NIOS endpoints, switches the alt setting, and updates the cached setting.
-    fn usb_change_setting(
-        &mut self,
-        setting: UsbAltSetting,
-    ) -> impl MaybeFuture<Output = Result<()>> {
-        Op::new(async move {
-            self.release_endpoints().await;
-            self.interface.set_alt_setting(setting as u8).await?;
-            self.current_alt_setting = setting;
-            Ok(())
-        })
-    }
-}
-
-impl BladeRf1UsbInterfaceCommands for UsbTransport {
-    /// Delegates to the underlying interface.
-    fn usb_enable_module(
-        &self,
-        channel: Channel,
-        enable: bool,
-    ) -> impl MaybeFuture<Output = Result<()>> {
-        self.interface.usb_enable_module(channel, enable)
-    }
-    /// Sets firmware loopback, using `self.usb_change_setting()` to
-    /// properly release NIOS packet URBs before the alt-setting change.
-    fn usb_set_firmware_loopback(&mut self, enable: bool) -> impl MaybeFuture<Output = Result<()>> {
-        Op::new(async move {
-            let fx3_ret = self
-                .interface
-                .usb_vendor_cmd_int_w_value(VendorRequest::SetLoopback, enable as u16)
-                .await?;
-            if fx3_ret != 0 {
-                log::warn!("usb_set_firmware_loopback({enable}): firmware returned {fx3_ret:#x}");
-            }
-            self.usb_change_setting(UsbAltSetting::Null).await?;
-            self.usb_change_setting(UsbAltSetting::RfLink).await?;
-            Ok(())
-        })
-    }
-    /// Delegates to the underlying interface.
-    fn usb_get_firmware_loopback(&self) -> impl MaybeFuture<Output = Result<bool>> {
-        self.interface.usb_get_firmware_loopback()
-    }
-    /// Delegates to the underlying interface.
-    fn usb_device_reset(&self) -> impl MaybeFuture<Output = Result<()>> {
-        self.interface.usb_device_reset()
-    }
-    /// Delegates to the underlying interface.
-    fn usb_is_firmware_ready(&self) -> impl MaybeFuture<Output = Result<bool>> {
-        self.interface.usb_is_firmware_ready()
-    }
-    /// Delegates to the underlying interface.
-    fn usb_is_fpga_configured(&self) -> impl MaybeFuture<Output = Result<bool>> {
-        self.interface.usb_is_fpga_configured()
-    }
-    /// Delegates to the underlying interface.
-    fn usb_begin_fpga_prog(&self) -> impl MaybeFuture<Output = Result<()>> {
-        self.interface.usb_begin_fpga_prog()
-    }
-    /// Delegates to the underlying interface.
-    fn usb_bulk_out(
-        &self,
-        endpoint: u8,
-        data: &[u8],
-        timeout: Duration,
-    ) -> impl MaybeFuture<Output = Result<()>> {
-        self.interface.usb_bulk_out(endpoint, data, timeout)
-    }
-}
-
 struct NiosEndpoints {
     ep_out: Endpoint<Bulk, Out>,
     ep_in: Endpoint<Bulk, In>,
@@ -669,6 +533,37 @@ impl UsbTransport {
     /// Returns the USB bus speed (full/high/superspeed).
     pub fn speed(&self) -> Speed {
         self.speed
+    }
+    /// Releases NIOS endpoints, switches the alt setting, and updates the cached setting.
+    pub fn usb_change_setting(
+        &mut self,
+        setting: UsbAltSetting,
+    ) -> impl MaybeFuture<Output = Result<()>> {
+        Op::new(async move {
+            self.release_endpoints().await;
+            self.interface.set_alt_setting(setting as u8).await?;
+            self.current_alt_setting = setting;
+            Ok(())
+        })
+    }
+    /// Sets the firmware loopback mode, cycling the alt setting to Null then
+    /// RfLink so that NIOS packet URBs are released before the change.
+    pub fn usb_set_firmware_loopback(
+        &mut self,
+        enable: bool,
+    ) -> impl MaybeFuture<Output = Result<()>> {
+        Op::new(async move {
+            let fx3_ret = self
+                .interface
+                .usb_vendor_cmd_int_w_value(VendorRequest::SetLoopback, enable as u16)
+                .await?;
+            if fx3_ret != 0 {
+                log::warn!("usb_set_firmware_loopback({enable}): firmware returned {fx3_ret:#x}");
+            }
+            self.usb_change_setting(UsbAltSetting::Null).await?;
+            self.usb_change_setting(UsbAltSetting::RfLink).await?;
+            Ok(())
+        })
     }
     /// Cancels pending NIOS transfers and releases the cached endpoints.
     ///
