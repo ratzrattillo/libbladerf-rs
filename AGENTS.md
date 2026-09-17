@@ -4,7 +4,7 @@ Pure Rust driver for the Nuand BladeRF1 SDR. No C libbladeRF dependency. Based o
 
 [nusb]: https://github.com/kevinmehall/nusb
 
-Edition 2024, MSRV 1.95.
+Edition 2024, MSRV 1.96.
 
 ## Commands
 
@@ -17,6 +17,8 @@ All commands run from the **repository root**:
 | Protocol tests (no hardware) | `cargo test --test unit` |
 | Run a single unit test | `cargo test --test unit -- <test_name>` |
 | Test (with hardware) | `cargo test --features bladerf1 --tests -- --test-threads=1` |
+| Async hardware tests only | `cargo test --features bladerf1 --test bladerf1_async -- --test-threads=1` |
+| wasm32 check | `cargo +stable check --target wasm32-unknown-unknown --features bladerf1 --lib` |
 | Run a single hardware test | `cargo test --features bladerf1 --test bladerf1 -- <test_name>` |
 | Clippy | `cargo clippy --all-targets -- -D warnings` |
 | Format check | `cargo fmt --all --check` |
@@ -50,13 +52,13 @@ Rust targets are installed automatically by `check.sh`.
 
 ### Examples
 
-8 examples are workspace members (build with `-p`):
+7 examples are workspace members (build with `-p`):
 
 ```bash
-cargo build -p info -p calibrate -p rx_tx -p flash_firmware -p flash_fpga -p kalibrate -p kalibrate-5g -p bench-stream
+cargo build -p info -p calibrate -p dc_cal_table -p rx_tx -p rx_async -p flash_firmware -p flash_fpga
 ```
 
-Standalone examples (`diagnose`, `diag-xb200`) have their own `[workspace]` in `Cargo.toml` and must be built from their own directories.
+Standalone examples (`bench-stream`, `kalibrate`, `kalibrate-5g`) have their own `[workspace]` in `Cargo.toml` and must be built from their own directories.
 
 ### Benchmarks
 
@@ -88,6 +90,8 @@ cargo bench --features bladerf1 --bench hardware_calibration_bench
 pub struct BladeRf1 {
     device: Device,
     nios: NiosCore,
+    dc_rx_table: Option<DcCalTable>,
+    dc_tx_table: Option<DcCalTable>,
 }
 
 pub struct Lms6002d<'a>   { nios: &'a mut NiosCore }
@@ -95,7 +99,7 @@ pub struct Si5338<'a>     { nios: &'a mut NiosCore }
 pub struct Dac161s055<'a> { nios: &'a mut NiosCore }
 ```
 
-Note: there is **no** `SpiFlash` wrapper. Flash operations are `impl FlashSession` blocks in `spi_flash.rs`. `FlashMeta` is constructed and owned by `FlashSession` on creation, not stored on `BladeRf1`.
+The chip drivers are `&mut self` wrapper structs (not free functions), constructed per call by `RfLinkSession::lms()`, `si()`, `dac()`. Note: there is **no** `SpiFlash` wrapper. Flash operations are `impl FlashSession` blocks in `spi_flash.rs`. `FlashMeta` is constructed and owned by `FlashSession` on creation, not stored on `BladeRf1`.
 
 Calling convention: `self.lms.method()` → `self.lms().method()` (parentheses added). Direct `NiosCore` access: `self.nios.lock().unwrap().method()` → `self.nios.method()`.
 
@@ -104,7 +108,7 @@ Calling convention: `self.lms.method()` → `self.lms().method()` (parentheses a
 Operations are grouped into sessions that switch the USB alternate setting:
 
 ```rust
-pub struct RfLinkSession<'a>  { nios: &'a mut NiosCore }
+pub struct RfLinkSession<'a>  { nios: &'a mut NiosCore, dc_rx_table: Option<&'a DcCalTable>, dc_tx_table: Option<&'a DcCalTable> }
 pub struct FlashSession<'a>   { nios: &'a mut NiosCore, flash_meta: FlashMeta }
 pub struct ConfigSession<'a>  { nios: &'a mut NiosCore }
 ```
@@ -141,14 +145,33 @@ All transitions are unrestricted **except:** entering `FlashSession` or `ConfigS
 
 ### Streaming model
 
-- `RxStream::builder(&mut BladeRf1)` — borrows `&mut BladeRf1` during construction. Stream holds only the streaming `Endpoint` and buffer pool — no `NiosCore` reference.
-- `close(&mut self, dev: &mut BladeRf1) -> Result<()>` — full teardown: cancel transfers, disable streaming module (RFFE + USB), drain cancelled, clear halt, deconfigure format GPIO bits. Takes `&mut BladeRf1` so the borrow checker prevents concurrent operations during teardown. Teardown logic is unified in `BladeRf1::close_stream()`, shared by both Rx and Tx.
+- `RxStream::builder(&mut RfLinkSession)` — borrows the session during construction. `build()` claims the streaming endpoint, configures the format GPIO bits, allocates the buffer pool and clears the endpoint halt. It does **not** enable the RF module or submit buffers. The stream holds only the streaming `Endpoint` and buffer pool — no `NiosCore` reference.
+- `start(&mut self, dev: &mut RfLinkSession)` — enables the module, increments the stream counter and (RX only) submits all buffers. `stop(&mut self, dev)` — tears down but keeps the pool so the stream can be restarted.
+- `close(&mut self, dev: &mut RfLinkSession) -> Result<()>` — full teardown: cancel transfers, disable streaming module (RFFE + USB), drain cancelled, clear halt, deconfigure format GPIO bits. Takes `&mut RfLinkSession` so the borrow checker prevents concurrent operations during teardown. Teardown logic is unified in `RfLinkSession::close_stream()`, shared by both Rx and Tx and by `stop()`.
 - No `Drop` impl on streams. `close()` is the only way to cleanly tear down a stream. If a stream is dropped without closing, the `BufferPool` and its `Endpoint` drop naturally, but the streaming module stays enabled and format GPIO bits remain set. The next `initialize()` will recover.
-- `TxStream` follows the same pattern.
+- `TxStream` follows the same pattern (`get_buffer` → fill → `submit` → `wait_completion`).
 
 ### Drop for BladeRf1
 
-Best-effort disable of RX/TX modules via `self.nios.usb_enable_module()`. `NiosCore` drops, which drops `UsbTransport`, which releases the nusb `Interface`.
+Best-effort disable of RX/TX modules via `self.nios.usb_enable_module(..).wait()` on native targets only, skipped if `close()` already ran (`closed` flag). `NiosCore` drops, which drops `UsbTransport`, which releases the nusb `Interface`. `BladeRf1::close(self)` is the non-blocking counterpart and the only shutdown path on wasm.
+
+### Sync/async model (`MaybeFuture`)
+
+Every I/O method, at every layer (`BladeRf1`, sessions, streams, `NiosCore`, chip drivers, flash), returns `impl MaybeFuture<Output = Result<T>>` (`nusb::MaybeFuture`, re-exported at the crate root). Callers `.wait()` (native) or `.await`. There is no `_async` twin API and no `smol`/`tokio` feature.
+
+Implementation rules (see `src/maybe_future.rs` and `ASYNC_PLAN.md`):
+
+- Write the body as plain async code inside `Op::new(async move { .. })`. Internal calls `.await` the public method directly (`Op<F>: IntoFuture<IntoFuture = F>`, zero cost, no boxing). Direct delegations return the inner `MaybeFuture` without wrapping.
+- `Op::wait()` runs a crate-private thread-parking `block_on`. It works because nusb completes transfers on its own event thread and `futures-timer` on its own timer thread.
+- nusb operations backed by blocking syscalls (`DeviceInfo::open`, `Device::from_fd`, `detach_and_claim_interface`, `set_alt_setting`, `Endpoint::clear_halt`, `list_devices`) **must** go through `blocking_op(..)`, which `.wait()`s them on native and `.await`s on wasm. Awaiting them directly panics without nusb's `smol`/`tokio` feature. Never `.wait()` anything else inside async code.
+- Sleeps use `crate::maybe_future::sleep` (futures-timer; `thread::sleep` for sub-millisecond delays on native). No `std::thread::sleep`, no `Instant` outside `cfg(not(target_arch = "wasm32"))` blocks.
+- Closures held across an await need `+ Send` (`config_gpio_modify`, `nios_config_modify`).
+- Streaming hot paths (`RxStream::read`, `TxStream::get_buffer`, `TxStream::wait_completion`) are hand-written `Future` structs that also implement `MaybeFuture`: `wait()` runs the original blocking code with timeouts; `poll()` uses `Endpoint::poll_next_complete`. Awaited variants ignore `timeout` and consume one completion per await (matches hackrf-nusb/hydrasdr-rs; seify applies its own timeout).
+- Non-blocking probes (`try_read`, `try_get_buffer`, `try_get_completed`, `drain_extras`) use `poll_next_complete` with `Waker::noop()`.
+- `let _ = some_io_method();` is a silent no-op (the future is never driven). Always `.wait()`/`.await`. `#[must_use]` on `MaybeFuture` catches bare statements but not `let _`.
+- Native-only nusb API: `wait()`, `wait_next_complete`, `cancel_all`. On wasm `close_stream`/`drain` await in-flight transfers instead of cancelling; `Device::speed()` is `None` and is inferred from the bulk endpoint max packet size (`BladeRf1::infer_speed`); `from_bus_addr` is unavailable.
+- `cargo +stable check --target wasm32-unknown-unknown --features bladerf1 --lib` must stay green (`.cargo/config.toml` supplies `--cfg=web_sys_unstable_apis`; the default nightly toolchain cannot fetch the wasm target from the configured mirror).
+- Streams track `started`; `stop()` requires a started stream, `close()` decrements the active-stream counter only if started.
 
 ## Feature flags
 
@@ -180,14 +203,16 @@ Default features enable all three expansion board features (which each imply `bl
 - **No `Transport` trait or `MockTransport`.** Valuable tests are the protocol encode/decode tests in `tests/unit/`.
 - **`NiosCore` is concrete** (not generic over transport). Holds `UsbTransport` directly.
 - **No `Arc<Mutex<>>`.** The borrow checker enforces NIOS protocol serialization. `BladeRf1` owns `NiosCore` directly; `&mut self` on `BladeRf1` gives exclusive access.
-- **Each struct cleans up its own resources.** `BladeRf1::close_stream()` handles stream teardown. `BladeRf1::drop()` disables modules. No cross-struct teardown routing.
+- **Each struct cleans up its own resources.** `RfLinkSession::close_stream()` handles stream teardown. `BladeRf1::drop()` disables modules. No cross-struct teardown routing.
 - **`speed: Speed` not stored.** Device speed is read from `self.nios.transport().speed()` when needed. It is immutable for the connection lifetime but not cached as a field.
 - **`SuperPlus` handled same as `Super`.** Both clear the small DMA transfer bit in GPIO config.
 - **No `SpiFlash` wrapper.** `spi_flash.rs` contains `FlashMeta` and an `impl FlashSession` block — there is no separate `SpiFlash<'a>` struct.
 - **`FlashMeta` owned by `FlashSession`.** Constructed inside `flash_session()` from a USB vendor query, not stored on `BladeRf1`. Flash queries (`size_bytes`, `fpga_flash_sectors`, etc.) are on `FlashSession` only.
-- **No `Drop` on streams.** `close(&mut self, dev: &mut BladeRf1)` is the only way to cleanly tear down a stream. This avoids doing hardware I/O in a `Drop` impl without access to `&mut BladeRf1`.
-- **Unified `close_stream()`.** `BladeRf1::close_stream(channel, pool)` contains all teardown logic, shared by both `RxStream::close()` and `TxStream::close()`.
+- **No `Drop` on streams.** `close(&mut self, dev: &mut RfLinkSession)` is the only way to cleanly tear down a stream. This avoids doing hardware I/O in a `Drop` impl without access to the session.
+- **Unified `close_stream()`.** `RfLinkSession::close_stream(channel, pool)` contains all teardown logic, shared by both `RxStream::close()` and `TxStream::close()`.
 - **Stream-active counter.** `NiosCore` tracks `active_streams: u8`. `flash_session()` and `config_session()` return `Error::StreamsActive` if any stream is running. `rf_link_session()` requires no special handling — if streams are active, the device is already in RfLink mode and the existing skip-if-already-correct optimization avoids a redundant `usb_change_setting`. Streams increment the counter on `build()`, decrement on `close()`. If a stream is dropped without `close()`, the counter stays elevated — consistent with the existing "no `Drop` on streams" principle.
+- **Single `MaybeFuture` API instead of sync + `_async` twins.** Matches hackrf-nusb / hydrasdr-rs so seify's bladerf1 backend can be two thin adapters (`.wait()` / `.await`) over one API. One definition per method, no drift.
+- **No `smol`/`tokio` features.** Blocking-class nusb calls are resolved with `.wait()` on native inside `blocking_op`, so the async path works with any executor and `.wait()` can never hit tokio's "no reactor" panic even if another crate enables `nusb/tokio`.
 - **`perform_format_config` / `perform_format_deconfig` are global.** The format GPIO bits (PACKET, TIMESTAMP, 8BIT_MODE, HIGHLY_PACKED) are global, not per-channel. These methods do not take a `channel` parameter.
 - **GPIO-based init state check, not a cached flag.** `RfLinkSession::require_initialized()` reads the config GPIO register and checks `(cfg & 0x7f) != 0`. This matches the C library's `CHECK_BOARD_STATE` pattern. A cached `initialized: bool` flag on `NiosCore` was tried and rejected because `initialize()` calls guarded methods internally (e.g. `set_frequency`, `set_gain_mode`), creating a circular dependency: the flag is `false` until the end of `initialize()`, but guarded sub-operations need it `true`. Working around this required setting the flag early and clearing on failure — a fragile pattern. The GPIO check eliminates the problem entirely: `initialize()` writes `0x57` to GPIO first, so subsequent `require_initialized()` calls naturally see the initialized state. No ordering issue, no flag management, no `mark_uninitialized()` needed at de-init sites (FPGA reload resets NIOS, which clears GPIO to `0x00`). The extra USB roundtrip per guard check is negligible — every guarded method already does USB I/O.
 

@@ -7,7 +7,9 @@
 use crate::bladerf1::board::RfLinkSession;
 use crate::channel::Channel;
 use crate::error::{Error, Result};
+use crate::maybe_future::Op;
 use crate::protocol::nios::NiosPkt8x8Target;
+use nusb::MaybeFuture;
 
 /// Role of a channel in the trigger synchronization scheme.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,13 +65,24 @@ fn trigger_target(channel: Channel) -> NiosPkt8x8Target {
 }
 
 impl RfLinkSession<'_> {
-    fn trigger_read(&mut self, channel: Channel) -> Result<u8> {
-        self.nios.nios_read::<u8, u8>(trigger_target(channel), 0)
+    fn trigger_read(&mut self, channel: Channel) -> impl MaybeFuture<Output = Result<u8>> {
+        Op::new(async move {
+            self.nios
+                .nios_read::<u8, u8>(trigger_target(channel), 0)
+                .await
+        })
     }
 
-    fn trigger_write(&mut self, channel: Channel, value: u8) -> Result<()> {
-        self.nios
-            .nios_write::<u8, u8>(trigger_target(channel), 0, value)
+    fn trigger_write(
+        &mut self,
+        channel: Channel,
+        value: u8,
+    ) -> impl MaybeFuture<Output = Result<()>> {
+        Op::new(async move {
+            self.nios
+                .nios_write::<u8, u8>(trigger_target(channel), 0, value)
+                .await
+        })
     }
 
     /// Arms the trigger for a channel with the given role.
@@ -79,16 +92,22 @@ impl RfLinkSession<'_> {
     /// the trigger via `fire_trigger`.
     ///
     /// Returns `Error::BoardState` if the board is not initialized.
-    pub fn arm_trigger(&mut self, channel: Channel, role: TriggerRole) -> Result<()> {
-        self.require_initialized()?;
-        let reg = self.trigger_read(channel)?;
-        let new_reg = (reg & !(REG_FIRE | REG_MASTER))
-            | REG_ARM
-            | match role {
-                TriggerRole::Master => REG_MASTER,
-                TriggerRole::Slave => 0,
-            };
-        self.trigger_write(channel, new_reg)
+    pub fn arm_trigger(
+        &mut self,
+        channel: Channel,
+        role: TriggerRole,
+    ) -> impl MaybeFuture<Output = Result<()>> {
+        Op::new(async move {
+            self.require_initialized().await?;
+            let reg = self.trigger_read(channel).await?;
+            let new_reg = (reg & !(REG_FIRE | REG_MASTER))
+                | REG_ARM
+                | match role {
+                    TriggerRole::Master => REG_MASTER,
+                    TriggerRole::Slave => 0,
+                };
+            self.trigger_write(channel, new_reg).await
+        })
     }
 
     /// Fires the trigger on the master channel to synchronize armed peers.
@@ -98,16 +117,18 @@ impl RfLinkSession<'_> {
     ///
     /// Returns `Error::BoardState` if the board is not initialized, the
     /// trigger is not armed, or the channel is not the master.
-    pub fn fire_trigger(&mut self, channel: Channel) -> Result<()> {
-        self.require_initialized()?;
-        let reg = self.trigger_read(channel)?;
-        if (reg & REG_ARM) == 0 {
-            return Err(Error::BoardState("trigger not armed"));
-        }
-        if (reg & REG_MASTER) == 0 {
-            return Err(Error::BoardState("only master can fire trigger"));
-        }
-        self.trigger_write(channel, reg | REG_FIRE)
+    pub fn fire_trigger(&mut self, channel: Channel) -> impl MaybeFuture<Output = Result<()>> {
+        Op::new(async move {
+            self.require_initialized().await?;
+            let reg = self.trigger_read(channel).await?;
+            if (reg & REG_ARM) == 0 {
+                return Err(Error::BoardState("trigger not armed"));
+            }
+            if (reg & REG_MASTER) == 0 {
+                return Err(Error::BoardState("only master can fire trigger"));
+            }
+            self.trigger_write(channel, reg | REG_FIRE).await
+        })
     }
 
     /// Disarms the trigger for a channel, clearing all trigger state.
@@ -116,10 +137,13 @@ impl RfLinkSession<'_> {
     /// untriggered streaming mode.
     ///
     /// Returns `Error::BoardState` if the board is not initialized.
-    pub fn disarm_trigger(&mut self, channel: Channel) -> Result<()> {
-        self.require_initialized()?;
-        let reg = self.trigger_read(channel)?;
-        self.trigger_write(channel, reg & !(REG_ARM | REG_FIRE | REG_MASTER))
+    pub fn disarm_trigger(&mut self, channel: Channel) -> impl MaybeFuture<Output = Result<()>> {
+        Op::new(async move {
+            self.require_initialized().await?;
+            let reg = self.trigger_read(channel).await?;
+            self.trigger_write(channel, reg & !(REG_ARM | REG_FIRE | REG_MASTER))
+                .await
+        })
     }
 
     /// Returns the current trigger state for a channel.
@@ -128,22 +152,27 @@ impl RfLinkSession<'_> {
     /// the trigger line has fired, and whether a fire has been requested.
     ///
     /// Returns `Error::BoardState` if the board is not initialized.
-    pub fn trigger_state(&mut self, channel: Channel) -> Result<TriggerState> {
-        self.require_initialized()?;
-        let reg = self.trigger_read(channel)?;
-        let role = if (reg & REG_ARM) != 0 {
-            Some(if (reg & REG_MASTER) != 0 {
-                TriggerRole::Master
+    pub fn trigger_state(
+        &mut self,
+        channel: Channel,
+    ) -> impl MaybeFuture<Output = Result<TriggerState>> {
+        Op::new(async move {
+            self.require_initialized().await?;
+            let reg = self.trigger_read(channel).await?;
+            let role = if (reg & REG_ARM) != 0 {
+                Some(if (reg & REG_MASTER) != 0 {
+                    TriggerRole::Master
+                } else {
+                    TriggerRole::Slave
+                })
             } else {
-                TriggerRole::Slave
-            })
-        } else {
-            None
-        };
-        Ok(TriggerState::new(
-            role,
-            (reg & REG_LINE) == 0,
-            (reg & REG_FIRE) != 0,
-        ))
+                None
+            };
+            Ok(TriggerState::new(
+                role,
+                (reg & REG_LINE) == 0,
+                (reg & REG_FIRE) != 0,
+            ))
+        })
     }
 }

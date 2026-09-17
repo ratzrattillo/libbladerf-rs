@@ -7,6 +7,8 @@
 use crate::bladerf1::board::RfLinkSession;
 use crate::channel::Channel;
 use crate::error::Result;
+use crate::maybe_future::Op;
+use nusb::MaybeFuture;
 
 impl RfLinkSession<'_> {
     /// Reads the 64-bit timestamp counter for the given channel.
@@ -16,8 +18,10 @@ impl RfLinkSession<'_> {
     /// RX/TX samples.
     ///
     /// Returns `Error::BoardState` if the board is not initialized.
-    pub fn get_timestamp(&mut self, channel: Channel) -> Result<u64> {
-        self.require_initialized()?;
-        self.nios.nios_get_timestamp(channel)
+    pub fn get_timestamp(&mut self, channel: Channel) -> impl MaybeFuture<Output = Result<u64>> {
+        Op::new(async move {
+            self.require_initialized().await?;
+            self.nios.nios_get_timestamp(channel).await
+        })
     }
 }

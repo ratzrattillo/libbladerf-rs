@@ -15,7 +15,9 @@ use crate::bladerf1::hardware::lms6002d::gain::{
 };
 use crate::channel::Channel;
 use crate::error::{Error, Result};
+use crate::maybe_future::Op;
 use crate::range::{Range, RangeItem};
+use nusb::MaybeFuture;
 
 /// GPIO bit that enables automatic gain control on the RX channel.
 pub const BLADERF_GPIO_AGC_ENABLE: u32 = 1 << 18;
@@ -89,42 +91,56 @@ impl RfLinkSession<'_> {
     /// `Error::Unsupported`. Toggles the AGC enable bit in the config GPIO.
     ///
     /// Returns `Error::NotInitialized` if the board has not been initialized.
-    pub fn set_gain_mode(&mut self, channel: Channel, mode: GainMode) -> Result<()> {
-        self.require_initialized()?;
-        if channel.is_tx() {
-            log::error!("Setting gain mode for TX is not supported");
-            return Err(Error::Unsupported("TX gain modes"));
-        }
-        self.config_gpio_modify(|gpio| match mode {
-            GainMode::Default => gpio | BLADERF_GPIO_AGC_ENABLE,
-            GainMode::Mgc => gpio & !BLADERF_GPIO_AGC_ENABLE,
+    pub fn set_gain_mode(
+        &mut self,
+        channel: Channel,
+        mode: GainMode,
+    ) -> impl MaybeFuture<Output = Result<()>> {
+        Op::new(async move {
+            self.require_initialized().await?;
+            if channel.is_tx() {
+                log::error!("Setting gain mode for TX is not supported");
+                return Err(Error::Unsupported("TX gain modes"));
+            }
+            self.config_gpio_modify(|gpio| match mode {
+                GainMode::Default => gpio | BLADERF_GPIO_AGC_ENABLE,
+                GainMode::Mgc => gpio & !BLADERF_GPIO_AGC_ENABLE,
+            })
+            .await
         })
     }
     /// Returns the current RX gain mode by reading the AGC enable bit from config GPIO.
     ///
     /// Returns `Error::NotInitialized` if the board has not been initialized.
-    pub fn get_gain_mode(&mut self) -> Result<GainMode> {
-        self.require_initialized()?;
-        let data = self.config_gpio_read()?;
-        let gain_mode = if (data & BLADERF_GPIO_AGC_ENABLE) != 0 {
-            GainMode::Default
-        } else {
-            GainMode::Mgc
-        };
-        Ok(gain_mode)
+    pub fn get_gain_mode(&mut self) -> impl MaybeFuture<Output = Result<GainMode>> {
+        Op::new(async move {
+            self.require_initialized().await?;
+            let data = self.config_gpio_read().await?;
+            let gain_mode = if (data & BLADERF_GPIO_AGC_ENABLE) != 0 {
+                GainMode::Default
+            } else {
+                GainMode::Mgc
+            };
+            Ok(gain_mode)
+        })
     }
     /// Returns the current gain of an individual amplifier stage in dB.
     ///
     /// Returns `Error::NotInitialized` if the board has not been initialized.
-    pub fn get_gain_stage(&mut self, stage: GainStage) -> Result<GainDb> {
-        self.require_initialized()?;
-        match stage {
-            GainStage::TxVga1 => self.lms().txvga1_get_gain(),
-            GainStage::TxVga2 => self.lms().txvga2_get_gain(),
-            GainStage::Lna => self.lms().lna_get_gain(),
-            GainStage::RxVga1 => self.lms().rxvga1_get_gain(),
-            GainStage::RxVga2 => self.lms().rxvga2_get_gain(),
-        }
+    pub fn get_gain_stage(
+        &mut self,
+        stage: GainStage,
+    ) -> impl MaybeFuture<Output = Result<GainDb>> {
+        Op::new(async move {
+            self.require_initialized().await?;
+            match stage {
+                GainStage::TxVga1 => self.lms().txvga1_get_gain().await,
+                GainStage::TxVga2 => self.lms().txvga2_get_gain().await,
+                GainStage::Lna => self.lms().lna_get_gain().await,
+                GainStage::RxVga1 => self.lms().rxvga1_get_gain().await,
+                GainStage::RxVga2 => self.lms().rxvga2_get_gain().await,
+            }
+        })
     }
     /// Sets the gain of an individual amplifier stage.
     ///
@@ -132,15 +148,21 @@ impl RfLinkSession<'_> {
     /// Direct stage control is available for fine tuning.
     ///
     /// Returns `Error::NotInitialized` if the board has not been initialized.
-    pub fn set_gain_stage(&mut self, stage: GainStage, gain: GainDb) -> Result<()> {
-        self.require_initialized()?;
-        match stage {
-            GainStage::TxVga1 => self.lms().txvga1_set_gain(gain),
-            GainStage::TxVga2 => self.lms().txvga2_set_gain(gain),
-            GainStage::RxVga1 => self.lms().rxvga1_set_gain(gain),
-            GainStage::RxVga2 => self.lms().rxvga2_set_gain(gain),
-            GainStage::Lna => self.lms().lna_set_gain(gain),
-        }
+    pub fn set_gain_stage(
+        &mut self,
+        stage: GainStage,
+        gain: GainDb,
+    ) -> impl MaybeFuture<Output = Result<()>> {
+        Op::new(async move {
+            self.require_initialized().await?;
+            match stage {
+                GainStage::TxVga1 => self.lms().txvga1_set_gain(gain).await,
+                GainStage::TxVga2 => self.lms().txvga2_set_gain(gain).await,
+                GainStage::RxVga1 => self.lms().rxvga1_set_gain(gain).await,
+                GainStage::RxVga2 => self.lms().rxvga2_set_gain(gain).await,
+                GainStage::Lna => self.lms().lna_set_gain(gain).await,
+            }
+        })
     }
     /// Returns the ordered list of amplifier stages for the given channel.
     ///
@@ -156,22 +178,26 @@ impl RfLinkSession<'_> {
     pub fn get_gain_stage_range(stage: GainStage) -> Range {
         stage.gain_range()
     }
-    fn get_tx_gain(&mut self) -> Result<GainDb> {
-        self.require_initialized()?;
-        let txvga1 = self.lms().txvga1_get_gain()?;
-        let txvga2 = self.lms().txvga2_get_gain()?;
-        Ok((txvga1.db() + txvga2.db() + BLADERF1_TX_GAIN_OFFSET as i8).into())
+    fn get_tx_gain(&mut self) -> impl MaybeFuture<Output = Result<GainDb>> {
+        Op::new(async move {
+            self.require_initialized().await?;
+            let txvga1 = self.lms().txvga1_get_gain().await?;
+            let txvga2 = self.lms().txvga2_get_gain().await?;
+            Ok((txvga1.db() + txvga2.db() + BLADERF1_TX_GAIN_OFFSET as i8).into())
+        })
     }
-    fn get_rx_gain(&mut self) -> Result<GainDb> {
-        self.require_initialized()?;
-        let lna_gain_db = self.lms().lna_get_gain()?;
-        let rxvga1_gain_db = self.lms().rxvga1_get_gain()?;
-        let rxvga2_gain_db = self.lms().rxvga2_get_gain()?;
-        Ok((lna_gain_db.db()
-            + rxvga1_gain_db.db()
-            + rxvga2_gain_db.db()
-            + BLADERF1_RX_GAIN_OFFSET as i8)
-            .into())
+    fn get_rx_gain(&mut self) -> impl MaybeFuture<Output = Result<GainDb>> {
+        Op::new(async move {
+            self.require_initialized().await?;
+            let lna_gain_db = self.lms().lna_get_gain().await?;
+            let rxvga1_gain_db = self.lms().rxvga1_get_gain().await?;
+            let rxvga2_gain_db = self.lms().rxvga2_get_gain().await?;
+            Ok((lna_gain_db.db()
+                + rxvga1_gain_db.db()
+                + rxvga2_gain_db.db()
+                + BLADERF1_RX_GAIN_OFFSET as i8)
+                .into())
+        })
     }
     /// Returns the current aggregate gain of the given channel in dB.
     ///
@@ -179,13 +205,15 @@ impl RfLinkSession<'_> {
     /// TXVGA1 + TXVGA2 for TX) along with the board gain offset.
     ///
     /// Returns `Error::NotInitialized` if the board has not been initialized.
-    pub fn get_gain(&mut self, channel: Channel) -> Result<GainDb> {
-        self.require_initialized()?;
-        if channel.is_tx() {
-            self.get_tx_gain()
-        } else {
-            self.get_rx_gain()
-        }
+    pub fn get_gain(&mut self, channel: Channel) -> impl MaybeFuture<Output = Result<GainDb>> {
+        Op::new(async move {
+            self.require_initialized().await?;
+            if channel.is_tx() {
+                self.get_tx_gain().await
+            } else {
+                self.get_rx_gain().await
+            }
+        })
     }
     /// Sets the aggregate gain for the given channel.
     ///
@@ -195,13 +223,19 @@ impl RfLinkSession<'_> {
     /// is set with a debug log message.
     ///
     /// Returns `Error::NotInitialized` if the board has not been initialized.
-    pub fn set_gain(&mut self, channel: Channel, gain: GainDb) -> Result<()> {
-        self.require_initialized()?;
-        if channel.is_tx() {
-            self.set_tx_gain(gain)
-        } else {
-            self.set_rx_gain(gain)
-        }
+    pub fn set_gain(
+        &mut self,
+        channel: Channel,
+        gain: GainDb,
+    ) -> impl MaybeFuture<Output = Result<()>> {
+        Op::new(async move {
+            self.require_initialized().await?;
+            if channel.is_tx() {
+                self.set_tx_gain(gain).await
+            } else {
+                self.set_rx_gain(gain).await
+            }
+        })
     }
     /// Sets the TX aggregate gain by apportioning across TXVGA1 and TXVGA2.
     ///
@@ -209,27 +243,31 @@ impl RfLinkSession<'_> {
     /// greedily in stage order (TXVGA2 first, then TXVGA1).
     ///
     /// Returns `Error::NotInitialized` if the board has not been initialized.
-    pub fn set_tx_gain(&mut self, gain_db: GainDb) -> Result<()> {
-        self.require_initialized()?;
-        let desired_gain = gain_db.db();
-        let txvga1_range = Self::get_gain_stage_range(GainStage::TxVga1);
-        let txvga2_range = Self::get_gain_stage_range(GainStage::TxVga2);
-        let mut txvga1 =
-            (txvga1_range.scale_checked()? * txvga1_range.min_checked()?).round() as i8;
-        let mut txvga2 =
-            (txvga2_range.scale_checked()? * txvga2_range.min_checked()?).round() as i8;
-        let mut gain = desired_gain - (BLADERF1_TX_GAIN_OFFSET as i8 + txvga1 + txvga2);
-        log::trace!("gain={desired_gain} -> txvga2={txvga2} txvga1={txvga1} remainder={gain}");
-        (txvga2, gain) = Self::_apportion_gain(&txvga2_range, txvga2, gain)?;
-        log::trace!("gain={desired_gain} -> txvga2={txvga2} txvga1={txvga1} remainder={gain}");
-        (txvga1, gain) = Self::_apportion_gain(&txvga1_range, txvga1, gain)?;
-        log::trace!("gain={desired_gain} -> txvga2={txvga2} txvga1={txvga1} remainder={gain}");
-        if gain != 0 {
-            log::debug!("unable to achieve requested gain {desired_gain} (missed by {gain})");
-            log::debug!("gain={desired_gain} -> txvga2={txvga2} txvga1={txvga1} remainder={gain}");
-        }
-        self.lms().txvga1_set_gain(txvga1.into())?;
-        self.lms().txvga2_set_gain(txvga2.into())
+    pub fn set_tx_gain(&mut self, gain_db: GainDb) -> impl MaybeFuture<Output = Result<()>> {
+        Op::new(async move {
+            self.require_initialized().await?;
+            let desired_gain = gain_db.db();
+            let txvga1_range = Self::get_gain_stage_range(GainStage::TxVga1);
+            let txvga2_range = Self::get_gain_stage_range(GainStage::TxVga2);
+            let mut txvga1 =
+                (txvga1_range.scale_checked()? * txvga1_range.min_checked()?).round() as i8;
+            let mut txvga2 =
+                (txvga2_range.scale_checked()? * txvga2_range.min_checked()?).round() as i8;
+            let mut gain = desired_gain - (BLADERF1_TX_GAIN_OFFSET as i8 + txvga1 + txvga2);
+            log::trace!("gain={desired_gain} -> txvga2={txvga2} txvga1={txvga1} remainder={gain}");
+            (txvga2, gain) = Self::_apportion_gain(&txvga2_range, txvga2, gain)?;
+            log::trace!("gain={desired_gain} -> txvga2={txvga2} txvga1={txvga1} remainder={gain}");
+            (txvga1, gain) = Self::_apportion_gain(&txvga1_range, txvga1, gain)?;
+            log::trace!("gain={desired_gain} -> txvga2={txvga2} txvga1={txvga1} remainder={gain}");
+            if gain != 0 {
+                log::debug!("unable to achieve requested gain {desired_gain} (missed by {gain})");
+                log::debug!(
+                    "gain={desired_gain} -> txvga2={txvga2} txvga1={txvga1} remainder={gain}"
+                );
+            }
+            self.lms().txvga1_set_gain(txvga1.into()).await?;
+            self.lms().txvga2_set_gain(txvga2.into()).await
+        })
     }
     /// Sets the RX aggregate gain by apportioning across LNA, RXVGA1, and RXVGA2.
     ///
@@ -238,62 +276,64 @@ impl RfLinkSession<'_> {
     /// adjusts RXVGA1 headroom for RXVGA2 as needed.
     ///
     /// Returns `Error::NotInitialized` if the board has not been initialized.
-    pub fn set_rx_gain(&mut self, gain_db: GainDb) -> Result<()> {
-        self.require_initialized()?;
-        let desired_gain = gain_db.db();
-        let lna_range = Self::get_gain_stage_range(GainStage::Lna);
-        let rxvga1_range = Self::get_gain_stage_range(GainStage::RxVga1);
-        let rxvga2_range = Self::get_gain_stage_range(GainStage::RxVga2);
-        let mut lna = (lna_range.scale_checked()? * lna_range.min_checked()?).round() as i8;
-        let mut rxvga1 =
-            (rxvga1_range.scale_checked()? * rxvga1_range.min_checked()?).round() as i8;
-        let mut rxvga2 =
-            (rxvga2_range.scale_checked()? * rxvga2_range.min_checked()?).round() as i8;
-        let mut gain = desired_gain - (BLADERF1_RX_GAIN_OFFSET as i8 + lna + rxvga1 + rxvga2);
-        log::trace!(
-            "gain={desired_gain} -> lna={lna} rxvga1={rxvga1} rxvga2={rxvga2} remainder={gain}"
-        );
-        (lna, gain) = Self::_apportion_gain(&lna_range, lna, gain)?;
-        if lna > GAIN_SPEC_LNA.max / 2 {
-            gain += lna - GAIN_SPEC_LNA.max / 2;
-            lna = lna - (lna - GAIN_SPEC_LNA.max / 2);
-        }
-        log::trace!(
-            "gain={desired_gain} -> lna={lna} rxvga1={rxvga1} rxvga2={rxvga2} remainder={gain}"
-        );
-        (rxvga1, gain) = Self::_apportion_gain(&rxvga1_range, rxvga1, gain)?;
-        log::trace!(
-            "gain={desired_gain} -> lna={lna} rxvga1={rxvga1} rxvga2={rxvga2} remainder={gain}"
-        );
-        (lna, gain) = Self::_apportion_gain(&lna_range, lna, gain)?;
-        log::trace!(
-            "gain={desired_gain} -> lna={lna} rxvga1={rxvga1} rxvga2={rxvga2} remainder={gain}"
-        );
-        (rxvga2, gain) = Self::_apportion_gain(&rxvga2_range, rxvga2, gain)?;
-        log::trace!(
-            "gain={desired_gain} -> lna={lna} rxvga1={rxvga1} rxvga2={rxvga2} remainder={gain}"
-        );
-        let rxvga1_max =
-            (rxvga1_range.scale_checked()? * rxvga1_range.max_checked()?).round() as i8;
-        let rxvga2_step =
-            (rxvga2_range.scale_checked()? * rxvga2_range.step_checked()?).round() as i8;
-        if gain > 0 && rxvga1 >= rxvga1_max {
-            rxvga1 -= rxvga2_step;
-            gain += rxvga2_step;
-            (rxvga2, gain) = Self::_apportion_gain(&rxvga2_range, rxvga2, gain)?;
-            (rxvga1, gain) = Self::_apportion_gain(&rxvga1_range, rxvga1, gain)?;
-        }
-        log::trace!(
-            "gain={desired_gain} -> lna={lna} rxvga1={rxvga1} rxvga2={rxvga2} remainder={gain}"
-        );
-        if gain != 0 {
-            log::debug!("unable to achieve requested gain {desired_gain} (missed by {gain})");
-            log::debug!(
+    pub fn set_rx_gain(&mut self, gain_db: GainDb) -> impl MaybeFuture<Output = Result<()>> {
+        Op::new(async move {
+            self.require_initialized().await?;
+            let desired_gain = gain_db.db();
+            let lna_range = Self::get_gain_stage_range(GainStage::Lna);
+            let rxvga1_range = Self::get_gain_stage_range(GainStage::RxVga1);
+            let rxvga2_range = Self::get_gain_stage_range(GainStage::RxVga2);
+            let mut lna = (lna_range.scale_checked()? * lna_range.min_checked()?).round() as i8;
+            let mut rxvga1 =
+                (rxvga1_range.scale_checked()? * rxvga1_range.min_checked()?).round() as i8;
+            let mut rxvga2 =
+                (rxvga2_range.scale_checked()? * rxvga2_range.min_checked()?).round() as i8;
+            let mut gain = desired_gain - (BLADERF1_RX_GAIN_OFFSET as i8 + lna + rxvga1 + rxvga2);
+            log::trace!(
                 "gain={desired_gain} -> lna={lna} rxvga1={rxvga1} rxvga2={rxvga2} remainder={gain}"
             );
-        }
-        self.lms().lna_set_gain(lna.into())?;
-        self.lms().rxvga1_set_gain(rxvga1.into())?;
-        self.lms().rxvga2_set_gain(rxvga2.into())
+            (lna, gain) = Self::_apportion_gain(&lna_range, lna, gain)?;
+            if lna > GAIN_SPEC_LNA.max / 2 {
+                gain += lna - GAIN_SPEC_LNA.max / 2;
+                lna = lna - (lna - GAIN_SPEC_LNA.max / 2);
+            }
+            log::trace!(
+                "gain={desired_gain} -> lna={lna} rxvga1={rxvga1} rxvga2={rxvga2} remainder={gain}"
+            );
+            (rxvga1, gain) = Self::_apportion_gain(&rxvga1_range, rxvga1, gain)?;
+            log::trace!(
+                "gain={desired_gain} -> lna={lna} rxvga1={rxvga1} rxvga2={rxvga2} remainder={gain}"
+            );
+            (lna, gain) = Self::_apportion_gain(&lna_range, lna, gain)?;
+            log::trace!(
+                "gain={desired_gain} -> lna={lna} rxvga1={rxvga1} rxvga2={rxvga2} remainder={gain}"
+            );
+            (rxvga2, gain) = Self::_apportion_gain(&rxvga2_range, rxvga2, gain)?;
+            log::trace!(
+                "gain={desired_gain} -> lna={lna} rxvga1={rxvga1} rxvga2={rxvga2} remainder={gain}"
+            );
+            let rxvga1_max =
+                (rxvga1_range.scale_checked()? * rxvga1_range.max_checked()?).round() as i8;
+            let rxvga2_step =
+                (rxvga2_range.scale_checked()? * rxvga2_range.step_checked()?).round() as i8;
+            if gain > 0 && rxvga1 >= rxvga1_max {
+                rxvga1 -= rxvga2_step;
+                gain += rxvga2_step;
+                (rxvga2, gain) = Self::_apportion_gain(&rxvga2_range, rxvga2, gain)?;
+                (rxvga1, gain) = Self::_apportion_gain(&rxvga1_range, rxvga1, gain)?;
+            }
+            log::trace!(
+                "gain={desired_gain} -> lna={lna} rxvga1={rxvga1} rxvga2={rxvga2} remainder={gain}"
+            );
+            if gain != 0 {
+                log::debug!("unable to achieve requested gain {desired_gain} (missed by {gain})");
+                log::debug!(
+                    "gain={desired_gain} -> lna={lna} rxvga1={rxvga1} rxvga2={rxvga2} remainder={gain}"
+                );
+            }
+            self.lms().lna_set_gain(lna.into()).await?;
+            self.lms().rxvga1_set_gain(rxvga1.into()).await?;
+            self.lms().rxvga2_set_gain(rxvga2.into()).await
+        })
     }
 }

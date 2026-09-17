@@ -22,7 +22,9 @@ pub use crate::bladerf1::hardware::lms6002d::frequency::QuickTune;
 use crate::bladerf1::protocol::RetuneTimestamp;
 use crate::channel::Channel;
 use crate::error::{Error, Result};
+use crate::maybe_future::Op;
 use crate::range::{Range, RangeItem};
+use nusb::MaybeFuture;
 
 /// Determines how frequency changes are applied to the LMS6002D.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -55,59 +57,63 @@ impl RfLinkSession<'_> {
         channel: Channel,
         #[allow(unused_mut)] mut frequency: u64,
         mode: TuningMode,
-    ) -> Result<()> {
-        self.require_initialized()?;
-        log::trace!("Setting Frequency on channel {channel:?} to {frequency}Hz");
-        #[cfg(feature = "xb200")]
-        if self.nios.xb200_is_enabled()? {
-            let freq_min = lms6002d::frequency::get_frequency_min() as u64;
-            if frequency < freq_min {
-                log::debug!(
-                    "Setting path to Mix (freq {} < min {})",
-                    frequency,
-                    freq_min
-                );
-                self.xb200_set_path(channel, Xb200Path::Mix)?;
-                self.xb200_auto_filter_selection(channel, frequency)?;
-                log::debug!(
-                    "Converting frequency: 1248000000 - {} = {}",
-                    frequency,
-                    1_248_000_000 - frequency
-                );
-                frequency = 1_248_000_000 - frequency;
-            } else {
-                log::debug!(
-                    "Setting path to Bypass (freq {} >= min {})",
-                    frequency,
-                    freq_min
-                );
-                self.xb200_set_path(channel, Xb200Path::Bypass)?;
+    ) -> impl MaybeFuture<Output = Result<()>> {
+        Op::new(async move {
+            self.require_initialized().await?;
+            log::trace!("Setting Frequency on channel {channel:?} to {frequency}Hz");
+            #[cfg(feature = "xb200")]
+            if self.nios.xb200_is_enabled().await? {
+                let freq_min = lms6002d::frequency::get_frequency_min() as u64;
+                if frequency < freq_min {
+                    log::debug!(
+                        "Setting path to Mix (freq {} < min {})",
+                        frequency,
+                        freq_min
+                    );
+                    self.xb200_set_path(channel, Xb200Path::Mix).await?;
+                    self.xb200_auto_filter_selection(channel, frequency).await?;
+                    log::debug!(
+                        "Converting frequency: 1248000000 - {} = {}",
+                        frequency,
+                        1_248_000_000 - frequency
+                    );
+                    frequency = 1_248_000_000 - frequency;
+                } else {
+                    log::debug!(
+                        "Setting path to Bypass (freq {} >= min {})",
+                        frequency,
+                        freq_min
+                    );
+                    self.xb200_set_path(channel, Xb200Path::Bypass).await?;
+                }
             }
-        }
-        match mode {
-            TuningMode::Host => {
-                self.lms().set_frequency(channel, frequency)?;
-                let band = lms6002d::Band::from(frequency);
-                self.band_select(channel, band)?;
+            match mode {
+                TuningMode::Host => {
+                    self.lms().set_frequency(channel, frequency).await?;
+                    let band = lms6002d::Band::from(frequency);
+                    self.band_select(channel, band).await?;
+                }
+                TuningMode::Fpga => {
+                    self.schedule_retune(channel, RetuneTimestamp::Now, frequency, None)
+                        .await?;
+                }
             }
-            TuningMode::Fpga => {
-                self.schedule_retune(channel, RetuneTimestamp::Now, frequency, None)?;
+            let table = match channel {
+                Channel::Rx => self.dc_rx_table,
+                Channel::Tx => self.dc_tx_table,
+            };
+            if let Some(table) = table {
+                let entry = table.lookup(frequency);
+                self.lms().set_dc_offset_i(channel, entry.dc.i).await?;
+                self.lms().set_dc_offset_q(channel, entry.dc.q).await?;
+                if channel == Channel::Rx {
+                    self.nios
+                        .nios_set_agc_dc_correction(&AgcDcCorrection::from(&entry))
+                        .await?;
+                }
             }
-        }
-        let table = match channel {
-            Channel::Rx => self.dc_rx_table,
-            Channel::Tx => self.dc_tx_table,
-        };
-        if let Some(table) = table {
-            let entry = table.lookup(frequency);
-            self.lms().set_dc_offset_i(channel, entry.dc.i)?;
-            self.lms().set_dc_offset_q(channel, entry.dc.q)?;
-            if channel == Channel::Rx {
-                self.nios
-                    .nios_set_agc_dc_correction(&AgcDcCorrection::from(&entry))?;
-            }
-        }
-        Ok(())
+            Ok(())
+        })
     }
 
     /// Returns the current RF frequency of the given channel in Hz.
@@ -118,26 +124,28 @@ impl RfLinkSession<'_> {
     ///
     /// Returns `Error::BoardState` if the LMS6002D register read yields
     /// an invalid value.
-    pub fn get_frequency(&mut self, channel: Channel) -> Result<u64> {
-        self.require_initialized()?;
-        let f = self.lms().get_frequency(channel)?;
-        if f.x == 0 {
-            log::error!("LMSFreq.x was zero!");
-            return Err(Error::BoardState("LMSFreq.x was zero"));
-        }
-        #[allow(unused_mut)]
-        let mut frequency_hz: u64 = (&f).into();
-        log::trace!("Frequency Hz: {frequency_hz}");
-        #[cfg(feature = "xb200")]
-        if self.nios.xb200_is_enabled()? {
-            let path = self.xb200_get_path(channel)?;
-            log::trace!("XB200 path detected: {:?}", path);
-            if path == Xb200Path::Mix {
-                log::debug!("Mix path - converting: 1248000000 - {}", frequency_hz);
-                frequency_hz = 1_248_000_000 - frequency_hz;
+    pub fn get_frequency(&mut self, channel: Channel) -> impl MaybeFuture<Output = Result<u64>> {
+        Op::new(async move {
+            self.require_initialized().await?;
+            let f = self.lms().get_frequency(channel).await?;
+            if f.x == 0 {
+                log::error!("LMSFreq.x was zero!");
+                return Err(Error::BoardState("LMSFreq.x was zero"));
             }
-        }
-        Ok(frequency_hz)
+            #[allow(unused_mut)]
+            let mut frequency_hz: u64 = (&f).into();
+            log::trace!("Frequency Hz: {frequency_hz}");
+            #[cfg(feature = "xb200")]
+            if self.nios.xb200_is_enabled().await? {
+                let path = self.xb200_get_path(channel).await?;
+                log::trace!("XB200 path detected: {:?}", path);
+                if path == Xb200Path::Mix {
+                    log::debug!("Mix path - converting: 1248000000 - {}", frequency_hz);
+                    frequency_hz = 1_248_000_000 - frequency_hz;
+                }
+            }
+            Ok(frequency_hz)
+        })
     }
 
     /// Returns the supported RF frequency range in Hz.
@@ -146,26 +154,34 @@ impl RfLinkSession<'_> {
     /// upconverter path can reach below the LMS6002D's native minimum.
     ///
     /// Returns `Error::NotInitialized` if the board has not been initialized.
-    pub fn get_frequency_range(&mut self) -> Result<Range> {
-        self.require_initialized()?;
-        #[cfg(feature = "xb200")]
-        let freq_min = if self.nios.xb200_is_enabled()? {
-            0.0
-        } else {
-            lms6002d::frequency::get_frequency_min() as f64
-        };
-        #[cfg(not(feature = "xb200"))]
-        let freq_min = lms6002d::frequency::get_frequency_min() as f64;
-        let freq_max = lms6002d::frequency::get_frequency_max() as f64;
-        Ok(Range::new(vec![RangeItem::Step(
-            freq_min, freq_max, 1f64, 1f64,
-        )]))
+    pub fn get_frequency_range(&mut self) -> impl MaybeFuture<Output = Result<Range>> {
+        Op::new(async move {
+            self.require_initialized().await?;
+            #[cfg(feature = "xb200")]
+            let freq_min = if self.nios.xb200_is_enabled().await? {
+                0.0
+            } else {
+                lms6002d::frequency::get_frequency_min() as f64
+            };
+            #[cfg(not(feature = "xb200"))]
+            let freq_min = lms6002d::frequency::get_frequency_min() as f64;
+            let freq_max = lms6002d::frequency::get_frequency_max() as f64;
+            Ok(Range::new(vec![RangeItem::Step(
+                freq_min, freq_max, 1f64, 1f64,
+            )]))
+        })
     }
 
     /// Selects the LMS6002D band (low or high) for the given channel based on frequency.
-    pub fn select_band(&mut self, channel: Channel, frequency: u32) -> Result<()> {
-        let band = lms6002d::Band::from(frequency);
-        self.band_select(channel, band)
+    pub fn select_band(
+        &mut self,
+        channel: Channel,
+        frequency: u32,
+    ) -> impl MaybeFuture<Output = Result<()>> {
+        Op::new(async move {
+            let band = lms6002d::Band::from(frequency);
+            self.band_select(channel, band).await
+        })
     }
 
     /// Schedules an FPGA-initiated frequency retune via the NIOS retune queue.
@@ -180,11 +196,14 @@ impl RfLinkSession<'_> {
         timestamp: RetuneTimestamp,
         frequency: u64,
         quick_tune: Option<QuickTune>,
-    ) -> Result<LmsFreq> {
-        self.require_initialized()?;
-        let (lms_freq, _) =
-            self.schedule_retune_with_duration(channel, timestamp, frequency, quick_tune)?;
-        Ok(lms_freq)
+    ) -> impl MaybeFuture<Output = Result<LmsFreq>> {
+        Op::new(async move {
+            self.require_initialized().await?;
+            let (lms_freq, _) = self
+                .schedule_retune_with_duration(channel, timestamp, frequency, quick_tune)
+                .await?;
+            Ok(lms_freq)
+        })
     }
 
     /// Schedules an FPGA-initiated frequency retune via the NIOS retune queue.
@@ -203,34 +222,39 @@ impl RfLinkSession<'_> {
         timestamp: RetuneTimestamp,
         frequency: u64,
         quick_tune: Option<QuickTune>,
-    ) -> Result<(LmsFreq, u64)> {
-        self.require_initialized()?;
-        let f: LmsFreq = if let Some(qt) = quick_tune {
-            qt.into()
-        } else {
-            #[cfg(feature = "xb200")]
-            if self.nios.xb200_is_enabled()? {
-                log::info!(
-                    "Consider supplying the quick_tune parameter to schedule_retune() when the XB-200 is enabled."
-                );
-            }
-            frequency.try_into()?
-        };
-        log::trace!("{f:?}");
-        let band = if (f.flags & lms6002d::LMS_FREQ_FLAGS_LOW_BAND) != 0 {
-            lms6002d::Band::Low
-        } else {
-            lms6002d::Band::High
-        };
-        let tune = if (f.flags & lms6002d::LMS_FREQ_FLAGS_FORCE_VCOCAP) != 0 {
-            lms6002d::Tune::Quick
-        } else {
-            lms6002d::Tune::Normal
-        };
-        let result = self.nios.nios_retune(
-            channel, timestamp, f.nint, f.nfrac, f.freqsel, f.vcocap, band, tune, f.xb_gpio,
-        )?;
-        Ok((f, result.duration()))
+    ) -> impl MaybeFuture<Output = Result<(LmsFreq, u64)>> {
+        Op::new(async move {
+            self.require_initialized().await?;
+            let f: LmsFreq = if let Some(qt) = quick_tune {
+                qt.into()
+            } else {
+                #[cfg(feature = "xb200")]
+                if self.nios.xb200_is_enabled().await? {
+                    log::info!(
+                        "Consider supplying the quick_tune parameter to schedule_retune() when the XB-200 is enabled."
+                    );
+                }
+                frequency.try_into()?
+            };
+            log::trace!("{f:?}");
+            let band = if (f.flags & lms6002d::LMS_FREQ_FLAGS_LOW_BAND) != 0 {
+                lms6002d::Band::Low
+            } else {
+                lms6002d::Band::High
+            };
+            let tune = if (f.flags & lms6002d::LMS_FREQ_FLAGS_FORCE_VCOCAP) != 0 {
+                lms6002d::Tune::Quick
+            } else {
+                lms6002d::Tune::Normal
+            };
+            let result = self
+                .nios
+                .nios_retune(
+                    channel, timestamp, f.nint, f.nfrac, f.freqsel, f.vcocap, band, tune, f.xb_gpio,
+                )
+                .await?;
+            Ok((f, result.duration()))
+        })
     }
 
     /// Cancels all pending FPGA-initiated retune requests for a channel.
@@ -239,20 +263,27 @@ impl RfLinkSession<'_> {
     /// interface to flush the queue without applying any frequency change.
     ///
     /// Returns `Error::NotInitialized` if the board has not been initialized.
-    pub fn cancel_scheduled_retunes(&mut self, channel: Channel) -> Result<()> {
-        self.require_initialized()?;
-        self.nios.nios_retune(
-            channel,
-            RetuneTimestamp::ClearQueue,
-            0u16,
-            0u32,
-            0,
-            0,
-            lms6002d::Band::Low,
-            lms6002d::Tune::Normal,
-            0,
-        )?;
-        Ok(())
+    pub fn cancel_scheduled_retunes(
+        &mut self,
+        channel: Channel,
+    ) -> impl MaybeFuture<Output = Result<()>> {
+        Op::new(async move {
+            self.require_initialized().await?;
+            self.nios
+                .nios_retune(
+                    channel,
+                    RetuneTimestamp::ClearQueue,
+                    0u16,
+                    0u32,
+                    0,
+                    0,
+                    lms6002d::Band::Low,
+                    lms6002d::Tune::Normal,
+                    0,
+                )
+                .await?;
+            Ok(())
+        })
     }
 
     /// Returns the current LMS6002D tuning parameters as a `QuickTune`.
@@ -263,12 +294,17 @@ impl RfLinkSession<'_> {
     /// upconverter path.
     ///
     /// Returns `Error::NotInitialized` if the board has not been initialized.
-    pub fn get_quick_tune(&mut self, channel: Channel) -> Result<QuickTune> {
-        self.require_initialized()?;
-        #[cfg(feature = "xb200")]
-        let xb200 = self.nios.xb200_is_enabled()?;
-        #[cfg(not(feature = "xb200"))]
-        let xb200 = false;
-        self.lms().get_quick_tune(channel, xb200)
+    pub fn get_quick_tune(
+        &mut self,
+        channel: Channel,
+    ) -> impl MaybeFuture<Output = Result<QuickTune>> {
+        Op::new(async move {
+            self.require_initialized().await?;
+            #[cfg(feature = "xb200")]
+            let xb200 = self.nios.xb200_is_enabled().await?;
+            #[cfg(not(feature = "xb200"))]
+            let xb200 = false;
+            self.lms().get_quick_tune(channel, xb200).await
+        })
     }
 }

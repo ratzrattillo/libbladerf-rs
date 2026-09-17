@@ -1,4 +1,5 @@
 use super::common::*;
+use libbladerf_rs::MaybeFuture;
 use libbladerf_rs::bladerf1::TuningMode;
 use libbladerf_rs::range::RangeItem;
 use libbladerf_rs::{Channel, Result};
@@ -8,9 +9,9 @@ fn frequency_tuning() -> Result<()> {
     logging_init("bladerf1_frequency");
 
     let mut sdr = sdr();
-    let mut rf = sdr.rf_link_session()?;
+    let mut rf = sdr.rf_link_session().wait()?;
     let accepted_deviation = 1;
-    let supported_frequencies = rf.get_frequency_range()?;
+    let supported_frequencies = rf.get_frequency_range().wait()?;
 
     log::trace!("supported_frequencies: {supported_frequencies:?}");
     for range_item in supported_frequencies.iter() {
@@ -25,17 +26,19 @@ fn frequency_tuning() -> Result<()> {
 
         while desired <= max.round() as u64 {
             for channel in [Channel::Rx, Channel::Tx] {
-                let current = rf.get_frequency(channel)?;
+                let current = rf.get_frequency(channel).wait()?;
                 log::trace!("Channel {channel:?} Frequency (CURRENT):\t{current}");
                 log::trace!("Channel {channel:?} Frequency (DESIRED):\t{desired}");
-                rf.set_frequency(channel, desired, TuningMode::Fpga)?;
-                let new = rf.get_frequency(channel)?;
+                rf.set_frequency(channel, desired, TuningMode::Fpga)
+                    .wait()?;
+                let new = rf.get_frequency(channel).wait()?;
                 log::trace!("Channel {channel:?} Frequency (NEW):\t{new}");
 
                 let tolerable_deviation = (new as i64 - desired as i64).abs();
                 assert!(tolerable_deviation <= accepted_deviation);
 
-                rf.set_frequency(channel, current, TuningMode::Fpga)?;
+                rf.set_frequency(channel, current, TuningMode::Fpga)
+                    .wait()?;
             }
 
             desired += offset;

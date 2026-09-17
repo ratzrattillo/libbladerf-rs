@@ -29,14 +29,28 @@
 //! borrow `&mut NiosCore`. The Rust borrow checker enforces that only one
 //! session is active at a time, serializing all register I/O at compile time.
 //!
+//! # Sync and async
+//!
+//! Every I/O method returns a [`MaybeFuture`]: call `.wait()` to block the
+//! current thread (native targets only) or `.await` it from async code. The
+//! async path is executor-agnostic and needs no runtime feature. Streaming
+//! timeouts apply to the blocking path only; awaited stream futures consume
+//! one USB completion per await and are cancel-safe.
+//!
+//! On `wasm32-unknown-unknown` (WebUSB) there is no `.wait()`; open the
+//! device with [`bladerf1::BladeRf1::from_device`] and shut it down with
+//! [`bladerf1::BladeRf1::close`].
+//!
 //! # Entry point
 //!
 //! Open a device and obtain an [`bladerf1::RfLinkSession`] to begin RF operations:
 //!
 //! ```ignore
-//! let mut dev = BladeRf1::from_first()?;
-//! let mut sess = dev.rf_link_session()?;
-//! sess.initialize(false)?;
+//! use libbladerf_rs::MaybeFuture;
+//!
+//! let mut dev = BladeRf1::from_first().wait()?;
+//! let mut sess = dev.rf_link_session().wait()?;
+//! sess.initialize(false).wait()?;
 //! ```
 //!
 //! [nusb]: https://github.com/kevinmehall/nusb
@@ -48,6 +62,7 @@ pub mod bladerf2;
 pub mod channel;
 pub mod error;
 pub mod flash;
+pub(crate) mod maybe_future;
 pub mod nios_client;
 pub mod protocol;
 pub mod range;
@@ -55,6 +70,8 @@ pub mod usb;
 pub mod version;
 pub use channel::Channel;
 pub use error::{Error, Result};
+pub use nusb;
+pub use nusb::MaybeFuture;
 pub use nusb::transfer::Buffer;
 pub use version::SemanticVersion;
 pub(crate) const fn khz(value: u32) -> u32 {

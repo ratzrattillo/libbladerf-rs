@@ -6,7 +6,9 @@
 
 use crate::Error;
 use crate::bladerf1::hardware::lms6002d::Lms6002d;
+use crate::maybe_future::Op;
 use crate::range::{Range, RangeItem};
+use nusb::MaybeFuture;
 
 /// RX gain offset applied when converting between dB FS and dBm.
 pub const BLADERF1_RX_GAIN_OFFSET: f32 = -6.0;
@@ -343,143 +345,209 @@ impl TryFrom<&str> for GainStage {
     }
 }
 impl<'a> Lms6002d<'a> {
-    pub(crate) fn lna_set_gain(&mut self, gain_db: GainDb) -> crate::Result<()> {
-        let mut data = self.read(0x75)?;
-        data &= !(3 << 6);
-        let lna_gain_code: LnaGainCode = gain_db.into();
-        let lna_gain_code_u8: u8 = lna_gain_code.into();
-        data |= (lna_gain_code_u8 & 3) << 6;
-        self.write(0x75, data)
+    pub(crate) fn lna_set_gain(
+        &mut self,
+        gain_db: GainDb,
+    ) -> impl MaybeFuture<Output = crate::Result<()>> {
+        Op::new(async move {
+            let mut data = self.read(0x75).await?;
+            data &= !(3 << 6);
+            let lna_gain_code: LnaGainCode = gain_db.into();
+            let lna_gain_code_u8: u8 = lna_gain_code.into();
+            data |= (lna_gain_code_u8 & 3) << 6;
+            self.write(0x75, data).await
+        })
     }
 
-    pub(crate) fn lna_get_gain(&mut self) -> crate::Result<GainDb> {
-        let mut data = self.read(0x75)?;
-        data >>= 6;
-        data &= 3;
-        let lna_gain_code: LnaGainCode = data
-            .try_into()
-            .map_err(|_| Error::BoardState("invalid LNA gain code from hardware"))?;
-        Ok(lna_gain_code.into())
+    pub(crate) fn lna_get_gain(&mut self) -> impl MaybeFuture<Output = crate::Result<GainDb>> {
+        Op::new(async move {
+            let mut data = self.read(0x75).await?;
+            data >>= 6;
+            data &= 3;
+            let lna_gain_code: LnaGainCode = data
+                .try_into()
+                .map_err(|_| Error::BoardState("invalid LNA gain code from hardware"))?;
+            Ok(lna_gain_code.into())
+        })
     }
 
-    pub(crate) fn get_lna(&mut self) -> crate::Result<LmsLowNoiseAmplifier> {
-        let data = self.read(0x75)?;
-        LmsLowNoiseAmplifier::try_from((data >> 4) & 0x3)
+    pub(crate) fn get_lna(
+        &mut self,
+    ) -> impl MaybeFuture<Output = crate::Result<LmsLowNoiseAmplifier>> {
+        Op::new(async move {
+            let data = self.read(0x75).await?;
+            LmsLowNoiseAmplifier::try_from((data >> 4) & 0x3)
+        })
     }
 
-    pub(crate) fn get_pa(&mut self) -> crate::Result<LmsPowerAmplifier> {
-        let data = self.read(0x44)?;
-        if (data & (1 << 1)) == 0 {
-            return Ok(LmsPowerAmplifier::PaAux);
-        }
-        LmsPowerAmplifier::try_from((data >> 2) & 7)
+    pub(crate) fn get_pa(&mut self) -> impl MaybeFuture<Output = crate::Result<LmsPowerAmplifier>> {
+        Op::new(async move {
+            let data = self.read(0x44).await?;
+            if (data & (1 << 1)) == 0 {
+                return Ok(LmsPowerAmplifier::PaAux);
+            }
+            LmsPowerAmplifier::try_from((data >> 2) & 7)
+        })
     }
 
-    pub(crate) fn rxvga1_enable(&mut self, enable: bool) -> crate::Result<()> {
-        let mut data = self.read(0x7d)?;
-        if enable {
-            data &= !(1 << 3);
-        } else {
-            data |= 1 << 3;
-        }
-        self.write(0x7d, data)
+    pub(crate) fn rxvga1_enable(
+        &mut self,
+        enable: bool,
+    ) -> impl MaybeFuture<Output = crate::Result<()>> {
+        Op::new(async move {
+            let mut data = self.read(0x7d).await?;
+            if enable {
+                data &= !(1 << 3);
+            } else {
+                data |= 1 << 3;
+            }
+            self.write(0x7d, data).await
+        })
     }
 
-    pub(crate) fn rxvga1_set_gain(&mut self, gain_db: GainDb) -> crate::Result<()> {
-        let code: Rxvga1GainCode = gain_db.into();
-        self.write(0x76, code.code)
+    pub(crate) fn rxvga1_set_gain(
+        &mut self,
+        gain_db: GainDb,
+    ) -> impl MaybeFuture<Output = crate::Result<()>> {
+        Op::new(async move {
+            let code: Rxvga1GainCode = gain_db.into();
+            self.write(0x76, code.code).await
+        })
     }
 
-    pub(crate) fn rxvga1_get_gain(&mut self) -> crate::Result<GainDb> {
-        let mut data = self.read(0x76)?;
-        data &= 0x7f;
-        let rxvga1_gain_code = Rxvga1GainCode::from(data.clamp(0, 120));
-        Ok(rxvga1_gain_code.into())
+    pub(crate) fn rxvga1_get_gain(&mut self) -> impl MaybeFuture<Output = crate::Result<GainDb>> {
+        Op::new(async move {
+            let mut data = self.read(0x76).await?;
+            data &= 0x7f;
+            let rxvga1_gain_code = Rxvga1GainCode::from(data.clamp(0, 120));
+            Ok(rxvga1_gain_code.into())
+        })
     }
 
-    pub(crate) fn rxvga2_enable(&mut self, enable: bool) -> crate::Result<()> {
-        let mut data = self.read(0x64)?;
-        if enable {
-            data |= 1 << 1;
-        } else {
-            data &= !(1 << 1);
-        }
-        self.write(0x64, data)
-    }
-
-    pub(crate) fn rxvga2_set_gain(&mut self, gain_db: GainDb) -> crate::Result<()> {
-        let code: Rxvga2GainCode = gain_db.into();
-        self.write(0x65, code.code)
-    }
-
-    pub(crate) fn rxvga2_get_gain(&mut self) -> crate::Result<GainDb> {
-        let rxvga2_gain_code = Rxvga2GainCode::from(self.read(0x65)?);
-        Ok(rxvga2_gain_code.into())
-    }
-
-    pub(crate) fn txvga1_get_gain(&mut self) -> crate::Result<GainDb> {
-        let txvga1_gain_code = Txvga1GainCode::from(self.read(0x41)?);
-        Ok(txvga1_gain_code.into())
-    }
-
-    pub(crate) fn txvga2_get_gain(&mut self) -> crate::Result<GainDb> {
-        let txvga2_gain_code = Txvga2GainCode::from(self.read(0x45)?);
-        Ok(txvga2_gain_code.into())
-    }
-
-    pub(crate) fn txvga1_set_gain(&mut self, gain_db: GainDb) -> crate::Result<()> {
-        let txvga1_gain_code: Txvga1GainCode = gain_db.into();
-        self.write(0x41, txvga1_gain_code.code)
-    }
-
-    pub(crate) fn txvga2_set_gain(&mut self, gain_db: GainDb) -> crate::Result<()> {
-        let mut data = self.read(0x45)?;
-        data &= !(0x1f << 3);
-        let txvga2_gain_code: Txvga2GainCode = gain_db.into();
-        data |= txvga2_gain_code.code;
-        self.write(0x45, data)
-    }
-
-    pub(crate) fn enable_lna_power(&mut self, enable: bool) -> crate::Result<()> {
-        let mut regval = self.read(0x7d)?;
-        if enable {
-            regval &= !(1 << 0);
-        } else {
-            regval |= 1 << 0;
-        }
-        self.write(0x7d, regval)?;
-        let mut regval = self.read(0x70)?;
-        if enable {
-            regval &= !(1 << 1);
-        } else {
-            regval |= 1 << 1;
-        }
-        self.write(0x70, regval)
-    }
-
-    pub(crate) fn select_pa(&mut self, pa: LmsPowerAmplifier) -> crate::Result<()> {
-        let mut data = self.read(0x44)?;
-        data &= !0x1C;
-        data |= 1 << 1;
-        match pa {
-            LmsPowerAmplifier::PaAux => {
+    pub(crate) fn rxvga2_enable(
+        &mut self,
+        enable: bool,
+    ) -> impl MaybeFuture<Output = crate::Result<()>> {
+        Op::new(async move {
+            let mut data = self.read(0x64).await?;
+            if enable {
+                data |= 1 << 1;
+            } else {
                 data &= !(1 << 1);
             }
-            LmsPowerAmplifier::Pa1 => {
-                data |= 2 << 2;
-            }
-            LmsPowerAmplifier::Pa2 => {
-                data |= 4 << 2;
-            }
-            LmsPowerAmplifier::PaNone => {}
-        }
-        self.write(0x44, data)
+            self.write(0x64, data).await
+        })
     }
 
-    pub(crate) fn select_lna(&mut self, lna: LmsLowNoiseAmplifier) -> crate::Result<()> {
-        let mut data = self.read(0x75)?;
-        data &= !(3 << 4);
-        data |= (u8::from(lna) & 3) << 4;
-        self.write(0x75, data)
+    pub(crate) fn rxvga2_set_gain(
+        &mut self,
+        gain_db: GainDb,
+    ) -> impl MaybeFuture<Output = crate::Result<()>> {
+        Op::new(async move {
+            let code: Rxvga2GainCode = gain_db.into();
+            self.write(0x65, code.code).await
+        })
+    }
+
+    pub(crate) fn rxvga2_get_gain(&mut self) -> impl MaybeFuture<Output = crate::Result<GainDb>> {
+        Op::new(async move {
+            let rxvga2_gain_code = Rxvga2GainCode::from(self.read(0x65).await?);
+            Ok(rxvga2_gain_code.into())
+        })
+    }
+
+    pub(crate) fn txvga1_get_gain(&mut self) -> impl MaybeFuture<Output = crate::Result<GainDb>> {
+        Op::new(async move {
+            let txvga1_gain_code = Txvga1GainCode::from(self.read(0x41).await?);
+            Ok(txvga1_gain_code.into())
+        })
+    }
+
+    pub(crate) fn txvga2_get_gain(&mut self) -> impl MaybeFuture<Output = crate::Result<GainDb>> {
+        Op::new(async move {
+            let txvga2_gain_code = Txvga2GainCode::from(self.read(0x45).await?);
+            Ok(txvga2_gain_code.into())
+        })
+    }
+
+    pub(crate) fn txvga1_set_gain(
+        &mut self,
+        gain_db: GainDb,
+    ) -> impl MaybeFuture<Output = crate::Result<()>> {
+        Op::new(async move {
+            let txvga1_gain_code: Txvga1GainCode = gain_db.into();
+            self.write(0x41, txvga1_gain_code.code).await
+        })
+    }
+
+    pub(crate) fn txvga2_set_gain(
+        &mut self,
+        gain_db: GainDb,
+    ) -> impl MaybeFuture<Output = crate::Result<()>> {
+        Op::new(async move {
+            let mut data = self.read(0x45).await?;
+            data &= !(0x1f << 3);
+            let txvga2_gain_code: Txvga2GainCode = gain_db.into();
+            data |= txvga2_gain_code.code;
+            self.write(0x45, data).await
+        })
+    }
+
+    pub(crate) fn enable_lna_power(
+        &mut self,
+        enable: bool,
+    ) -> impl MaybeFuture<Output = crate::Result<()>> {
+        Op::new(async move {
+            let mut regval = self.read(0x7d).await?;
+            if enable {
+                regval &= !(1 << 0);
+            } else {
+                regval |= 1 << 0;
+            }
+            self.write(0x7d, regval).await?;
+            let mut regval = self.read(0x70).await?;
+            if enable {
+                regval &= !(1 << 1);
+            } else {
+                regval |= 1 << 1;
+            }
+            self.write(0x70, regval).await
+        })
+    }
+
+    pub(crate) fn select_pa(
+        &mut self,
+        pa: LmsPowerAmplifier,
+    ) -> impl MaybeFuture<Output = crate::Result<()>> {
+        Op::new(async move {
+            let mut data = self.read(0x44).await?;
+            data &= !0x1C;
+            data |= 1 << 1;
+            match pa {
+                LmsPowerAmplifier::PaAux => {
+                    data &= !(1 << 1);
+                }
+                LmsPowerAmplifier::Pa1 => {
+                    data |= 2 << 2;
+                }
+                LmsPowerAmplifier::Pa2 => {
+                    data |= 4 << 2;
+                }
+                LmsPowerAmplifier::PaNone => {}
+            }
+            self.write(0x44, data).await
+        })
+    }
+
+    pub(crate) fn select_lna(
+        &mut self,
+        lna: LmsLowNoiseAmplifier,
+    ) -> impl MaybeFuture<Output = crate::Result<()>> {
+        Op::new(async move {
+            let mut data = self.read(0x75).await?;
+            data &= !(3 << 4);
+            data |= (u8::from(lna) & 3) << 4;
+            self.write(0x75, data).await
+        })
     }
 }

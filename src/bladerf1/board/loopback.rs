@@ -15,7 +15,9 @@ use crate::bladerf1::board::RfLinkSession;
 /// (BB variants), RF loopback (LNA variants), and firmware loopback.
 pub use crate::bladerf1::hardware::lms6002d::loopback::Loopback;
 use crate::error::Result;
+use crate::maybe_future::Op;
 use crate::usb::BladeRf1UsbInterfaceCommands;
+use nusb::MaybeFuture;
 impl RfLinkSession<'_> {
     /// Sets the loopback mode.
     ///
@@ -25,35 +27,41 @@ impl RfLinkSession<'_> {
     /// LMS6002D loopback path.
     ///
     /// Returns `Error::NotInitialized` if the board has not been initialized.
-    pub fn set_loopback(&mut self, lb: Loopback) -> Result<()> {
-        self.require_initialized()?;
-        match lb {
-            Loopback::Firmware => {
-                self.lms().set_loopback_mode(Loopback::Lna3)?;
-                self.nios.usb_set_firmware_loopback(true)
-            }
-            _ => {
-                let fw_lb_enabled: bool = self.nios.usb_get_firmware_loopback()?;
-                if fw_lb_enabled {
-                    self.nios.usb_set_firmware_loopback(false)?;
+    pub fn set_loopback(&mut self, lb: Loopback) -> impl MaybeFuture<Output = Result<()>> {
+        Op::new(async move {
+            self.require_initialized().await?;
+            match lb {
+                Loopback::Firmware => {
+                    self.lms().set_loopback_mode(Loopback::Lna3).await?;
+                    self.nios.usb_set_firmware_loopback(true).await
                 }
-                self.lms().set_loopback_mode(lb)
+                _ => {
+                    let fw_lb_enabled: bool = self.nios.usb_get_firmware_loopback().await?;
+                    if fw_lb_enabled {
+                        self.nios.usb_set_firmware_loopback(false).await?;
+                    }
+                    self.lms().set_loopback_mode(lb).await
+                }
             }
-        }
+        })
     }
     /// Sets the loopback mode on the LMS6002D only, without affecting firmware loopback.
     ///
     /// Returns `Error::NotInitialized` if the board has not been initialized.
-    pub fn set_lms_loopback(&mut self, lb: Loopback) -> Result<()> {
-        self.require_initialized()?;
-        self.lms().set_loopback_mode(lb)
+    pub fn set_lms_loopback(&mut self, lb: Loopback) -> impl MaybeFuture<Output = Result<()>> {
+        Op::new(async move {
+            self.require_initialized().await?;
+            self.lms().set_loopback_mode(lb).await
+        })
     }
     /// Returns the current LMS6002D loopback mode, independent of firmware loopback.
     ///
     /// Returns `Error::NotInitialized` if the board has not been initialized.
-    pub fn get_lms_loopback(&mut self) -> Result<Loopback> {
-        self.require_initialized()?;
-        self.lms().get_loopback_mode()
+    pub fn get_lms_loopback(&mut self) -> impl MaybeFuture<Output = Result<Loopback>> {
+        Op::new(async move {
+            self.require_initialized().await?;
+            self.lms().get_loopback_mode().await
+        })
     }
     /// Returns the current effective loopback mode.
     ///
@@ -61,17 +69,19 @@ impl RfLinkSession<'_> {
     /// LMS6002D loopback mode.
     ///
     /// Returns `Error::NotInitialized` if the board has not been initialized.
-    pub fn get_loopback(&mut self) -> Result<Loopback> {
-        self.require_initialized()?;
-        let mut lb = Loopback::None;
-        let fw_lb_enabled = self.nios.usb_get_firmware_loopback()?;
-        if fw_lb_enabled {
-            lb = Loopback::Firmware;
-        }
-        if lb == Loopback::None {
-            lb = self.lms().get_loopback_mode()?;
-        }
-        Ok(lb)
+    pub fn get_loopback(&mut self) -> impl MaybeFuture<Output = Result<Loopback>> {
+        Op::new(async move {
+            self.require_initialized().await?;
+            let mut lb = Loopback::None;
+            let fw_lb_enabled = self.nios.usb_get_firmware_loopback().await?;
+            if fw_lb_enabled {
+                lb = Loopback::Firmware;
+            }
+            if lb == Loopback::None {
+                lb = self.lms().get_loopback_mode().await?;
+            }
+            Ok(lb)
+        })
     }
     /// Returns true if the given loopback mode is supported on BladeRF1.
     pub fn is_loopback_mode_supported(&self, lb: Loopback) -> bool {

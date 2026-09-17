@@ -1,26 +1,27 @@
 use super::common::*;
+use libbladerf_rs::MaybeFuture;
 use libbladerf_rs::bladerf1::board::Correction;
 use libbladerf_rs::{Channel, Result};
 
 fn roundtrip_correction(type_name: &Correction, values: [i16; 2]) -> Result<()> {
     let mut sdr = sdr();
-    let mut rf = sdr.rf_link_session()?;
+    let mut rf = sdr.rf_link_session().wait()?;
 
     for channel in [Channel::Rx, Channel::Tx] {
-        let current = rf.get_correction(channel, type_name)?;
+        let current = rf.get_correction(channel, type_name).wait()?;
 
         for &desired in &values {
             log::trace!("Channel {channel:?} {type_name:?} Correction (CURRENT):\t{current}");
             log::trace!("Channel {channel:?} {type_name:?} Correction (DESIRED):\t{desired}");
 
-            rf.set_correction(channel, type_name, desired)?;
+            rf.set_correction(channel, type_name, desired).wait()?;
 
-            let new = rf.get_correction(channel, type_name)?;
+            let new = rf.get_correction(channel, type_name).wait()?;
             log::trace!("Channel {channel:?} {type_name:?} Correction (NEW):\t{new}");
             assert_eq!(new, desired);
         }
 
-        rf.set_correction(channel, type_name, current)?;
+        rf.set_correction(channel, type_name, current).wait()?;
     }
 
     Ok(())
@@ -43,7 +44,7 @@ fn iq_correction() -> Result<()> {
     logging_init("bladerf1_correction");
 
     let mut sdr = sdr();
-    let mut rf = sdr.rf_link_session()?;
+    let mut rf = sdr.rf_link_session().wait()?;
 
     for channel in [Channel::Rx, Channel::Tx] {
         let desired_arr = match channel {
@@ -52,7 +53,7 @@ fn iq_correction() -> Result<()> {
         };
 
         for correction_type in &[Correction::DcOffI, Correction::DcOffQ] {
-            let current = rf.get_correction(channel, correction_type)?;
+            let current = rf.get_correction(channel, correction_type).wait()?;
 
             for desired in desired_arr {
                 log::trace!(
@@ -62,15 +63,17 @@ fn iq_correction() -> Result<()> {
                     "Channel {channel:?} {correction_type:?} Correction (DESIRED):\t{desired}"
                 );
 
-                rf.set_correction(channel, correction_type, desired)?;
+                rf.set_correction(channel, correction_type, desired)
+                    .wait()?;
 
-                let new = rf.get_correction(channel, correction_type)?;
+                let new = rf.get_correction(channel, correction_type).wait()?;
                 log::trace!("Channel {channel:?} {correction_type:?} Correction (NEW):\t{new}");
 
                 assert_eq!(new, desired);
             }
 
-            rf.set_correction(channel, correction_type, current)?;
+            rf.set_correction(channel, correction_type, current)
+                .wait()?;
         }
     }
 

@@ -18,6 +18,8 @@ composite action `.github/actions/check`, which runs:
 7. License/deny check — `cargo install cargo-deny && cargo deny check`
 8. Documentation — `cargo doc --features bladerf1 --no-deps`
 9. Build all examples — every `examples/*/Cargo.toml`
+10. WebUSB — `cargo check --target wasm32-unknown-unknown --features bladerf1 --lib`
+    (`.cargo/config.toml` supplies `--cfg=web_sys_unstable_apis`)
 
 CI does **not** run hardware integration tests (no BladeRF1 attached to the
 runner) and does **not** run the local-only conventional-commits validation.

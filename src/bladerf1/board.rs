@@ -45,6 +45,7 @@ use crate::bladerf1::hardware::spi_flash::FlashMeta;
 use crate::channel::Channel;
 use crate::error::Error;
 use crate::flash::decode_flash_size;
+use crate::maybe_future::{Op, blocking_op, sleep};
 use crate::nios_client::NiosCore;
 use crate::usb::{
     BladeRf1DeviceCommands, BladeRf1UsbInterfaceCommands, DeviceCommands, UsbAltSetting,
@@ -104,8 +105,14 @@ pub const BLADERF_GPIO_FEATURE_SMALL_DMA_XFER: u16 = 1 << 7;
 /// Owns the USB device and the internal [`NiosCore`].
 /// Construct via [`from_first`](BladeRf1::from_first),
 /// [`from_serial`](BladeRf1::from_serial),
-/// [`from_bus_addr`](BladeRf1::from_bus_addr), or
-/// [`from_fd`](BladeRf1::from_fd) (Linux and Android only).
+/// [`from_bus_addr`](BladeRf1::from_bus_addr),
+/// [`from_fd`](BladeRf1::from_fd) (Linux and Android only), or
+/// [`from_device`](BladeRf1::from_device) with an already opened
+/// [`nusb::Device`] (the only option on WebUSB).
+///
+/// Every I/O method returns a [`MaybeFuture`]: call `.wait()` to block the
+/// current thread (native targets only) or `.await` it from async code.
+/// The async path works with any executor; no runtime feature is required.
 ///
 /// On construction the device waits for FX3 firmware readiness and
 /// auto-loads DC calibration tables from `<serial>_dc_rx.json` and
@@ -114,12 +121,15 @@ pub const BLADERF_GPIO_FEATURE_SMALL_DMA_XFER: u16 = 1 << 7;
 /// to load from an explicit path, which is required on platforms without a
 /// meaningful working directory such as Android.
 ///
-/// On drop, RX and TX modules are disabled (best-effort).
+/// On native targets, dropping the handle disables the RX and TX modules
+/// (best-effort, blocking). Use [`close`](BladeRf1::close) for an explicit,
+/// non-blocking shutdown; on wasm it is the only shutdown path.
 pub struct BladeRf1 {
     device: Device,
     nios: NiosCore,
     dc_rx_table: Option<DcCalTable>,
     dc_tx_table: Option<DcCalTable>,
+    closed: bool,
 }
 impl BladeRf1 {
     /// Lists all BladeRF1 devices currently connected to the host.
@@ -127,63 +137,97 @@ impl BladeRf1 {
     /// Not available on Android, where USB enumeration is not permitted; open
     /// devices with [`from_fd`](BladeRf1::from_fd) instead.
     #[cfg(not(target_os = "android"))]
-    pub fn list_bladerf1() -> crate::Result<impl Iterator<Item = DeviceInfo>> {
-        Ok(nusb::list_devices().wait()?.filter(|dev: &DeviceInfo| {
-            dev.vendor_id() == BLADERF1_USB_VID && dev.product_id() == BLADERF1_USB_PID
-        }))
+    pub fn list_bladerf1()
+    -> impl MaybeFuture<Output = crate::Result<impl Iterator<Item = DeviceInfo>>> {
+        Op::new(async move {
+            Ok(blocking_op(nusb::list_devices())
+                .await?
+                .filter(|dev: &DeviceInfo| {
+                    dev.vendor_id() == BLADERF1_USB_VID && dev.product_id() == BLADERF1_USB_PID
+                }))
+        })
     }
-    fn build(device: Device, cal_table_dir: Option<&Path>) -> crate::Result<Self> {
-        log::debug!("Manufacturer: {}", device.manufacturer()?);
-        log::debug!("Product: {}", device.product()?);
-        log::debug!("Serial: {}", device.serial()?);
-        log::debug!("Speed: {:?}", device.speed());
-        log::debug!("Languages: {:x?}", device.get_supported_languages()?);
-        let speed = device.speed().ok_or(Error::UnsupportedSpeed)?;
-        if speed < Speed::High {
-            log::error!("BladeRF requires High/Super/SuperPlus speeds");
-            return Err(Error::UnsupportedSpeed);
-        }
-        let nios = NiosCore::new(UsbTransport::new(
-            device.detach_and_claim_interface(0).wait()?,
-            speed,
-        ));
-        let mut result = Self {
-            device,
-            nios,
-            dc_rx_table: None,
-            dc_tx_table: None,
-        };
-        result.wait_until_ready()?;
-        Self::auto_load_tables(&mut result, cal_table_dir);
-        Ok(result)
-    }
-    fn wait_until_ready(&self) -> crate::Result<()> {
-        const MAX_RETRIES: u32 = 30;
-        for i in 0..MAX_RETRIES {
-            match self.nios.usb_is_firmware_ready() {
-                Ok(true) => return Ok(()),
-                Ok(false) => {
-                    if i == 0 {
-                        log::info!("Waiting for device to become ready...");
-                    } else {
-                        log::debug!("Retry {}/{}.", i + 1, MAX_RETRIES);
-                    }
-                    std::thread::sleep(std::time::Duration::from_secs(1));
+    fn build(
+        device: Device,
+        cal_table_dir: Option<&Path>,
+    ) -> impl MaybeFuture<Output = crate::Result<Self>> {
+        Op::new(async move {
+            log::debug!("Manufacturer: {}", device.manufacturer().await?);
+            log::debug!("Product: {}", device.product().await?);
+            log::debug!("Serial: {}", device.serial().await?);
+            log::debug!("Speed: {:?}", device.speed());
+            log::debug!("Languages: {:x?}", device.get_supported_languages().await?);
+            let interface = blocking_op(device.detach_and_claim_interface(0)).await?;
+            let speed = match device.speed() {
+                Some(speed) => speed,
+                None => {
+                    let speed = Self::infer_speed(&interface).ok_or(Error::UnsupportedSpeed)?;
+                    log::debug!("Speed not reported by the host; inferred {speed:?}");
+                    speed
                 }
-                Err(e) => {
-                    log::warn!(
-                        "Firmware does not support device ready query ({e:#}). \
-                         Ensure flash-autoloading completes before opening the device."
-                    );
-                    return Ok(());
+            };
+            if speed < Speed::High {
+                log::error!("BladeRF requires High/Super/SuperPlus speeds");
+                return Err(Error::UnsupportedSpeed);
+            }
+            let nios = NiosCore::new(UsbTransport::new(interface, speed));
+            let mut result = Self {
+                device,
+                nios,
+                dc_rx_table: None,
+                dc_tx_table: None,
+                closed: false,
+            };
+            result.wait_until_ready().await?;
+            Self::auto_load_tables(&mut result, cal_table_dir).await;
+            Ok(result)
+        })
+    }
+    /// Derives the bus speed from the bulk endpoint max packet size.
+    ///
+    /// WebUSB does not expose the negotiated speed. Bulk endpoints are
+    /// 1024 bytes at SuperSpeed and 512 bytes at High-Speed.
+    fn infer_speed(interface: &nusb::Interface) -> Option<Speed> {
+        interface
+            .descriptors()
+            .flat_map(|desc| desc.endpoints())
+            .find(|ep| ep.transfer_type() == nusb::descriptors::TransferType::Bulk)
+            .and_then(|ep| match ep.max_packet_size() {
+                1024 => Some(Speed::Super),
+                512 => Some(Speed::High),
+                64 => Some(Speed::Full),
+                _ => None,
+            })
+    }
+    fn wait_until_ready(&self) -> impl MaybeFuture<Output = crate::Result<()>> {
+        Op::new(async move {
+            const MAX_RETRIES: u32 = 30;
+            for i in 0..MAX_RETRIES {
+                match self.nios.usb_is_firmware_ready().await {
+                    Ok(true) => return Ok(()),
+                    Ok(false) => {
+                        if i == 0 {
+                            log::info!("Waiting for device to become ready...");
+                        } else {
+                            log::debug!("Retry {}/{}.", i + 1, MAX_RETRIES);
+                        }
+                        sleep(std::time::Duration::from_secs(1)).await;
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "Firmware does not support device ready query ({e:#}). \
+                             Ensure flash-autoloading completes before opening the device."
+                        );
+                        return Ok(());
+                    }
                 }
             }
-        }
-        log::debug!("Timed out while waiting for device.");
-        Err(Error::Timeout)
+            log::debug!("Timed out while waiting for device.");
+            Err(Error::Timeout)
+        })
     }
-    fn auto_load_tables(result: &mut Self, dir: Option<&Path>) {
-        let serial = match result.device.serial() {
+    async fn auto_load_tables(result: &mut Self, dir: Option<&Path>) {
+        let serial = match result.device.serial().await {
             Ok(s) => s,
             Err(e) => {
                 log::warn!("Failed to read serial number, skipping DC cal table auto-load: {e}");
@@ -218,13 +262,12 @@ impl BladeRf1 {
     /// available on Android, which forbids USB enumeration; use
     /// [`from_fd`](BladeRf1::from_fd) there.
     #[cfg(not(target_os = "android"))]
-    pub fn from_first() -> crate::Result<Self> {
-        let device = Self::list_bladerf1()?
-            .next()
-            .ok_or(Error::NotFound)?
-            .open()
-            .wait()?;
-        Self::build(device, None)
+    pub fn from_first() -> impl MaybeFuture<Output = crate::Result<Self>> {
+        Op::new(async move {
+            let info = Self::list_bladerf1().await?.next().ok_or(Error::NotFound)?;
+            let device = blocking_op(info.open()).await?;
+            Self::build(device, None).await
+        })
     }
     /// Opens a BladeRF1 device matching the given serial number string.
     ///
@@ -232,26 +275,48 @@ impl BladeRf1 {
     /// available on Android, which forbids USB enumeration; use
     /// [`from_fd`](BladeRf1::from_fd) there.
     #[cfg(not(target_os = "android"))]
-    pub fn from_serial(serial: &str) -> crate::Result<Self> {
-        let device = Self::list_bladerf1()?
-            .find(|dev| dev.serial_number() == Some(serial))
-            .ok_or(Error::NotFound)?
-            .open()
-            .wait()?;
-        Self::build(device, None)
+    pub fn from_serial(serial: &str) -> impl MaybeFuture<Output = crate::Result<Self>> {
+        Op::new(async move {
+            let info = Self::list_bladerf1()
+                .await?
+                .find(|dev| dev.serial_number() == Some(serial))
+                .ok_or(Error::NotFound)?;
+            let device = blocking_op(info.open()).await?;
+            Self::build(device, None).await
+        })
     }
     /// Opens a BladeRF1 device at the given USB bus number and address.
     ///
     /// DC calibration tables are auto-loaded from the current directory. Not
-    /// available on Android, which forbids USB enumeration; use
-    /// [`from_fd`](BladeRf1::from_fd) there.
-    #[cfg(not(target_os = "android"))]
-    pub fn from_bus_addr(bus_number: &str, bus_addr: u8) -> crate::Result<Self> {
-        let device = Self::list_bladerf1()?
-            .find(|dev| dev.bus_id() == bus_number && dev.device_address() == bus_addr)
-            .ok_or(Error::NotFound)?
-            .open()
-            .wait()?;
+    /// available on Android, which forbids USB enumeration, nor on WebUSB,
+    /// which does not expose bus topology; use
+    /// [`from_fd`](BladeRf1::from_fd) or [`from_device`](BladeRf1::from_device).
+    #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
+    pub fn from_bus_addr(
+        bus_number: &str,
+        bus_addr: u8,
+    ) -> impl MaybeFuture<Output = crate::Result<Self>> {
+        Op::new(async move {
+            let info = Self::list_bladerf1()
+                .await?
+                .find(|dev| dev.bus_id() == bus_number && dev.device_address() == bus_addr)
+                .ok_or(Error::NotFound)?;
+            let device = blocking_op(info.open()).await?;
+            Self::build(device, None).await
+        })
+    }
+    /// Opens a BladeRF1 from an already opened [`nusb::Device`].
+    ///
+    /// Use this when the device was obtained outside this crate, e.g. from
+    /// [`nusb::request_device`] or `nusb::Device::from_js` on WebUSB, or
+    /// from a custom enumeration filter. The device must be a BladeRF1; no
+    /// VID/PID check is performed. DC calibration tables are auto-loaded from
+    /// the current directory where a file system is available.
+    ///
+    /// # Errors
+    /// Returns an error if interface 0 cannot be claimed, the bus speed is
+    /// below High-Speed, or the firmware never reports ready.
+    pub fn from_device(device: Device) -> impl MaybeFuture<Output = crate::Result<Self>> {
         Self::build(device, None)
     }
     /// Opens a BladeRF1 device from a pre-opened file descriptor.
@@ -268,9 +333,11 @@ impl BladeRf1 {
     /// device, if interface claiming fails, or if the device never becomes
     /// ready.
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub fn from_fd(fd: std::os::fd::OwnedFd) -> crate::Result<Self> {
-        let device = Device::from_fd(fd).wait()?;
-        Self::build(device, None)
+    pub fn from_fd(fd: std::os::fd::OwnedFd) -> impl MaybeFuture<Output = crate::Result<Self>> {
+        Op::new(async move {
+            let device = blocking_op(Device::from_fd(fd)).await?;
+            Self::build(device, None).await
+        })
     }
 
     /// Loads DC calibration tables for this device from `dir` by serial number.
@@ -283,27 +350,36 @@ impl BladeRf1 {
     ///
     /// # Errors
     /// Returns an error only if the device serial number cannot be read.
-    pub fn load_dc_cal_tables_from_dir(&mut self, dir: &Path) -> crate::Result<()> {
-        let serial = self.device.serial()?;
-        let rx_path = dir.join(format!("{serial}_dc_rx.json"));
-        let tx_path = dir.join(format!("{serial}_dc_tx.json"));
-        if rx_path.exists() {
-            match DcCalTable::load(&rx_path) {
-                Ok(tbl) => self.dc_rx_table = Some(tbl),
-                Err(e) => log::warn!("Failed to parse RX DC cal table {}: {e}", rx_path.display()),
+    pub fn load_dc_cal_tables_from_dir(
+        &mut self,
+        dir: &Path,
+    ) -> impl MaybeFuture<Output = crate::Result<()>> {
+        Op::new(async move {
+            let serial = self.device.serial().await?;
+            let rx_path = dir.join(format!("{serial}_dc_rx.json"));
+            let tx_path = dir.join(format!("{serial}_dc_tx.json"));
+            if rx_path.exists() {
+                match DcCalTable::load(&rx_path) {
+                    Ok(tbl) => self.dc_rx_table = Some(tbl),
+                    Err(e) => {
+                        log::warn!("Failed to parse RX DC cal table {}: {e}", rx_path.display())
+                    }
+                }
             }
-        }
-        if tx_path.exists() {
-            match DcCalTable::load(&tx_path) {
-                Ok(tbl) => self.dc_tx_table = Some(tbl),
-                Err(e) => log::warn!("Failed to parse TX DC cal table {}: {e}", tx_path.display()),
+            if tx_path.exists() {
+                match DcCalTable::load(&tx_path) {
+                    Ok(tbl) => self.dc_tx_table = Some(tbl),
+                    Err(e) => {
+                        log::warn!("Failed to parse TX DC cal table {}: {e}", tx_path.display())
+                    }
+                }
             }
-        }
-        Ok(())
+            Ok(())
+        })
     }
     /// Returns the device serial number string.
-    pub fn serial(&self) -> crate::Result<String> {
-        self.device.serial()
+    pub fn serial(&self) -> impl MaybeFuture<Output = crate::Result<String>> {
+        Op::new(async move { self.device.serial().await })
     }
 
     /// Loads a DC calibration table from a JSON file for the given channel.
@@ -338,8 +414,8 @@ impl BladeRf1 {
     }
 
     /// Returns the FX3 firmware version as a string.
-    pub fn fx3_firmware_version(&self) -> crate::Result<String> {
-        self.device.fx3_firmware_version()
+    pub fn fx3_firmware_version(&self) -> impl MaybeFuture<Output = crate::Result<String>> {
+        Op::new(async move { self.device.fx3_firmware_version().await })
     }
 
     /// Creates an [`RfLinkSession`] for normal RF operation.
@@ -347,14 +423,18 @@ impl BladeRf1 {
     /// Switches the USB alt setting to RfLink if not already there.
     /// If streams are active the device is already in RfLink mode and
     /// no redundant USB switch is performed.
-    pub fn rf_link_session(&mut self) -> crate::Result<RfLinkSession<'_>> {
-        if self.nios.transport().current_alt_setting() != UsbAltSetting::RfLink {
-            self.nios.usb_change_setting(UsbAltSetting::RfLink)?;
-        }
-        Ok(RfLinkSession {
-            nios: &mut self.nios,
-            dc_rx_table: self.dc_rx_table.as_ref(),
-            dc_tx_table: self.dc_tx_table.as_ref(),
+    pub fn rf_link_session(
+        &mut self,
+    ) -> impl MaybeFuture<Output = crate::Result<RfLinkSession<'_>>> {
+        Op::new(async move {
+            if self.nios.transport().current_alt_setting() != UsbAltSetting::RfLink {
+                self.nios.usb_change_setting(UsbAltSetting::RfLink).await?;
+            }
+            Ok(RfLinkSession {
+                nios: &mut self.nios,
+                dc_rx_table: self.dc_rx_table.as_ref(),
+                dc_tx_table: self.dc_tx_table.as_ref(),
+            })
         })
     }
 
@@ -362,63 +442,101 @@ impl BladeRf1 {
     ///
     /// Returns [`Error::StreamsActive`] if any stream is currently running,
     /// since switching the USB alt setting would disrupt active transfers.
-    pub fn flash_session(&mut self) -> crate::Result<FlashSession<'_>> {
-        if self.nios.active_streams() > 0 {
-            return Err(Error::StreamsActive);
-        }
-        if self.nios.transport().current_alt_setting() != UsbAltSetting::SpiFlash {
-            self.nios.usb_change_setting(UsbAltSetting::SpiFlash)?;
-        }
-        let result = self
-            .nios
-            .usb_vendor_cmd_int(crate::usb::VendorRequest::QueryFlashId)?;
-        let manufacturer_id = ((result >> 8) & 0xFF) as u8;
-        let device_id = (result & 0xFF) as u8;
-        let flash_size_bytes = decode_flash_size(manufacturer_id, device_id)?;
-        let total_pages =
-            flash_size_bytes / crate::bladerf1::hardware::spi_flash::BLADERF_FLASH_PAGE_SIZE as u32;
-        let total_sectors = flash_size_bytes / (64 * 1024);
-        Ok(FlashSession {
-            nios: &mut self.nios,
-            flash_meta: FlashMeta {
-                flash_size_bytes,
-                total_pages,
-                total_sectors,
-            },
+    pub fn flash_session(&mut self) -> impl MaybeFuture<Output = crate::Result<FlashSession<'_>>> {
+        Op::new(async move {
+            if self.nios.active_streams() > 0 {
+                return Err(Error::StreamsActive);
+            }
+            if self.nios.transport().current_alt_setting() != UsbAltSetting::SpiFlash {
+                self.nios
+                    .usb_change_setting(UsbAltSetting::SpiFlash)
+                    .await?;
+            }
+            let result = self
+                .nios
+                .usb_vendor_cmd_int(crate::usb::VendorRequest::QueryFlashId)
+                .await?;
+            let manufacturer_id = ((result >> 8) & 0xFF) as u8;
+            let device_id = (result & 0xFF) as u8;
+            let flash_size_bytes = decode_flash_size(manufacturer_id, device_id)?;
+            let total_pages = flash_size_bytes
+                / crate::bladerf1::hardware::spi_flash::BLADERF_FLASH_PAGE_SIZE as u32;
+            let total_sectors = flash_size_bytes / (64 * 1024);
+            Ok(FlashSession {
+                nios: &mut self.nios,
+                flash_meta: FlashMeta {
+                    flash_size_bytes,
+                    total_pages,
+                    total_sectors,
+                },
+            })
         })
     }
 
     /// Creates a [`ConfigSession`] for FPGA loading and device configuration.
     ///
     /// Returns [`Error::StreamsActive`] if any stream is currently running.
-    pub fn config_session(&mut self) -> crate::Result<ConfigSession<'_>> {
-        if self.nios.active_streams() > 0 {
-            return Err(Error::StreamsActive);
-        }
-        if self.nios.transport().current_alt_setting() != UsbAltSetting::Config {
-            self.nios.usb_change_setting(UsbAltSetting::Config)?;
-        }
-        Ok(ConfigSession {
-            nios: &mut self.nios,
+    pub fn config_session(
+        &mut self,
+    ) -> impl MaybeFuture<Output = crate::Result<ConfigSession<'_>>> {
+        Op::new(async move {
+            if self.nios.active_streams() > 0 {
+                return Err(Error::StreamsActive);
+            }
+            if self.nios.transport().current_alt_setting() != UsbAltSetting::Config {
+                self.nios.usb_change_setting(UsbAltSetting::Config).await?;
+            }
+            Ok(ConfigSession {
+                nios: &mut self.nios,
+            })
         })
     }
 
     /// Resets the device, causing it to re-enumerate on the USB bus.
-    pub fn device_reset(&mut self) -> crate::Result<()> {
-        self.nios.usb_device_reset()
+    pub fn device_reset(&mut self) -> impl MaybeFuture<Output = crate::Result<()>> {
+        Op::new(async move { self.nios.usb_device_reset().await })
     }
 
     /// Returns `true` if the FPGA has been configured (loaded and ready).
-    pub fn is_fpga_configured(&self) -> crate::Result<bool> {
-        self.nios.usb_is_fpga_configured()
+    pub fn is_fpga_configured(&self) -> impl MaybeFuture<Output = crate::Result<bool>> {
+        Op::new(async move { self.nios.usb_is_fpga_configured().await })
+    }
+}
+
+impl BladeRf1 {
+    /// Disables the RX and TX modules and releases the device.
+    ///
+    /// This is the non-blocking counterpart of the `Drop` implementation
+    /// and the only shutdown path on wasm. After `close()` returns, the
+    /// `Drop` implementation performs no further I/O.
+    ///
+    /// # Errors
+    /// Returns the first USB error encountered while disabling the modules;
+    /// the device is released regardless.
+    pub fn close(mut self) -> impl MaybeFuture<Output = crate::Result<()>> {
+        Op::new(async move {
+            let rx = self.nios.usb_enable_module(Channel::Rx, false).await;
+            let tx = self.nios.usb_enable_module(Channel::Tx, false).await;
+            self.closed = true;
+            drop(self);
+            rx.and(tx)
+        })
     }
 }
 
 impl Drop for BladeRf1 {
     fn drop(&mut self) {
-        log::debug!("BladeRf1::drop — shutting down device");
-        let _ = self.nios.usb_enable_module(Channel::Rx, false);
-        let _ = self.nios.usb_enable_module(Channel::Tx, false);
+        if self.closed {
+            return;
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            log::debug!("BladeRf1::drop — shutting down device");
+            let _ = self.nios.usb_enable_module(Channel::Rx, false).wait();
+            let _ = self.nios.usb_enable_module(Channel::Tx, false).wait();
+        }
+        #[cfg(target_arch = "wasm32")]
+        log::warn!("BladeRf1 dropped without close(); RX/TX modules left enabled");
     }
 }
 
@@ -470,37 +588,46 @@ impl RfLinkSession<'_> {
     /// Returns [`Error::BoardState`] if the lower 7 bits of GPIO are zero,
     /// meaning [`initialize`](RfLinkSession::initialize) has not yet been
     /// called (or the FPGA was just reloaded, resetting NIOS).
-    fn require_initialized(&mut self) -> crate::Result<()> {
-        let cfg = self.config_gpio_read()?;
-        if (cfg & 0x7f) == 0 {
-            return Err(Error::BoardState("device not initialized"));
-        }
-        Ok(())
+    fn require_initialized(&mut self) -> impl MaybeFuture<Output = crate::Result<()>> {
+        Op::new(async move {
+            let cfg = self.config_gpio_read().await?;
+            if (cfg & 0x7f) == 0 {
+                return Err(Error::BoardState("device not initialized"));
+            }
+            Ok(())
+        })
     }
 
     /// Returns the FPGA version as a string.
-    pub fn fpga_version(&mut self) -> crate::Result<String> {
-        let version = self.nios.nios_get_fpga_version()?;
-        Ok(format!("{version}"))
+    pub fn fpga_version(&mut self) -> impl MaybeFuture<Output = crate::Result<String>> {
+        Op::new(async move {
+            let version = self.nios.nios_get_fpga_version().await?;
+            Ok(format!("{version}"))
+        })
     }
 
     /// Reads the full 32-bit config GPIO register.
-    pub fn config_gpio_read(&mut self) -> crate::Result<u32> {
-        self.nios.nios_config_read()
+    pub fn config_gpio_read(&mut self) -> impl MaybeFuture<Output = crate::Result<u32>> {
+        Op::new(async move { self.nios.nios_config_read().await })
     }
 
     /// Writes the config GPIO register, automatically setting the small DMA
     /// transfer bit when connected at Hi-Speed USB.
-    pub fn config_gpio_write(&mut self, mut data: u32) -> crate::Result<()> {
-        log::trace!("[config_gpio_write] data: {data}");
-        let speed = self.nios.transport().speed();
-        if speed == Speed::High {
-            data |= BLADERF_GPIO_FEATURE_SMALL_DMA_XFER as u32;
-        } else {
-            data &= !(BLADERF_GPIO_FEATURE_SMALL_DMA_XFER as u32);
-        }
-        log::trace!("[config_gpio_write] data after speed check: {data}");
-        self.nios.nios_config_write(data)
+    pub fn config_gpio_write(
+        &mut self,
+        mut data: u32,
+    ) -> impl MaybeFuture<Output = crate::Result<()>> {
+        Op::new(async move {
+            log::trace!("[config_gpio_write] data: {data}");
+            let speed = self.nios.transport().speed();
+            if speed == Speed::High {
+                data |= BLADERF_GPIO_FEATURE_SMALL_DMA_XFER as u32;
+            } else {
+                data &= !(BLADERF_GPIO_FEATURE_SMALL_DMA_XFER as u32);
+            }
+            log::trace!("[config_gpio_write] data after speed check: {data}");
+            self.nios.nios_config_write(data).await
+        })
     }
 
     /// Read-modify-write on the config GPIO register.
@@ -508,12 +635,15 @@ impl RfLinkSession<'_> {
     /// The provided closure mutates the current GPIO value. The small DMA
     /// transfer bit is forced to the correct value for the current USB speed
     /// after the closure returns.
-    pub fn config_gpio_modify(&mut self, f: impl FnOnce(u32) -> u32) -> crate::Result<()> {
+    pub fn config_gpio_modify(
+        &mut self,
+        f: impl FnOnce(u32) -> u32 + Send,
+    ) -> impl MaybeFuture<Output = crate::Result<()>> {
         let small_dma = BLADERF_GPIO_FEATURE_SMALL_DMA_XFER as u32;
         let speed = self.nios.transport().speed();
         let mask = if speed == Speed::High { small_dma } else { 0 };
         self.nios
-            .nios_config_modify(|gpio| (f(gpio) & !small_dma) | mask)
+            .nios_config_modify(move |gpio| (f(gpio) & !small_dma) | mask)
     }
 
     /// Initializes the BladeRF1 for RF operation.
@@ -527,139 +657,157 @@ impl RfLinkSession<'_> {
     /// RX 2.484 GHz), and gain mode (MGC). After the standard init sequence,
     /// any loaded DC calibration tables are applied to the LMS6002D registers
     /// and the current frequencies are re-tuned to activate the corrections.
-    pub fn initialize(&mut self, force: bool) -> crate::Result<()> {
-        let alt_setting = self.nios.get_alt_setting();
-        log::trace!("[*] Init - Default Alt Setting {alt_setting:?}");
-        if alt_setting != UsbAltSetting::RfLink {
-            self.nios.usb_change_setting(UsbAltSetting::RfLink)?;
-            log::trace!("[*] Init - Set Alt Setting to 0x01");
-        }
-        let cfg = self.config_gpio_read()?;
-        if force || (cfg & 0x7f) == 0 {
-            log::trace!(
-                "[*] Init - {}initializing device (GPIO={cfg:#04x})",
-                if force { "Force " } else { "" }
-            );
-            self.config_gpio_write(0x57)?;
-            self.lms().enable_rffe(Channel::Tx, false)?;
-            self.lms().enable_rffe(Channel::Rx, false)?;
-            self.lms().write(0x05, 0x3e)?;
-            self.lms().write(0x47, 0x40)?;
-            self.lms().write(0x59, 0x29)?;
-            self.lms().write(0x64, 0x36)?;
-            self.lms().write(0x79, 0x37)?;
-            self.lms().set(0x3f, 0x80)?;
-            self.lms().set(0x5f, 0x80)?;
-            self.lms().set(0x6e, 0xc0)?;
-            self.lms().config_charge_pumps(Channel::Tx)?;
-            self.lms().config_charge_pumps(Channel::Rx)?;
-            {
-                let _actual_tx = self.si().set_sample_rate(Channel::Tx, 1_000_000)?;
-                let _actual_rx = self.si().set_sample_rate(Channel::Rx, 1_000_000)?;
-                self.dac().write(0)?;
+    pub fn initialize(&mut self, force: bool) -> impl MaybeFuture<Output = crate::Result<()>> {
+        Op::new(async move {
+            let alt_setting = self.nios.get_alt_setting();
+            log::trace!("[*] Init - Default Alt Setting {alt_setting:?}");
+            if alt_setting != UsbAltSetting::RfLink {
+                self.nios.usb_change_setting(UsbAltSetting::RfLink).await?;
+                log::trace!("[*] Init - Set Alt Setting to 0x01");
             }
-            self.set_frequency(Channel::Tx, 2_447_000_000, TuningMode::Fpga)?;
-            self.set_frequency(Channel::Rx, 2_484_000_000, TuningMode::Fpga)?;
-            self.set_gain_mode(Channel::Rx, GainMode::Mgc)?;
-        } else {
-            log::trace!("[*] Init - Device already initialized: {cfg:#04x}");
-        }
-        self.apply_dc_cal_tables()?;
-        Ok(())
+            let cfg = self.config_gpio_read().await?;
+            if force || (cfg & 0x7f) == 0 {
+                log::trace!(
+                    "[*] Init - {}initializing device (GPIO={cfg:#04x})",
+                    if force { "Force " } else { "" }
+                );
+                self.config_gpio_write(0x57).await?;
+                self.lms().enable_rffe(Channel::Tx, false).await?;
+                self.lms().enable_rffe(Channel::Rx, false).await?;
+                self.lms().write(0x05, 0x3e).await?;
+                self.lms().write(0x47, 0x40).await?;
+                self.lms().write(0x59, 0x29).await?;
+                self.lms().write(0x64, 0x36).await?;
+                self.lms().write(0x79, 0x37).await?;
+                self.lms().set(0x3f, 0x80).await?;
+                self.lms().set(0x5f, 0x80).await?;
+                self.lms().set(0x6e, 0xc0).await?;
+                self.lms().config_charge_pumps(Channel::Tx).await?;
+                self.lms().config_charge_pumps(Channel::Rx).await?;
+                {
+                    let _actual_tx = self.si().set_sample_rate(Channel::Tx, 1_000_000).await?;
+                    let _actual_rx = self.si().set_sample_rate(Channel::Rx, 1_000_000).await?;
+                    self.dac().write(0).await?;
+                }
+                self.set_frequency(Channel::Tx, 2_447_000_000, TuningMode::Fpga)
+                    .await?;
+                self.set_frequency(Channel::Rx, 2_484_000_000, TuningMode::Fpga)
+                    .await?;
+                self.set_gain_mode(Channel::Rx, GainMode::Mgc).await?;
+            } else {
+                log::trace!("[*] Init - Device already initialized: {cfg:#04x}");
+            }
+            self.apply_dc_cal_tables().await?;
+            Ok(())
+        })
     }
 
     /// Applies DC calibration register values from the loaded tables to the
     /// LMS6002D, then re-tunes the current RX/TX frequencies so the
     /// corrections take effect.
-    fn apply_dc_cal_tables(&mut self) -> crate::Result<()> {
-        if self.dc_rx_table.is_none() && self.dc_tx_table.is_none() {
-            return Ok(());
-        }
-        let rx = self.dc_rx_table.map(|t| t.reg_vals());
-        let tx = self.dc_tx_table.map(|t| t.reg_vals());
-
-        let mut cals = DcCals::new(-1, -1, -1, -1, -1, -1, -1, -1, -1, -1);
-
-        if let Some(rx) = rx {
-            cals.lpf_tuning = rx.lpf_tuning;
-            cals.rx_lpf_i = rx.rx_lpf_i;
-            cals.rx_lpf_q = rx.rx_lpf_q;
-            cals.dc_ref = rx.dc_ref;
-            cals.rxvga2a_i = rx.rxvga2a_i;
-            cals.rxvga2a_q = rx.rxvga2a_q;
-            cals.rxvga2b_i = rx.rxvga2b_i;
-            cals.rxvga2b_q = rx.rxvga2b_q;
-        }
-
-        if let Some(tx) = tx {
-            cals.tx_lpf_i = tx.tx_lpf_i;
-            cals.tx_lpf_q = tx.tx_lpf_q;
-
-            if rx.is_none() {
-                cals.lpf_tuning = tx.lpf_tuning;
-                cals.rx_lpf_i = tx.rx_lpf_i;
-                cals.rx_lpf_q = tx.rx_lpf_q;
-                cals.dc_ref = tx.dc_ref;
-                cals.rxvga2a_i = tx.rxvga2a_i;
-                cals.rxvga2a_q = tx.rxvga2a_q;
-                cals.rxvga2b_i = tx.rxvga2b_i;
-                cals.rxvga2b_q = tx.rxvga2b_q;
+    fn apply_dc_cal_tables(&mut self) -> impl MaybeFuture<Output = crate::Result<()>> {
+        Op::new(async move {
+            if self.dc_rx_table.is_none() && self.dc_tx_table.is_none() {
+                return Ok(());
             }
-        }
+            let rx = self.dc_rx_table.map(|t| t.reg_vals());
+            let tx = self.dc_tx_table.map(|t| t.reg_vals());
 
-        if rx.is_some()
-            && tx.is_none()
-            && let Some(rx) = rx
-        {
-            cals.tx_lpf_i = rx.tx_lpf_i;
-            cals.tx_lpf_q = rx.tx_lpf_q;
-        }
+            let mut cals = DcCals::new(-1, -1, -1, -1, -1, -1, -1, -1, -1, -1);
 
-        self.lms().set_dc_cals(cals)?;
+            if let Some(rx) = rx {
+                cals.lpf_tuning = rx.lpf_tuning;
+                cals.rx_lpf_i = rx.rx_lpf_i;
+                cals.rx_lpf_q = rx.rx_lpf_q;
+                cals.dc_ref = rx.dc_ref;
+                cals.rxvga2a_i = rx.rxvga2a_i;
+                cals.rxvga2a_q = rx.rxvga2a_q;
+                cals.rxvga2b_i = rx.rxvga2b_i;
+                cals.rxvga2b_q = rx.rxvga2b_q;
+            }
 
-        let rx_f = self.get_frequency(Channel::Rx).ok();
-        let tx_f = self.get_frequency(Channel::Tx).ok();
+            if let Some(tx) = tx {
+                cals.tx_lpf_i = tx.tx_lpf_i;
+                cals.tx_lpf_q = tx.tx_lpf_q;
 
-        if let Some(f) = rx_f {
-            self.set_frequency(Channel::Rx, f, TuningMode::Fpga)?;
-        }
-        if let Some(f) = tx_f {
-            self.set_frequency(Channel::Tx, f, TuningMode::Fpga)?;
-        }
-        Ok(())
+                if rx.is_none() {
+                    cals.lpf_tuning = tx.lpf_tuning;
+                    cals.rx_lpf_i = tx.rx_lpf_i;
+                    cals.rx_lpf_q = tx.rx_lpf_q;
+                    cals.dc_ref = tx.dc_ref;
+                    cals.rxvga2a_i = tx.rxvga2a_i;
+                    cals.rxvga2a_q = tx.rxvga2a_q;
+                    cals.rxvga2b_i = tx.rxvga2b_i;
+                    cals.rxvga2b_q = tx.rxvga2b_q;
+                }
+            }
+
+            if rx.is_some()
+                && tx.is_none()
+                && let Some(rx) = rx
+            {
+                cals.tx_lpf_i = rx.tx_lpf_i;
+                cals.tx_lpf_q = rx.tx_lpf_q;
+            }
+
+            self.lms().set_dc_cals(cals).await?;
+
+            let rx_f = self.get_frequency(Channel::Rx).await.ok();
+            let tx_f = self.get_frequency(Channel::Tx).await.ok();
+
+            if let Some(f) = rx_f {
+                self.set_frequency(Channel::Rx, f, TuningMode::Fpga).await?;
+            }
+            if let Some(f) = tx_f {
+                self.set_frequency(Channel::Tx, f, TuningMode::Fpga).await?;
+            }
+            Ok(())
+        })
     }
 
     /// Enables or disables the RF front-end and USB streaming module for the
     /// given channel.
     ///
     /// Requires the device to be initialized (see [`initialize`](RfLinkSession::initialize)).
-    pub fn enable_module(&mut self, channel: Channel, enable: bool) -> crate::Result<()> {
-        self.require_initialized()?;
-        self.lms().enable_rffe(channel, enable)?;
-        self.nios.usb_enable_module(channel, enable)
+    pub fn enable_module(
+        &mut self,
+        channel: Channel,
+        enable: bool,
+    ) -> impl MaybeFuture<Output = crate::Result<()>> {
+        Op::new(async move {
+            self.require_initialized().await?;
+            self.lms().enable_rffe(channel, enable).await?;
+            self.nios.usb_enable_module(channel, enable).await
+        })
     }
 
     /// Tears down a stream: cancels pending transfers, disables the module,
     /// drains cancelled transfers, clears halt, and deconfigures format GPIO bits.
-    pub(crate) fn close_stream<Dir: nusb::transfer::EndpointDirection>(
-        &mut self,
+    pub(crate) fn close_stream<'a, Dir: nusb::transfer::EndpointDirection>(
+        &'a mut self,
         channel: Channel,
-        pool: &mut stream::BufferPool<Dir>,
-    ) -> crate::Result<()> {
-        pool.cancel_all();
-        self.enable_module(channel, false)?;
-        pool.drain_cancelled();
-        pool.clear_halt()?;
-        self.perform_format_deconfig()
+        pool: &'a mut stream::BufferPool<Dir>,
+    ) -> impl MaybeFuture<Output = crate::Result<()>> + 'a {
+        Op::new(async move {
+            #[cfg(not(target_arch = "wasm32"))]
+            pool.cancel_all();
+            self.enable_module(channel, false).await?;
+            pool.drain().await;
+            pool.clear_halt().await?;
+            self.perform_format_deconfig().await
+        })
     }
 
     /// Queries whether the currently loaded FPGA came from flash or was loaded
     /// by the host.
-    pub fn get_fpga_source(&mut self) -> crate::Result<FpgaSource> {
-        let result = self
-            .nios
-            .usb_vendor_cmd_int(crate::usb::VendorRequest::QueryFpgaSource)?;
-        FpgaSource::try_from(result as u8)
+    pub fn get_fpga_source(&mut self) -> impl MaybeFuture<Output = crate::Result<FpgaSource>> {
+        Op::new(async move {
+            let result = self
+                .nios
+                .usb_vendor_cmd_int(crate::usb::VendorRequest::QueryFpgaSource)
+                .await?;
+            FpgaSource::try_from(result as u8)
+        })
     }
 
     /// Selects the LNA/PA band on the LMS6002D and updates the config GPIO
@@ -667,25 +815,32 @@ impl RfLinkSession<'_> {
     ///
     /// Low band (< 1.5 GHz) uses LNA1/PA1; high band (>= 1.5 GHz) uses
     /// LNA2/PA2.
-    pub fn band_select(&mut self, channel: Channel, band: Band) -> crate::Result<()> {
-        let band_value = match band {
-            Band::Low => 2,
-            Band::High => 1,
-        };
-        log::trace!("Selecting {band:?} band");
-        self.lms().select_band(channel, band)?;
-        self.config_gpio_modify(|gpio| {
-            let clear_mask = if channel == Channel::Tx {
-                3 << 3
-            } else {
-                3 << 5
+    pub fn band_select(
+        &mut self,
+        channel: Channel,
+        band: Band,
+    ) -> impl MaybeFuture<Output = crate::Result<()>> {
+        Op::new(async move {
+            let band_value = match band {
+                Band::Low => 2,
+                Band::High => 1,
             };
-            let shift = if channel == Channel::Tx {
-                band_value << 3
-            } else {
-                band_value << 5
-            };
-            (gpio & !clear_mask) | shift
+            log::trace!("Selecting {band:?} band");
+            self.lms().select_band(channel, band).await?;
+            self.config_gpio_modify(|gpio| {
+                let clear_mask = if channel == Channel::Tx {
+                    3 << 3
+                } else {
+                    3 << 5
+                };
+                let shift = if channel == Channel::Tx {
+                    band_value << 3
+                } else {
+                    band_value << 5
+                };
+                (gpio & !clear_mask) | shift
+            })
+            .await
         })
     }
 }

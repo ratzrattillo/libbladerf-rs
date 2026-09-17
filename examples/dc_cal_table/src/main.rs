@@ -1,4 +1,5 @@
 use anyhow::Result;
+use libbladerf_rs::MaybeFuture;
 use libbladerf_rs::bladerf1::calibration::{DcCalEntry, DcCalTable};
 use libbladerf_rs::bladerf1::hardware::lms6002d::dc_calibration::{DcCalModule, RxCal};
 use libbladerf_rs::bladerf1::hardware::lms6002d::frequency::get_frequency_min;
@@ -130,7 +131,7 @@ fn rx_samples_sync(stream: &mut RxStream, buf: &mut [i16], num_samples: u64) -> 
     let max_i16 = num_samples as usize * 2;
     let mut total_i16 = 0usize;
     while total_i16 < max_i16 {
-        let buffer = stream.read(Some(Duration::from_secs(2)))?;
+        let buffer = stream.read(Some(Duration::from_secs(2))).wait()?;
         let available_i16 = buffer.len() / 2;
         let copy_i16 = available_i16.min(max_i16 - total_i16);
         for k in 0..copy_i16 {
@@ -154,7 +155,7 @@ fn rx_cal_coarse_means(
     let mean_limit: f32 = 2000.0;
     let corr_limit: i16 = 128;
     loop {
-        rf.set_rx_dc_corr(*corr_value, *corr_value)?;
+        rf.set_rx_dc_corr(*corr_value, *corr_value).wait()?;
         rx_samples_sync(stream, samples, RX_CAL_COUNT)?;
         let (mean_i, mean_q) = sample_mean_f32(samples);
         if (mean_i.abs() > mean_limit || mean_q.abs() > mean_limit)
@@ -218,7 +219,7 @@ fn rx_cal_sweep(
     let mut min_val_q: f32 = 2048.0;
 
     for &val in corr {
-        rf.set_rx_dc_corr(val, val)?;
+        rf.set_rx_dc_corr(val, val).wait()?;
         rx_samples_sync(stream, samples, RX_CAL_COUNT)?;
         let (mean_i, mean_q) = sample_mean_f32(samples);
         let abs_i = mean_i.abs();
@@ -241,9 +242,12 @@ fn rx_cal_dc_off(
     gains: &AgcGainMode,
     samples: &mut [i16],
 ) -> Result<DcPair> {
-    rf.set_gain_stage(GainStage::Lna, (gains.lna_gain as i8).into())?;
-    rf.set_gain_stage(GainStage::RxVga1, (gains.rxvga1).into())?;
-    rf.set_gain_stage(GainStage::RxVga2, (gains.rxvga2).into())?;
+    rf.set_gain_stage(GainStage::Lna, (gains.lna_gain as i8).into())
+        .wait()?;
+    rf.set_gain_stage(GainStage::RxVga1, (gains.rxvga1).into())
+        .wait()?;
+    rf.set_gain_stage(GainStage::RxVga2, (gains.rxvga2).into())
+        .wait()?;
     rx_samples_sync(stream, samples, RX_CAL_COUNT)?;
     let (mean_i, mean_q) = sample_mean_f32(samples);
     Ok(DcPair::new(mean_i.round() as i16, mean_q.round() as i16))
@@ -256,7 +260,7 @@ fn perform_rx_cal(
     params: &mut DcCalParams,
     samples: &mut [i16],
 ) -> Result<()> {
-    rf.rx_cal_update_frequency(cal, params.frequency)?;
+    rf.rx_cal_update_frequency(cal, params.frequency).wait()?;
 
     let (i_est, q_est) = rx_cal_coarse_estimate(rf, stream, samples)?;
     let sweep = init_rx_cal_sweep(i_est, q_est);
@@ -268,20 +272,20 @@ fn perform_rx_cal(
     params.error_i = error_i;
     params.error_q = error_q;
 
-    rf.set_rx_dc_corr(corr_i, corr_q)?;
+    rf.set_rx_dc_corr(corr_i, corr_q).wait()?;
 
-    let saved_lna = rf.get_gain_stage(GainStage::Lna).ok();
-    let saved_vga1 = rf.get_gain_stage(GainStage::RxVga1).ok();
-    let saved_vga2 = rf.get_gain_stage(GainStage::RxVga2).ok();
+    let saved_lna = rf.get_gain_stage(GainStage::Lna).wait().ok();
+    let saved_vga1 = rf.get_gain_stage(GainStage::RxVga1).wait().ok();
+    let saved_vga2 = rf.get_gain_stage(GainStage::RxVga2).wait().ok();
 
     params.min_dc = rx_cal_dc_off(rf, stream, &AGC_GAIN_MIN, samples)?;
     params.mid_dc = rx_cal_dc_off(rf, stream, &AGC_GAIN_MID, samples)?;
     params.max_dc = rx_cal_dc_off(rf, stream, &AGC_GAIN_MAX, samples)?;
 
     if let (Some(lna), Some(vga1), Some(vga2)) = (saved_lna, saved_vga1, saved_vga2) {
-        let _ = rf.set_gain_stage(GainStage::Lna, lna);
-        let _ = rf.set_gain_stage(GainStage::RxVga1, vga1);
-        let _ = rf.set_gain_stage(GainStage::RxVga2, vga2);
+        let _ = rf.set_gain_stage(GainStage::Lna, lna).wait();
+        let _ = rf.set_gain_stage(GainStage::RxVga1, vga1).wait();
+        let _ = rf.set_gain_stage(GainStage::RxVga2, vga2).wait();
     }
 
     Ok(())
@@ -293,23 +297,24 @@ fn dc_calibration_rx(
     f_max: u64,
     f_inc: u64,
 ) -> Result<Vec<DcCalParams>> {
-    let mut backup = rf.get_rx_cal_backup()?;
+    let mut backup = rf.get_rx_cal_backup().wait()?;
 
-    rf.set_sample_rate(Channel::Rx, RX_CAL_RATE as u32)?;
-    rf.set_bandwidth(Channel::Rx, RX_CAL_BW as u32)?;
+    rf.set_sample_rate(Channel::Rx, RX_CAL_RATE as u32).wait()?;
+    rf.set_bandwidth(Channel::Rx, RX_CAL_BW as u32).wait()?;
 
     let buf_size = RX_CAL_COUNT as usize * 4;
     let mut rx_stream = RxStream::builder(rf)
         .buffer_size(buf_size)
         .buffer_count(8)
         .format(SampleFormat::Sc16Q11)
-        .build()?;
+        .build()
+        .wait()?;
 
-    rx_stream.start(rf)?;
+    rx_stream.start(rf).wait()?;
 
     let mut cal = RxCal::new(
         0,
-        rf.get_timestamp(Channel::Rx)? + 20 * RX_CAL_TS_INC,
+        rf.get_timestamp(Channel::Rx).wait()? + 20 * RX_CAL_TS_INC,
         backup.tx_frequency(),
     );
 
@@ -345,21 +350,21 @@ fn dc_calibration_rx(
         freq = (freq + f_inc).min(f_max);
     }
 
-    rx_stream.stop(rf)?;
-    rf.set_rx_cal_backup(&mut backup)?;
+    rx_stream.stop(rf).wait()?;
+    rf.set_rx_cal_backup(&mut backup).wait()?;
     Ok(results)
 }
 
 fn get_tx_cal_backup(rf: &mut RfLinkSession<'_>) -> Result<TxCalBackup> {
     Ok(TxCalBackup {
-        rx_freq: rf.get_frequency(Channel::Rx)?,
-        rx_sample_rate: rf.get_rational_sample_rate(Channel::Rx)?,
-        rx_bandwidth: rf.get_bandwidth(Channel::Rx)?,
-        rx_lna: lna_gain_code_from_db(rf.get_gain_stage(GainStage::Lna)?.db()),
-        rx_vga1: rf.get_gain_stage(GainStage::RxVga1)?.db(),
-        rx_vga2: rf.get_gain_stage(GainStage::RxVga2)?.db(),
-        tx_sample_rate: rf.get_rational_sample_rate(Channel::Tx)?,
-        loopback: rf.get_loopback()?,
+        rx_freq: rf.get_frequency(Channel::Rx).wait()?,
+        rx_sample_rate: rf.get_rational_sample_rate(Channel::Rx).wait()?,
+        rx_bandwidth: rf.get_bandwidth(Channel::Rx).wait()?,
+        rx_lna: lna_gain_code_from_db(rf.get_gain_stage(GainStage::Lna).wait()?.db()),
+        rx_vga1: rf.get_gain_stage(GainStage::RxVga1).wait()?.db(),
+        rx_vga2: rf.get_gain_stage(GainStage::RxVga2).wait()?.db(),
+        tx_sample_rate: rf.get_rational_sample_rate(Channel::Tx).wait()?,
+        loopback: rf.get_loopback().wait()?,
     })
 }
 
@@ -372,27 +377,44 @@ fn set_tx_cal_backup(rf: &mut RfLinkSession<'_>, backup: &TxCalBackup) -> Result
             }
         }
     };
-    try_set(rf.set_loopback(backup.loopback.clone()));
-    try_set(rf.set_frequency(Channel::Rx, backup.rx_freq, TuningMode::Fpga));
+    try_set(rf.set_loopback(backup.loopback.clone()).wait());
+    try_set(
+        rf.set_frequency(Channel::Rx, backup.rx_freq, TuningMode::Fpga)
+            .wait(),
+    );
     let mut rate = backup.rx_sample_rate;
-    let _ = rf.set_rational_sample_rate(Channel::Rx, &mut rate);
-    let _ = rf.set_bandwidth(Channel::Rx, backup.rx_bandwidth);
-    try_set(rf.set_gain_stage(GainStage::Lna, (backup.rx_lna as i8).into()));
-    try_set(rf.set_gain_stage(GainStage::RxVga1, (backup.rx_vga1).into()));
-    try_set(rf.set_gain_stage(GainStage::RxVga2, (backup.rx_vga2).into()));
+    let _ = rf.set_rational_sample_rate(Channel::Rx, &mut rate).wait();
+    let _ = rf.set_bandwidth(Channel::Rx, backup.rx_bandwidth).wait();
+    try_set(
+        rf.set_gain_stage(GainStage::Lna, (backup.rx_lna as i8).into())
+            .wait(),
+    );
+    try_set(
+        rf.set_gain_stage(GainStage::RxVga1, (backup.rx_vga1).into())
+            .wait(),
+    );
+    try_set(
+        rf.set_gain_stage(GainStage::RxVga2, (backup.rx_vga2).into())
+            .wait(),
+    );
     let mut tx_rate = backup.tx_sample_rate;
-    let _ = rf.set_rational_sample_rate(Channel::Tx, &mut tx_rate);
+    let _ = rf
+        .set_rational_sample_rate(Channel::Tx, &mut tx_rate)
+        .wait();
     retval
 }
 
 fn apply_tx_cal_settings(rf: &mut RfLinkSession<'_>) -> Result<()> {
-    rf.set_sample_rate(Channel::Rx, TX_CAL_RATE)?;
-    rf.set_bandwidth(Channel::Rx, TX_CAL_RX_BW)?;
-    rf.set_gain_stage(GainStage::Lna, (LnaGainCode::MaxAllLnas as i8).into())?;
-    rf.set_gain_stage(GainStage::RxVga1, (TX_CAL_RX_VGA1).into())?;
-    rf.set_gain_stage(GainStage::RxVga2, (TX_CAL_RX_VGA2).into())?;
-    rf.set_sample_rate(Channel::Tx, TX_CAL_RATE)?;
-    rf.set_loopback(Loopback::Lna1)?;
+    rf.set_sample_rate(Channel::Rx, TX_CAL_RATE).wait()?;
+    rf.set_bandwidth(Channel::Rx, TX_CAL_RX_BW).wait()?;
+    rf.set_gain_stage(GainStage::Lna, (LnaGainCode::MaxAllLnas as i8).into())
+        .wait()?;
+    rf.set_gain_stage(GainStage::RxVga1, (TX_CAL_RX_VGA1).into())
+        .wait()?;
+    rf.set_gain_stage(GainStage::RxVga2, (TX_CAL_RX_VGA2).into())
+        .wait()?;
+    rf.set_sample_rate(Channel::Tx, TX_CAL_RATE).wait()?;
+    rf.set_loopback(Loopback::Lna1).wait()?;
     Ok(())
 }
 
@@ -401,7 +423,8 @@ fn tx_cal_update_frequency(
     cal: &mut TxCalState,
     freq: u64,
 ) -> Result<()> {
-    rf.set_frequency(Channel::Tx, freq, TuningMode::Fpga)?;
+    rf.set_frequency(Channel::Tx, freq, TuningMode::Fpga)
+        .wait()?;
     let rx_freq = freq - 1_000_000;
     cal.rx_low = rx_freq >= get_frequency_min() as u64;
     let actual_rx_freq = if cal.rx_low {
@@ -409,14 +432,15 @@ fn tx_cal_update_frequency(
     } else {
         freq + 1_000_000
     };
-    rf.set_frequency(Channel::Rx, actual_rx_freq, TuningMode::Fpga)?;
+    rf.set_frequency(Channel::Rx, actual_rx_freq, TuningMode::Fpga)
+        .wait()?;
     let lb = if freq < 1_500_000_000 {
         Loopback::Lna1
     } else {
         Loopback::Lna2
     };
     if cal.loopback != lb {
-        rf.set_loopback(lb.clone())?;
+        rf.set_loopback(lb.clone()).wait()?;
         cal.loopback = lb;
     }
     Ok(())
@@ -472,7 +496,7 @@ fn tx_cal_measure_correction(
     corr: &Correction,
     value: i16,
 ) -> Result<f32> {
-    rf.set_correction(Channel::Tx, corr, value)?;
+    rf.set_correction(Channel::Tx, corr, value).wait()?;
     cal.ts += TX_CAL_TS_INC;
     let mag = tx_cal_avg_magnitude(stream, cal)?;
     log::debug!("  Corr={value:5}, Avg_magnitude={mag:.2}");
@@ -538,7 +562,7 @@ fn tx_cal_get_corr(
         }
     }
 
-    rf.set_correction(Channel::Tx, corr, min_corr)?;
+    rf.set_correction(Channel::Tx, corr, min_corr).wait()?;
     Ok((min_corr, min_mag))
 }
 
@@ -563,8 +587,10 @@ fn perform_tx_cal(
     params.corr_i = corr_i2;
     params.error_i = error_i2;
 
-    rf.set_correction(Channel::Tx, &Correction::DcOffI, corr_i2)?;
-    rf.set_correction(Channel::Tx, &Correction::DcOffQ, corr_q)?;
+    rf.set_correction(Channel::Tx, &Correction::DcOffI, corr_i2)
+        .wait()?;
+    rf.set_correction(Channel::Tx, &Correction::DcOffQ, corr_q)
+        .wait()?;
     Ok(())
 }
 
@@ -582,11 +608,12 @@ fn dc_calibration_tx(
         .buffer_size(buf_size)
         .buffer_count(4)
         .format(SampleFormat::Sc16Q11)
-        .build()?;
+        .build()
+        .wait()?;
 
-    tx_stream.start(rf)?;
+    tx_stream.start(rf).wait()?;
 
-    let mut zero_buf = tx_stream.get_buffer(None)?;
+    let mut zero_buf = tx_stream.get_buffer(None).wait()?;
     zero_buf.clear();
     zero_buf.extend_from_slice(&[0u8; 512]);
     tx_stream.submit(zero_buf, 512)?;
@@ -595,12 +622,13 @@ fn dc_calibration_tx(
         .buffer_size(buf_size)
         .buffer_count(8)
         .format(SampleFormat::Sc16Q11)
-        .build()?;
+        .build()
+        .wait()?;
 
-    rx_stream.start(rf)?;
+    rx_stream.start(rf).wait()?;
 
     let mut cal = TxCalState {
-        ts: rf.get_timestamp(Channel::Rx)? + 20 * TX_CAL_TS_INC,
+        ts: rf.get_timestamp(Channel::Rx).wait()? + 20 * TX_CAL_TS_INC,
         loopback: Loopback::Lna1,
         rx_low: true,
     };
@@ -635,8 +663,8 @@ fn dc_calibration_tx(
         freq = (freq + f_inc).min(f_max);
     }
 
-    rx_stream.stop(rf)?;
-    tx_stream.stop(rf)?;
+    rx_stream.stop(rf).wait()?;
+    tx_stream.stop(rf).wait()?;
     set_tx_cal_backup(rf, &backup)?;
     Ok(results)
 }
@@ -648,12 +676,12 @@ fn calibrate_and_save_table(
     f_max: u64,
     f_inc: u64,
 ) -> Result<DcCalTable> {
-    let mut rf = bladerf.rf_link_session()?;
-    rf.initialize(true)?;
+    let mut rf = bladerf.rf_link_session().wait()?;
+    rf.initialize(true).wait()?;
 
-    rf.calibrate_dc(DcCalModule::LpfTuning)?;
+    rf.calibrate_dc(DcCalModule::LpfTuning).wait()?;
 
-    let dc_cals = rf.get_dc_cals()?;
+    let dc_cals = rf.get_dc_cals().wait()?;
 
     let params = if channel == Channel::Rx {
         dc_calibration_rx(&mut rf, f_min, f_max, f_inc)?
@@ -671,7 +699,7 @@ fn calibrate_and_save_table(
     }
     let table = DcCalTable::new(dc_cals, entries);
 
-    let serial = bladerf.serial()?;
+    let serial = bladerf.serial().wait()?;
     let filename = if channel == Channel::Rx {
         format!("{serial}_dc_rx.json")
     } else {
@@ -690,7 +718,7 @@ fn main() -> Result<()> {
         .filter_module("nusb", log::LevelFilter::Info)
         .init();
 
-    let mut bladerf = BladeRf1::from_first()?;
+    let mut bladerf = BladeRf1::from_first().wait()?;
 
     let channel = match std::env::args().nth(1).as_deref() {
         Some("tx") => Channel::Tx,

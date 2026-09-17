@@ -7,6 +7,8 @@
 
 use crate::bladerf1::board::RfLinkSession;
 use crate::error::Result;
+use crate::maybe_future::Op;
+use nusb::MaybeFuture;
 
 impl RfLinkSession<'_> {
     /// Writes a 16-bit trim value to the DAC161S055 to adjust the VCTCXO frequency.
@@ -16,9 +18,11 @@ impl RfLinkSession<'_> {
     /// voltage and 0xFFFF produces the maximum.
     ///
     /// Returns `Error::BoardState` if the board is not initialized.
-    pub fn set_dac_trim(&mut self, value: u16) -> Result<()> {
-        self.require_initialized()?;
-        self.dac().write(value)
+    pub fn set_dac_trim(&mut self, value: u16) -> impl MaybeFuture<Output = Result<()>> {
+        Op::new(async move {
+            self.require_initialized().await?;
+            self.dac().write(value).await
+        })
     }
 
     /// Returns the current 16-bit DAC trim value.
@@ -27,8 +31,10 @@ impl RfLinkSession<'_> {
     /// tuning setting.
     ///
     /// Returns `Error::BoardState` if the board is not initialized.
-    pub fn get_dac_trim(&mut self) -> Result<u16> {
-        self.require_initialized()?;
-        self.dac().read()
+    pub fn get_dac_trim(&mut self) -> impl MaybeFuture<Output = Result<u16>> {
+        Op::new(async move {
+            self.require_initialized().await?;
+            self.dac().read().await
+        })
     }
 }

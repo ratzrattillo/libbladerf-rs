@@ -1,4 +1,5 @@
 use super::common::*;
+use libbladerf_rs::MaybeFuture;
 use libbladerf_rs::bladerf1::TuningMode;
 use libbladerf_rs::bladerf1::{ExpansionBoard, Xb200Path};
 use libbladerf_rs::range::RangeItem;
@@ -9,13 +10,13 @@ fn frequency_tuning_with_xb200() -> Result<()> {
     logging_init("bladerf1_xb200_frequency");
 
     let mut sdr = sdr();
-    let mut rf = sdr.rf_link_session()?;
-    if rf.expansion_get_attached()? != ExpansionBoard::Xb200 {
-        rf.expansion_attach(ExpansionBoard::Xb200)?;
+    let mut rf = sdr.rf_link_session().wait()?;
+    if rf.expansion_get_attached().wait()? != ExpansionBoard::Xb200 {
+        rf.expansion_attach(ExpansionBoard::Xb200).wait()?;
     }
 
     let accepted_deviation = 1;
-    let supported_frequencies = rf.get_frequency_range()?;
+    let supported_frequencies = rf.get_frequency_range().wait()?;
 
     log::trace!("supported_frequencies (XB200): {supported_frequencies:?}");
     for range_item in supported_frequencies.iter() {
@@ -30,17 +31,19 @@ fn frequency_tuning_with_xb200() -> Result<()> {
 
         while desired <= max.round() as u64 {
             for channel in [Channel::Rx, Channel::Tx] {
-                let current = rf.get_frequency(channel)?;
+                let current = rf.get_frequency(channel).wait()?;
                 log::trace!("Channel {channel:?} Frequency (CURRENT):\t{current}");
                 log::trace!("Channel {channel:?} Frequency (DESIRED):\t{desired}");
-                rf.set_frequency(channel, desired, TuningMode::Fpga)?;
-                let new = rf.get_frequency(channel)?;
+                rf.set_frequency(channel, desired, TuningMode::Fpga)
+                    .wait()?;
+                let new = rf.get_frequency(channel).wait()?;
                 log::trace!("Channel {channel:?} Frequency (NEW):\t{new}");
 
                 let tolerable_deviation = (new as i64 - desired as i64).abs();
                 assert!(tolerable_deviation <= accepted_deviation);
 
-                rf.set_frequency(channel, current, TuningMode::Fpga)?;
+                rf.set_frequency(channel, current, TuningMode::Fpga)
+                    .wait()?;
             }
 
             desired += offset;
@@ -56,12 +59,12 @@ fn frequency_range_includes_zero_with_xb200() -> Result<()> {
     logging_init("bladerf1_xb200_frequency");
 
     let mut sdr = sdr();
-    let mut rf = sdr.rf_link_session()?;
-    if rf.expansion_get_attached()? != ExpansionBoard::Xb200 {
-        rf.expansion_attach(ExpansionBoard::Xb200)?;
+    let mut rf = sdr.rf_link_session().wait()?;
+    if rf.expansion_get_attached().wait()? != ExpansionBoard::Xb200 {
+        rf.expansion_attach(ExpansionBoard::Xb200).wait()?;
     }
 
-    let range = rf.get_frequency_range()?;
+    let range = rf.get_frequency_range().wait()?;
     log::trace!("Frequency range with XB200: {range:?}");
 
     let min_freq = range
@@ -84,9 +87,9 @@ fn frequency_mix_path_below_lms_min() -> Result<()> {
     logging_init("bladerf1_xb200_frequency");
 
     let mut sdr = sdr();
-    let mut rf = sdr.rf_link_session()?;
-    if rf.expansion_get_attached()? != ExpansionBoard::Xb200 {
-        rf.expansion_attach(ExpansionBoard::Xb200)?;
+    let mut rf = sdr.rf_link_session().wait()?;
+    if rf.expansion_get_attached().wait()? != ExpansionBoard::Xb200 {
+        rf.expansion_attach(ExpansionBoard::Xb200).wait()?;
     }
 
     let lms_min =
@@ -94,12 +97,13 @@ fn frequency_mix_path_below_lms_min() -> Result<()> {
     let test_freq = lms_min / 2;
 
     for channel in [Channel::Rx, Channel::Tx] {
-        let original_freq = rf.get_frequency(channel)?;
-        let original_path = rf.xb200_get_path(channel)?;
+        let original_freq = rf.get_frequency(channel).wait()?;
+        let original_path = rf.xb200_get_path(channel).wait()?;
 
-        rf.set_frequency(channel, test_freq, TuningMode::Fpga)?;
+        rf.set_frequency(channel, test_freq, TuningMode::Fpga)
+            .wait()?;
 
-        let path = rf.xb200_get_path(channel)?;
+        let path = rf.xb200_get_path(channel).wait()?;
         log::trace!("Channel {channel:?} at {test_freq}Hz (< LMS min {lms_min}): path = {path:?}");
         assert_eq!(
             path,
@@ -107,12 +111,13 @@ fn frequency_mix_path_below_lms_min() -> Result<()> {
             "Frequencies below LMS min should use Mix path"
         );
 
-        let actual_freq = rf.get_frequency(channel)?;
+        let actual_freq = rf.get_frequency(channel).wait()?;
         let deviation = (actual_freq as i64 - test_freq as i64).abs();
         assert!(deviation <= 1, "Frequency deviation too large: {deviation}");
 
-        rf.xb200_set_path(channel, original_path)?;
-        rf.set_frequency(channel, original_freq, TuningMode::Fpga)?;
+        rf.xb200_set_path(channel, original_path).wait()?;
+        rf.set_frequency(channel, original_freq, TuningMode::Fpga)
+            .wait()?;
     }
 
     Ok(())
@@ -123,9 +128,9 @@ fn frequency_bypass_path_above_lms_min() -> Result<()> {
     logging_init("bladerf1_xb200_frequency");
 
     let mut sdr = sdr();
-    let mut rf = sdr.rf_link_session()?;
-    if rf.expansion_get_attached()? != ExpansionBoard::Xb200 {
-        rf.expansion_attach(ExpansionBoard::Xb200)?;
+    let mut rf = sdr.rf_link_session().wait()?;
+    if rf.expansion_get_attached().wait()? != ExpansionBoard::Xb200 {
+        rf.expansion_attach(ExpansionBoard::Xb200).wait()?;
     }
 
     let lms_min =
@@ -133,12 +138,13 @@ fn frequency_bypass_path_above_lms_min() -> Result<()> {
     let test_freq = lms_min + 100_000;
 
     for channel in [Channel::Rx, Channel::Tx] {
-        let original_freq = rf.get_frequency(channel)?;
-        let original_path = rf.xb200_get_path(channel)?;
+        let original_freq = rf.get_frequency(channel).wait()?;
+        let original_path = rf.xb200_get_path(channel).wait()?;
 
-        rf.set_frequency(channel, test_freq, TuningMode::Fpga)?;
+        rf.set_frequency(channel, test_freq, TuningMode::Fpga)
+            .wait()?;
 
-        let path = rf.xb200_get_path(channel)?;
+        let path = rf.xb200_get_path(channel).wait()?;
         log::trace!("Channel {channel:?} at {test_freq}Hz (>= LMS min {lms_min}): path = {path:?}");
         assert_eq!(
             path,
@@ -146,12 +152,13 @@ fn frequency_bypass_path_above_lms_min() -> Result<()> {
             "Frequencies at or above LMS min should use Bypass path"
         );
 
-        let actual_freq = rf.get_frequency(channel)?;
+        let actual_freq = rf.get_frequency(channel).wait()?;
         let deviation = (actual_freq as i64 - test_freq as i64).abs();
         assert!(deviation <= 1, "Frequency deviation too large: {deviation}");
 
-        rf.xb200_set_path(channel, original_path)?;
-        rf.set_frequency(channel, original_freq, TuningMode::Fpga)?;
+        rf.xb200_set_path(channel, original_path).wait()?;
+        rf.set_frequency(channel, original_freq, TuningMode::Fpga)
+            .wait()?;
     }
 
     Ok(())

@@ -11,6 +11,8 @@ use crate::bladerf1::hardware::spi_flash::{
     BLADERF_FLASH_ERASE_BLOCK_SIZE, BLADERF_FLASH_PAGE_SIZE,
 };
 use crate::error::{Error, Result};
+use crate::maybe_future::Op;
+use nusb::MaybeFuture;
 
 const MAX_RETRIES: u8 = 3;
 
@@ -26,65 +28,73 @@ impl FlashSession<'_> {
     /// Returns `Error::Argument` if the page or sector range exceeds flash
     /// capacity. Returns `Error::FlashVerificationFailed` if retries are
     /// exhausted.
-    pub fn erase_write_verify(&mut self, page_start: u32, data: &[u8]) -> Result<()> {
-        let total_pages = self.total_pages();
-        let total_sectors = self.total_sectors();
-        let pages_per_sector = (BLADERF_FLASH_ERASE_BLOCK_SIZE / BLADERF_FLASH_PAGE_SIZE) as u32;
+    pub fn erase_write_verify(
+        &mut self,
+        page_start: u32,
+        data: &[u8],
+    ) -> impl MaybeFuture<Output = Result<()>> {
+        Op::new(async move {
+            let total_pages = self.total_pages();
+            let total_sectors = self.total_sectors();
+            let pages_per_sector =
+                (BLADERF_FLASH_ERASE_BLOCK_SIZE / BLADERF_FLASH_PAGE_SIZE) as u32;
 
-        if page_start >= total_pages {
-            return Err(Error::Argument(format!(
-                "flash page {page_start} out of range (0..{total_pages})"
-            )));
-        }
-        let page_count = data.len() / BLADERF_FLASH_PAGE_SIZE;
-        if page_start + page_count as u32 > total_pages {
-            return Err(Error::Argument(format!(
-                "flash page range {page_start}..{} out of range (0..{total_pages})",
-                page_start + page_count as u32,
-            )));
-        }
-        let sector_start = page_start / pages_per_sector;
-        let sector_count = (page_count as u32).div_ceil(pages_per_sector);
-        if sector_start + sector_count > total_sectors {
-            return Err(Error::Argument(format!(
-                "flash sector range {sector_start}..{} out of range (0..{total_sectors})",
-                sector_start + sector_count,
-            )));
-        }
+            if page_start >= total_pages {
+                return Err(Error::Argument(format!(
+                    "flash page {page_start} out of range (0..{total_pages})"
+                )));
+            }
+            let page_count = data.len() / BLADERF_FLASH_PAGE_SIZE;
+            if page_start + page_count as u32 > total_pages {
+                return Err(Error::Argument(format!(
+                    "flash page range {page_start}..{} out of range (0..{total_pages})",
+                    page_start + page_count as u32,
+                )));
+            }
+            let sector_start = page_start / pages_per_sector;
+            let sector_count = (page_count as u32).div_ceil(pages_per_sector);
+            if sector_start + sector_count > total_sectors {
+                return Err(Error::Argument(format!(
+                    "flash sector range {sector_start}..{} out of range (0..{total_sectors})",
+                    sector_start + sector_count,
+                )));
+            }
 
-        for (sec_idx, sector_data) in data.chunks(BLADERF_FLASH_ERASE_BLOCK_SIZE).enumerate() {
-            let sector = sector_start + sec_idx as u32;
+            for (sec_idx, sector_data) in data.chunks(BLADERF_FLASH_ERASE_BLOCK_SIZE).enumerate() {
+                let sector = sector_start + sec_idx as u32;
 
-            for attempt in 0..=MAX_RETRIES {
-                self.erase_sector(sector)?;
+                for attempt in 0..=MAX_RETRIES {
+                    self.erase_sector(sector).await?;
 
-                let start_page = sector * pages_per_sector;
-                for (page_idx, page_data) in sector_data
-                    .chunks_exact(BLADERF_FLASH_PAGE_SIZE)
-                    .enumerate()
-                {
-                    self.write_page(start_page + page_idx as u32, page_data)?;
-                }
-
-                match self.verify_pages(start_page, sector_data) {
-                    Ok(()) => break,
-                    Err(e) if attempt < MAX_RETRIES => {
-                        log::warn!(
-                            "Verification failed at sector {sector}, retry {}/{}: {e:#}",
-                            attempt + 1,
-                            MAX_RETRIES,
-                        );
+                    let start_page = sector * pages_per_sector;
+                    for (page_idx, page_data) in sector_data
+                        .chunks_exact(BLADERF_FLASH_PAGE_SIZE)
+                        .enumerate()
+                    {
+                        self.write_page(start_page + page_idx as u32, page_data)
+                            .await?;
                     }
-                    Err(_) => {
-                        return Err(Error::FlashVerificationFailed {
-                            byte_offset: sec_idx * BLADERF_FLASH_ERASE_BLOCK_SIZE,
-                            expected: 0x00,
-                            actual: 0xFF,
-                        });
+
+                    match self.verify_pages(start_page, sector_data).await {
+                        Ok(()) => break,
+                        Err(e) if attempt < MAX_RETRIES => {
+                            log::warn!(
+                                "Verification failed at sector {sector}, retry {}/{}: {e:#}",
+                                attempt + 1,
+                                MAX_RETRIES,
+                            );
+                        }
+                        Err(_) => {
+                            return Err(Error::FlashVerificationFailed {
+                                byte_offset: sec_idx * BLADERF_FLASH_ERASE_BLOCK_SIZE,
+                                expected: 0x00,
+                                actual: 0xFF,
+                            });
+                        }
                     }
                 }
             }
-        }
-        Ok(())
+            Ok(())
+        })
     }
 }

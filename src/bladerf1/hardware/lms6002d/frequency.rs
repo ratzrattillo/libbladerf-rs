@@ -16,7 +16,8 @@ use crate::bladerf1::hardware::lms6002d::{
 };
 use crate::channel::Channel;
 use crate::error::Error;
-use std::thread::sleep;
+use crate::maybe_future::Op;
+use nusb::MaybeFuture;
 use std::time::Duration;
 /// Minimum frequency with XB-200 expansion board enabled.
 pub const BLADERF_FREQUENCY_MIN_XB200: u32 = 0;
@@ -306,182 +307,224 @@ pub const fn get_frequency_max() -> u32 {
 
 use super::Lms6002d;
 impl<'a> Lms6002d<'a> {
-    pub(crate) fn config_charge_pumps(&mut self, channel: Channel) -> crate::Result<()> {
-        let base: u8 = if channel == Channel::Rx { 0x20 } else { 0x10 };
-        let mut data = self.read(base + 6)?;
-        data &= !0x1f;
-        data |= 0x0c;
-        self.write(base + 6, data)?;
-        let mut data = self.read(base + 7)?;
-        data &= !0x1f;
-        data |= 0x03;
-        self.write(base + 7, data)?;
-        let mut data = self.read(base + 8)?;
-        data &= !0x1f;
-        data |= 0x03;
-        self.write(base + 8, data)
+    pub(crate) fn config_charge_pumps(
+        &mut self,
+        channel: Channel,
+    ) -> impl MaybeFuture<Output = crate::Result<()>> {
+        Op::new(async move {
+            let base: u8 = if channel == Channel::Rx { 0x20 } else { 0x10 };
+            let mut data = self.read(base + 6).await?;
+            data &= !0x1f;
+            data |= 0x0c;
+            self.write(base + 6, data).await?;
+            let mut data = self.read(base + 7).await?;
+            data &= !0x1f;
+            data |= 0x03;
+            self.write(base + 7, data).await?;
+            let mut data = self.read(base + 8).await?;
+            data &= !0x1f;
+            data |= 0x03;
+            self.write(base + 8, data).await
+        })
     }
 
-    fn write_vcocap(&mut self, base: u8, vcocap: u8, vcocap_reg_state: u8) -> crate::Result<()> {
-        if vcocap > VCOCAP_MAX_VALUE {
-            return Err(Error::Argument("vcocap exceeds maximum value".into()));
-        }
-        log::trace!("Writing VCOCAP={vcocap}");
-        self.write(base + 9, vcocap | vcocap_reg_state)
+    fn write_vcocap(
+        &mut self,
+        base: u8,
+        vcocap: u8,
+        vcocap_reg_state: u8,
+    ) -> impl MaybeFuture<Output = crate::Result<()>> {
+        Op::new(async move {
+            if vcocap > VCOCAP_MAX_VALUE {
+                return Err(Error::Argument("vcocap exceeds maximum value".into()));
+            }
+            log::trace!("Writing VCOCAP={vcocap}");
+            self.write(base + 9, vcocap | vcocap_reg_state).await
+        })
     }
 
-    fn get_vtune(&mut self, base: u8, delay: u8) -> crate::Result<VcoState> {
-        if delay != 0 {
-            sleep(Duration::from_micros(delay as u64));
-        }
-        let vtune = self.read(base + 10)?;
-        VcoState::try_from(vtune >> 6)
+    fn get_vtune(
+        &mut self,
+        base: u8,
+        delay: u8,
+    ) -> impl MaybeFuture<Output = crate::Result<VcoState>> {
+        Op::new(async move {
+            if delay != 0 {
+                crate::maybe_future::sleep(Duration::from_micros(delay as u64)).await;
+            }
+            let vtune = self.read(base + 10).await?;
+            VcoState::try_from(vtune >> 6)
+        })
     }
 
     fn set_precalculated_frequency(
         &mut self,
         channel: Channel,
         f: &mut LmsFreq,
-    ) -> crate::Result<()> {
-        let base: u8 = if channel == Channel::Rx { 0x20 } else { 0x10 };
-        let pll_base: u8 = base | 0x80;
-        f.vcocap_result = 0xff;
-        let mut data = self.read(0x09)?;
-        data |= 0x05;
-        self.write(0x09, data)?;
-        let vcocap_reg_state = match self.read(base + 9) {
-            Ok(v) => v,
-            Err(e) => {
-                self.turn_off_dsms()?;
+    ) -> impl MaybeFuture<Output = crate::Result<()>> {
+        Op::new(async move {
+            let base: u8 = if channel == Channel::Rx { 0x20 } else { 0x10 };
+            let pll_base: u8 = base | 0x80;
+            f.vcocap_result = 0xff;
+            let mut data = self.read(0x09).await?;
+            data |= 0x05;
+            self.write(0x09, data).await?;
+            let vcocap_reg_state = match self.read(base + 9).await {
+                Ok(v) => v,
+                Err(e) => {
+                    self.turn_off_dsms().await?;
+                    log::error!(
+                        "Failed to read vcocap regstate! Device requires re-initialization (call initialize()) to restore DSM state."
+                    );
+                    return Err(e);
+                }
+            };
+            let vcocap_reg_state = vcocap_reg_state & !0x3f;
+            if let Err(e) = self.write_vcocap(base, f.vcocap, vcocap_reg_state).await {
+                self.turn_off_dsms().await?;
                 log::error!(
-                    "Failed to read vcocap regstate! Device requires re-initialization (call initialize()) to restore DSM state."
+                    "Failed to write vcocap_reg_state! Device requires re-initialization (call initialize()) to restore DSM state."
                 );
                 return Err(e);
             }
-        };
-        let vcocap_reg_state = vcocap_reg_state & !0x3f;
-        if let Err(e) = self.write_vcocap(base, f.vcocap, vcocap_reg_state) {
-            self.turn_off_dsms()?;
-            log::error!(
-                "Failed to write vcocap_reg_state! Device requires re-initialization (call initialize()) to restore DSM state."
-            );
-            return Err(e);
-        }
-        let low_band = (f.flags & LMS_FREQ_FLAGS_LOW_BAND) != 0;
-        let lben_lbrfen = self.read(0x08)?;
-        let loopbben = self.read(0x46)?;
-        let lb_enabled = matches!(lben_lbrfen & 0x7, 1..=3)
-            || ((lben_lbrfen & 0x70) != 0 && (loopbben & 0x0c) != 0);
-        if let Err(e) = self.write_pll_config(channel, f.freqsel, low_band, lb_enabled) {
-            self.turn_off_dsms()?;
-            log::error!(
-                "Failed to write pll_config! Device requires re-initialization (call initialize()) to restore DSM state."
-            );
-            return Err(e);
-        }
-        let mut freq_data = [0u8; 4];
-        freq_data[0] = (f.nint >> 1) as u8;
-        freq_data[1] = (((f.nint & 1) << 7) as u32 | ((f.nfrac >> 16) & 0x7f)) as u8;
-        freq_data[2] = ((f.nfrac >> 8) & 0xff) as u8;
-        freq_data[3] = (f.nfrac & 0xff) as u8;
-        for (idx, value) in freq_data.iter().enumerate() {
-            if let Err(e) = self.write(pll_base + idx as u8, *value) {
-                self.turn_off_dsms()?;
+            let low_band = (f.flags & LMS_FREQ_FLAGS_LOW_BAND) != 0;
+            let lben_lbrfen = self.read(0x08).await?;
+            let loopbben = self.read(0x46).await?;
+            let lb_enabled = matches!(lben_lbrfen & 0x7, 1..=3)
+                || ((lben_lbrfen & 0x70) != 0 && (loopbben & 0x0c) != 0);
+            if let Err(e) = self
+                .write_pll_config(channel, f.freqsel, low_band, lb_enabled)
+                .await
+            {
+                self.turn_off_dsms().await?;
                 log::error!(
-                    "Failed to write pll {}! Device requires re-initialization (call initialize()) to restore DSM state.",
-                    pll_base + idx as u8
+                    "Failed to write pll_config! Device requires re-initialization (call initialize()) to restore DSM state."
                 );
                 return Err(e);
             }
-        }
-        if (f.flags & LMS_FREQ_FLAGS_FORCE_VCOCAP) != 0 {
-            f.vcocap_result = f.vcocap;
-        } else {
-            log::trace!("Tuning VCOCAP...");
-            f.vcocap_result = self.tune_vcocap(f.vcocap, base, vcocap_reg_state)?;
-        }
-        Ok(())
+            let mut freq_data = [0u8; 4];
+            freq_data[0] = (f.nint >> 1) as u8;
+            freq_data[1] = (((f.nint & 1) << 7) as u32 | ((f.nfrac >> 16) & 0x7f)) as u8;
+            freq_data[2] = ((f.nfrac >> 8) & 0xff) as u8;
+            freq_data[3] = (f.nfrac & 0xff) as u8;
+            for (idx, value) in freq_data.iter().enumerate() {
+                if let Err(e) = self.write(pll_base + idx as u8, *value).await {
+                    self.turn_off_dsms().await?;
+                    log::error!(
+                        "Failed to write pll {}! Device requires re-initialization (call initialize()) to restore DSM state.",
+                        pll_base + idx as u8
+                    );
+                    return Err(e);
+                }
+            }
+            if (f.flags & LMS_FREQ_FLAGS_FORCE_VCOCAP) != 0 {
+                f.vcocap_result = f.vcocap;
+            } else {
+                log::trace!("Tuning VCOCAP...");
+                f.vcocap_result = self.tune_vcocap(f.vcocap, base, vcocap_reg_state).await?;
+            }
+            Ok(())
+        })
     }
 
-    pub(crate) fn set_frequency(&mut self, channel: Channel, freq: u64) -> crate::Result<()> {
-        let mut f = freq.try_into()?;
-        log::trace!("{f:?}");
-        self.set_precalculated_frequency(channel, &mut f)
+    pub(crate) fn set_frequency(
+        &mut self,
+        channel: Channel,
+        freq: u64,
+    ) -> impl MaybeFuture<Output = crate::Result<()>> {
+        Op::new(async move {
+            let mut f = freq.try_into()?;
+            log::trace!("{f:?}");
+            self.set_precalculated_frequency(channel, &mut f).await
+        })
     }
 
-    pub(crate) fn get_frequency(&mut self, channel: Channel) -> crate::Result<LmsFreq> {
-        let mut f = LmsFreq::default();
-        let base: u8 = if channel == Channel::Rx { 0x20 } else { 0x10 };
-        let data = self.read(base)?;
-        f.nint = (data as u16) << 1;
-        let data = self.read(base + 1)?;
-        f.nint |= ((data & 0x80) >> 7) as u16;
-        f.nfrac = (data as u32 & 0x7f) << 16;
-        let data = self.read(base + 2)?;
-        f.nfrac |= (data as u32) << 8;
-        let data = self.read(base + 3)?;
-        f.nfrac |= data as u32;
-        let data = self.read(base + 5)?;
-        f.freqsel = data >> 2;
-        let frange = f.freqsel & 7;
-        if frange < 4 {
-            return Err(crate::error::Error::BoardState(
-                "PLL not configured (invalid FRANGE) — is the board initialized?",
-            ));
-        }
-        f.x = 1 << (frange - 3);
-        let data = self.read(base + 9)?;
-        f.vcocap = data & 0x3f;
-        Ok(f)
+    pub(crate) fn get_frequency(
+        &mut self,
+        channel: Channel,
+    ) -> impl MaybeFuture<Output = crate::Result<LmsFreq>> {
+        Op::new(async move {
+            let mut f = LmsFreq::default();
+            let base: u8 = if channel == Channel::Rx { 0x20 } else { 0x10 };
+            let data = self.read(base).await?;
+            f.nint = (data as u16) << 1;
+            let data = self.read(base + 1).await?;
+            f.nint |= ((data & 0x80) >> 7) as u16;
+            f.nfrac = (data as u32 & 0x7f) << 16;
+            let data = self.read(base + 2).await?;
+            f.nfrac |= (data as u32) << 8;
+            let data = self.read(base + 3).await?;
+            f.nfrac |= data as u32;
+            let data = self.read(base + 5).await?;
+            f.freqsel = data >> 2;
+            let frange = f.freqsel & 7;
+            if frange < 4 {
+                return Err(crate::error::Error::BoardState(
+                    "PLL not configured (invalid FRANGE) — is the board initialized?",
+                ));
+            }
+            f.x = 1 << (frange - 3);
+            let data = self.read(base + 9).await?;
+            f.vcocap = data & 0x3f;
+            Ok(f)
+        })
     }
 
     #[allow(dead_code)]
-    pub(crate) fn peakdetect_enable(&mut self, enable: bool) -> crate::Result<()> {
-        let mut data = self.read(0x44)?;
-        if enable {
-            data &= !(1 << 0);
-        } else {
-            data |= 1;
-        }
-        self.write(0x44, data)
+    pub(crate) fn peakdetect_enable(
+        &mut self,
+        enable: bool,
+    ) -> impl MaybeFuture<Output = crate::Result<()>> {
+        Op::new(async move {
+            let mut data = self.read(0x44).await?;
+            if enable {
+                data &= !(1 << 0);
+            } else {
+                data |= 1;
+            }
+            self.write(0x44, data).await
+        })
     }
 
     pub(crate) fn get_quick_tune(
         &mut self,
         channel: Channel,
         xb200_enabled: bool,
-    ) -> crate::Result<QuickTune> {
-        let f = &self.get_frequency(channel)?;
-        let xb_gpio = if xb200_enabled {
-            let val = self.read_expansion_gpio()?;
-            let mut gpio = LMS_FREQ_XB_200_ENABLE;
-            match channel {
-                Channel::Rx => {
-                    gpio |= LMS_FREQ_XB_200_MODULE_RX;
-                    gpio |= (((val & 0x30) >> 4) << LMS_FREQ_XB_200_PATH_SHIFT) as u8;
-                    gpio |= (((val & 0x30000000) >> 28) << LMS_FREQ_XB_200_FILTER_SW_SHIFT) as u8;
+    ) -> impl MaybeFuture<Output = crate::Result<QuickTune>> {
+        Op::new(async move {
+            let f = &self.get_frequency(channel).await?;
+            let xb_gpio = if xb200_enabled {
+                let val = self.read_expansion_gpio().await?;
+                let mut gpio = LMS_FREQ_XB_200_ENABLE;
+                match channel {
+                    Channel::Rx => {
+                        gpio |= LMS_FREQ_XB_200_MODULE_RX;
+                        gpio |= (((val & 0x30) >> 4) << LMS_FREQ_XB_200_PATH_SHIFT) as u8;
+                        gpio |=
+                            (((val & 0x30000000) >> 28) << LMS_FREQ_XB_200_FILTER_SW_SHIFT) as u8;
+                    }
+                    Channel::Tx => {
+                        gpio |= (((val & 0x0C) >> 2) << LMS_FREQ_XB_200_FILTER_SW_SHIFT) as u8;
+                        gpio |= (((val & 0x0C000000) >> 26) << LMS_FREQ_XB_200_PATH_SHIFT) as u8;
+                    }
                 }
-                Channel::Tx => {
-                    gpio |= (((val & 0x0C) >> 2) << LMS_FREQ_XB_200_FILTER_SW_SHIFT) as u8;
-                    gpio |= (((val & 0x0C000000) >> 26) << LMS_FREQ_XB_200_PATH_SHIFT) as u8;
-                }
+                gpio
+            } else {
+                0
+            };
+            let mut flags = LMS_FREQ_FLAGS_FORCE_VCOCAP;
+            let f_hz: u64 = f.into();
+            if Band::from(f_hz) == Band::Low {
+                flags |= LMS_FREQ_FLAGS_LOW_BAND;
             }
-            gpio
-        } else {
-            0
-        };
-        let mut flags = LMS_FREQ_FLAGS_FORCE_VCOCAP;
-        let f_hz: u64 = f.into();
-        if Band::from(f_hz) == Band::Low {
-            flags |= LMS_FREQ_FLAGS_LOW_BAND;
-        }
-        Ok(QuickTune {
-            freqsel: f.freqsel,
-            vcocap: f.vcocap,
-            nint: f.nint,
-            nfrac: f.nfrac,
-            flags,
-            xb_gpio,
+            Ok(QuickTune {
+                freqsel: f.freqsel,
+                vcocap: f.vcocap,
+                nint: f.nint,
+                nfrac: f.nfrac,
+                flags,
+                xb_gpio,
+            })
         })
     }
 
@@ -491,16 +534,18 @@ impl<'a> Lms6002d<'a> {
         freqsel: u8,
         low_band: bool,
         lb_enabled: bool,
-    ) -> crate::Result<()> {
-        let addr = if channel == Channel::Tx { 0x15 } else { 0x25 };
-        let mut regval = self.read(addr)?;
-        if !lb_enabled {
-            let selout = if low_band { 1 } else { 2 };
-            regval = (freqsel << 2) | selout;
-        } else {
-            regval = (regval & !0xfc) | (freqsel << 2);
-        }
-        self.write(addr, regval)
+    ) -> impl MaybeFuture<Output = crate::Result<()>> {
+        Op::new(async move {
+            let addr = if channel == Channel::Tx { 0x15 } else { 0x25 };
+            let mut regval = self.read(addr).await?;
+            if !lb_enabled {
+                let selout = if low_band { 1 } else { 2 };
+                regval = (freqsel << 2) | selout;
+            } else {
+                regval = (regval & !0xfc) | (freqsel << 2);
+            }
+            self.write(addr, regval).await
+        })
     }
 
     fn vtune_high_to_norm(
@@ -508,24 +553,26 @@ impl<'a> Lms6002d<'a> {
         base: u8,
         mut vcocap: u8,
         vcocap_reg_state: u8,
-    ) -> crate::Result<u8> {
-        for _ in 0..VTUNE_MAX_ITERATIONS {
-            if vcocap >= VCOCAP_MAX_VALUE {
-                log::trace!("vtune_high_to_norm: VCOCAP hit max value.");
-                return Ok(VCOCAP_MAX_VALUE);
+    ) -> impl MaybeFuture<Output = crate::Result<u8>> {
+        Op::new(async move {
+            for _ in 0..VTUNE_MAX_ITERATIONS {
+                if vcocap >= VCOCAP_MAX_VALUE {
+                    log::trace!("vtune_high_to_norm: VCOCAP hit max value.");
+                    return Ok(VCOCAP_MAX_VALUE);
+                }
+                vcocap += 1;
+                self.write_vcocap(base, vcocap, vcocap_reg_state).await?;
+                let vtune = self.get_vtune(base, VTUNE_DELAY_SMALL).await?;
+                if vtune == VcoState::Norm {
+                    log::trace!("VTUNE NORM @ VCOCAP={vcocap}");
+                    return Ok(vcocap - 1);
+                }
             }
-            vcocap += 1;
-            self.write_vcocap(base, vcocap, vcocap_reg_state)?;
-            let vtune = self.get_vtune(base, VTUNE_DELAY_SMALL)?;
-            if vtune == VcoState::Norm {
-                log::trace!("VTUNE NORM @ VCOCAP={vcocap}");
-                return Ok(vcocap - 1);
-            }
-        }
-        log::error!("VTUNE High->Norm loop failed to converge.");
-        Err(Error::CalibrationFailed(
-            "VTUNE High->Norm loop failed to converge",
-        ))
+            log::error!("VTUNE High->Norm loop failed to converge.");
+            Err(Error::CalibrationFailed(
+                "VTUNE High->Norm loop failed to converge",
+            ))
+        })
     }
 
     fn vtune_norm_to_high(
@@ -533,26 +580,28 @@ impl<'a> Lms6002d<'a> {
         base: u8,
         mut vcocap: u8,
         vcocap_reg_state: u8,
-    ) -> crate::Result<u8> {
-        for _ in 0..VTUNE_MAX_ITERATIONS {
-            log::trace!("base: {base}, vcocap: {vcocap}, vcocap_reg_state: {vcocap_reg_state}");
-            if vcocap == 0 {
-                log::debug!("vtune_norm_to_high: VCOCAP hit min value.");
-                return Ok(0);
+    ) -> impl MaybeFuture<Output = crate::Result<u8>> {
+        Op::new(async move {
+            for _ in 0..VTUNE_MAX_ITERATIONS {
+                log::trace!("base: {base}, vcocap: {vcocap}, vcocap_reg_state: {vcocap_reg_state}");
+                if vcocap == 0 {
+                    log::debug!("vtune_norm_to_high: VCOCAP hit min value.");
+                    return Ok(0);
+                }
+                vcocap -= 1;
+                self.write_vcocap(base, vcocap, vcocap_reg_state).await?;
+                let vtune = self.get_vtune(base, VTUNE_DELAY_SMALL).await?;
+                log::trace!("vtune: {vtune:?}");
+                if vtune == VcoState::High {
+                    log::debug!("VTUNE HIGH @ VCOCAP={vcocap}");
+                    return Ok(vcocap);
+                }
             }
-            vcocap -= 1;
-            self.write_vcocap(base, vcocap, vcocap_reg_state)?;
-            let vtune = self.get_vtune(base, VTUNE_DELAY_SMALL)?;
-            log::trace!("vtune: {vtune:?}");
-            if vtune == VcoState::High {
-                log::debug!("VTUNE HIGH @ VCOCAP={vcocap}");
-                return Ok(vcocap);
-            }
-        }
-        log::error!("VTUNE Norm->High loop failed to converge.");
-        Err(Error::CalibrationFailed(
-            "VTUNE Norm->High loop failed to converge",
-        ))
+            log::error!("VTUNE Norm->High loop failed to converge.");
+            Err(Error::CalibrationFailed(
+                "VTUNE Norm->High loop failed to converge",
+            ))
+        })
     }
 
     fn vtune_low_to_norm(
@@ -560,24 +609,26 @@ impl<'a> Lms6002d<'a> {
         base: u8,
         mut vcocap: u8,
         vcocap_reg_state: u8,
-    ) -> crate::Result<u8> {
-        for _ in 0..VTUNE_MAX_ITERATIONS {
-            if vcocap == 0 {
-                log::debug!("vtune_low_to_norm: VCOCAP hit min value.");
-                return Ok(0);
+    ) -> impl MaybeFuture<Output = crate::Result<u8>> {
+        Op::new(async move {
+            for _ in 0..VTUNE_MAX_ITERATIONS {
+                if vcocap == 0 {
+                    log::debug!("vtune_low_to_norm: VCOCAP hit min value.");
+                    return Ok(0);
+                }
+                vcocap -= 1;
+                self.write_vcocap(base, vcocap, vcocap_reg_state).await?;
+                let vtune = self.get_vtune(base, VTUNE_DELAY_SMALL).await?;
+                if vtune == VcoState::Norm {
+                    log::debug!("VTUNE NORM @ VCOCAP={vcocap}");
+                    return Ok(vcocap + 1);
+                }
             }
-            vcocap -= 1;
-            self.write_vcocap(base, vcocap, vcocap_reg_state)?;
-            let vtune = self.get_vtune(base, VTUNE_DELAY_SMALL)?;
-            if vtune == VcoState::Norm {
-                log::debug!("VTUNE NORM @ VCOCAP={vcocap}");
-                return Ok(vcocap + 1);
-            }
-        }
-        log::error!("VTUNE Low->Norm loop failed to converge.");
-        Err(Error::CalibrationFailed(
-            "VTUNE Low->Norm loop failed to converge",
-        ))
+            log::error!("VTUNE Low->Norm loop failed to converge.");
+            Err(Error::CalibrationFailed(
+                "VTUNE Low->Norm loop failed to converge",
+            ))
+        })
     }
 
     fn wait_for_vtune_value(
@@ -586,119 +637,142 @@ impl<'a> Lms6002d<'a> {
         target_value: VcoState,
         vcocap: &mut u8,
         vcocap_reg_state: u8,
-    ) -> crate::Result<()> {
-        const MAX_RETRIES: u32 = 15;
-        let limit: u8 = if target_value == VcoState::High {
-            0
-        } else {
-            VCOCAP_MAX_VALUE
-        };
-        let inc: i8 = if target_value == VcoState::High {
-            -1
-        } else {
-            1
-        };
-        for i in 0..MAX_RETRIES {
-            let vtune = self.get_vtune(base, 0)?;
-            if vtune == target_value {
-                log::debug!("VTUNE reached {target_value:?} at iteration {i}");
-                return Ok(());
+    ) -> impl MaybeFuture<Output = crate::Result<()>> {
+        Op::new(async move {
+            const MAX_RETRIES: u32 = 15;
+            let limit: u8 = if target_value == VcoState::High {
+                0
             } else {
-                log::trace!("VTUNE was {vtune:?}. Waiting and retrying...");
-                sleep(Duration::from_micros(10));
+                VCOCAP_MAX_VALUE
+            };
+            let inc: i8 = if target_value == VcoState::High {
+                -1
+            } else {
+                1
+            };
+            for i in 0..MAX_RETRIES {
+                let vtune = self.get_vtune(base, 0).await?;
+                if vtune == target_value {
+                    log::debug!("VTUNE reached {target_value:?} at iteration {i}");
+                    return Ok(());
+                } else {
+                    log::trace!("VTUNE was {vtune:?}. Waiting and retrying...");
+                    crate::maybe_future::sleep(Duration::from_micros(10)).await;
+                }
             }
-        }
-        log::trace!("Timed out while waiting for VTUNE={target_value:?}. Walking VCOCAP...");
-        while *vcocap != limit {
-            *vcocap = (*vcocap as i8 + inc) as u8;
-            self.write_vcocap(base, *vcocap, vcocap_reg_state)?;
-            let vtune = self.get_vtune(base, VTUNE_DELAY_SMALL)?;
-            if vtune == target_value {
-                log::debug!("VTUNE={vtune:?} reached with VCOCAP={vcocap}");
-                return Ok(());
+            log::trace!("Timed out while waiting for VTUNE={target_value:?}. Walking VCOCAP...");
+            while *vcocap != limit {
+                *vcocap = (*vcocap as i8 + inc) as u8;
+                self.write_vcocap(base, *vcocap, vcocap_reg_state).await?;
+                let vtune = self.get_vtune(base, VTUNE_DELAY_SMALL).await?;
+                if vtune == target_value {
+                    log::debug!("VTUNE={vtune:?} reached with VCOCAP={vcocap}");
+                    return Ok(());
+                }
             }
-        }
-        log::debug!("VTUNE did not reach {target_value:?}. Tuning may not be nominal.");
-        Ok(())
+            log::debug!("VTUNE did not reach {target_value:?}. Tuning may not be nominal.");
+            Ok(())
+        })
     }
 
-    fn tune_vcocap(&mut self, vcocap_est: u8, base: u8, vcocap_reg_state: u8) -> crate::Result<u8> {
-        let mut vcocap: u8 = vcocap_est;
-        let mut vtune_high_limit: u8 = VCOCAP_MAX_VALUE;
-        let mut vtune_low_limit: u8 = 0;
-        let mut vtune = self.get_vtune(base, VTUNE_DELAY_LARGE)?;
-        match vtune {
-            VcoState::High => {
-                log::trace!("Estimate HIGH: Walking down to NORM.");
-                vtune_high_limit = self.vtune_high_to_norm(base, vcocap, vcocap_reg_state)?;
-            }
-            VcoState::Norm => {
-                log::trace!("Estimate NORM: Walking up to HIGH.");
-                vtune_high_limit = self.vtune_norm_to_high(base, vcocap, vcocap_reg_state)?;
-            }
-            VcoState::Low => {
-                log::trace!("Estimate LOW: Walking down to NORM.");
-                vtune_low_limit = self.vtune_low_to_norm(base, vcocap, vcocap_reg_state)?;
-            }
-        }
-        if vtune_high_limit != VCOCAP_MAX_VALUE {
+    fn tune_vcocap(
+        &mut self,
+        vcocap_est: u8,
+        base: u8,
+        vcocap_reg_state: u8,
+    ) -> impl MaybeFuture<Output = crate::Result<u8>> {
+        Op::new(async move {
+            let mut vcocap: u8 = vcocap_est;
+            let mut vtune_high_limit: u8 = VCOCAP_MAX_VALUE;
+            let mut vtune_low_limit: u8 = 0;
+            let mut vtune = self.get_vtune(base, VTUNE_DELAY_LARGE).await?;
             match vtune {
-                VcoState::Norm | VcoState::High => {
-                    if (vtune_high_limit + VCOCAP_MAX_LOW_HIGH) < VCOCAP_MAX_VALUE {
-                        vcocap = vtune_high_limit + VCOCAP_MAX_LOW_HIGH;
-                    } else {
-                        vcocap = VCOCAP_MAX_VALUE;
-                        log::debug!("Clamping VCOCAP to {vcocap}.");
+                VcoState::High => {
+                    log::trace!("Estimate HIGH: Walking down to NORM.");
+                    vtune_high_limit = self
+                        .vtune_high_to_norm(base, vcocap, vcocap_reg_state)
+                        .await?;
+                }
+                VcoState::Norm => {
+                    log::trace!("Estimate NORM: Walking up to HIGH.");
+                    vtune_high_limit = self
+                        .vtune_norm_to_high(base, vcocap, vcocap_reg_state)
+                        .await?;
+                }
+                VcoState::Low => {
+                    log::trace!("Estimate LOW: Walking down to NORM.");
+                    vtune_low_limit = self
+                        .vtune_low_to_norm(base, vcocap, vcocap_reg_state)
+                        .await?;
+                }
+            }
+            if vtune_high_limit != VCOCAP_MAX_VALUE {
+                match vtune {
+                    VcoState::Norm | VcoState::High => {
+                        if (vtune_high_limit + VCOCAP_MAX_LOW_HIGH) < VCOCAP_MAX_VALUE {
+                            vcocap = vtune_high_limit + VCOCAP_MAX_LOW_HIGH;
+                        } else {
+                            vcocap = VCOCAP_MAX_VALUE;
+                            log::debug!("Clamping VCOCAP to {vcocap}.");
+                        }
+                    }
+                    _ => {
+                        log::error!("Invalid state");
+                        return Err(Error::BoardState("VTUNE state mismatch after high_limit"));
                     }
                 }
-                _ => {
-                    log::error!("Invalid state");
-                    return Err(Error::BoardState("VTUNE state mismatch after high_limit"));
-                }
-            }
-            self.write_vcocap(base, vcocap, vcocap_reg_state)?;
-            log::trace!("Waiting for VTUNE LOW @ VCOCAP={vcocap}");
-            self.wait_for_vtune_value(base, VcoState::Low, &mut vcocap, vcocap_reg_state)?;
-            log::trace!("Walking VTUNE LOW to NORM from VCOCAP={vcocap}");
-            vtune_low_limit = self.vtune_low_to_norm(base, vcocap, vcocap_reg_state)?;
-        } else {
-            match vtune {
-                VcoState::Low | VcoState::Norm => {
-                    if (vtune_low_limit - VCOCAP_MAX_LOW_HIGH) > 0 {
-                        vcocap = vtune_low_limit - VCOCAP_MAX_LOW_HIGH;
-                    } else {
-                        vcocap = 0;
-                        log::debug!("Clamping VCOCAP to {vcocap}.");
+                self.write_vcocap(base, vcocap, vcocap_reg_state).await?;
+                log::trace!("Waiting for VTUNE LOW @ VCOCAP={vcocap}");
+                self.wait_for_vtune_value(base, VcoState::Low, &mut vcocap, vcocap_reg_state)
+                    .await?;
+                log::trace!("Walking VTUNE LOW to NORM from VCOCAP={vcocap}");
+                vtune_low_limit = self
+                    .vtune_low_to_norm(base, vcocap, vcocap_reg_state)
+                    .await?;
+            } else {
+                match vtune {
+                    VcoState::Low | VcoState::Norm => {
+                        if (vtune_low_limit - VCOCAP_MAX_LOW_HIGH) > 0 {
+                            vcocap = vtune_low_limit - VCOCAP_MAX_LOW_HIGH;
+                        } else {
+                            vcocap = 0;
+                            log::debug!("Clamping VCOCAP to {vcocap}.");
+                        }
+                    }
+                    _ => {
+                        log::error!("Invalid state");
+                        return Err(Error::BoardState("VTUNE state mismatch after low_limit"));
                     }
                 }
-                _ => {
-                    log::error!("Invalid state");
-                    return Err(Error::BoardState("VTUNE state mismatch after low_limit"));
-                }
+                self.write_vcocap(base, vcocap, vcocap_reg_state).await?;
+                log::trace!("Waiting for VTUNE HIGH @ VCOCAP={vcocap}");
+                self.wait_for_vtune_value(base, VcoState::High, &mut vcocap, vcocap_reg_state)
+                    .await?;
+                log::trace!("Walking VTUNE HIGH to NORM from VCOCAP={vcocap}");
+                vtune_high_limit = self
+                    .vtune_high_to_norm(base, vcocap, vcocap_reg_state)
+                    .await?;
             }
-            self.write_vcocap(base, vcocap, vcocap_reg_state)?;
-            log::trace!("Waiting for VTUNE HIGH @ VCOCAP={vcocap}");
-            self.wait_for_vtune_value(base, VcoState::High, &mut vcocap, vcocap_reg_state)?;
-            log::trace!("Walking VTUNE HIGH to NORM from VCOCAP={vcocap}");
-            vtune_high_limit = self.vtune_high_to_norm(base, vcocap, vcocap_reg_state)?;
-        }
-        vcocap = vtune_high_limit + (vtune_low_limit - vtune_high_limit) / 2;
-        log::trace!("VTUNE LOW:   {vtune_low_limit}");
-        log::trace!("VTUNE NORM:  {vcocap}");
-        log::trace!("VTUNE Est:   {vcocap_est}");
-        log::trace!("VTUNE HIGH:  {vtune_high_limit}");
-        self.write_vcocap(base, vcocap, vcocap_reg_state)?;
-        vtune = self.get_vtune(base, VTUNE_DELAY_SMALL)?;
-        if vtune != VcoState::Norm {
-            log::error!("Final VCOCAP={vcocap} is not in VTUNE NORM region.");
-            return Err(Error::TuningFailed);
-        }
-        Ok(vcocap)
+            vcocap = vtune_high_limit + (vtune_low_limit - vtune_high_limit) / 2;
+            log::trace!("VTUNE LOW:   {vtune_low_limit}");
+            log::trace!("VTUNE NORM:  {vcocap}");
+            log::trace!("VTUNE Est:   {vcocap_est}");
+            log::trace!("VTUNE HIGH:  {vtune_high_limit}");
+            self.write_vcocap(base, vcocap, vcocap_reg_state).await?;
+            vtune = self.get_vtune(base, VTUNE_DELAY_SMALL).await?;
+            if vtune != VcoState::Norm {
+                log::error!("Final VCOCAP={vcocap} is not in VTUNE NORM region.");
+                return Err(Error::TuningFailed);
+            }
+            Ok(vcocap)
+        })
     }
 
-    fn turn_off_dsms(&mut self) -> crate::Result<()> {
-        let mut data = self.read(0x09)?;
-        data &= !0x05;
-        self.write(0x09, data)
+    fn turn_off_dsms(&mut self) -> impl MaybeFuture<Output = crate::Result<()>> {
+        Op::new(async move {
+            let mut data = self.read(0x09).await?;
+            data &= !0x05;
+            self.write(0x09, data).await
+        })
     }
 }

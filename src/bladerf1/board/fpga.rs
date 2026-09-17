@@ -14,11 +14,12 @@ use crate::bladerf1::hardware::spi_flash::{
 };
 use crate::error::{Error, Result};
 use crate::flash::{binkv_encode_field, pad_to_page};
+use crate::maybe_future::Op;
 use crate::usb::{
     BladeRf1UsbInterfaceCommands, CONTROL_ENDPOINT_OUT, UsbInterfaceCommands, VendorRequest,
 };
+use nusb::MaybeFuture;
 use std::fmt;
-use std::thread;
 use std::time::Duration;
 
 /// Bitstream size for the 40KLE
@@ -138,8 +139,8 @@ impl fmt::Display for FwLogEntry {
 
 impl RfLinkSession<'_> {
     /// Returns `true` if the FPGA has completed configuration.
-    pub fn is_fpga_configured(&mut self) -> Result<bool> {
-        self.nios.usb_is_fpga_configured()
+    pub fn is_fpga_configured(&mut self) -> impl MaybeFuture<Output = Result<bool>> {
+        Op::new(async move { self.nios.usb_is_fpga_configured().await })
     }
 
     /// Reads all entries from the firmware log buffer.
@@ -147,20 +148,25 @@ impl RfLinkSession<'_> {
     /// Iterates over the firmware's ring-buffer log via USB vendor requests
     /// until an end-of-log sentinel is received. Logs a warning and stops
     /// if a firmware error sentinel is encountered.
-    pub fn read_fw_log(&mut self) -> Result<Vec<FwLogEntry>> {
-        let mut entries = Vec::new();
-        loop {
-            let raw = self.nios.usb_vendor_cmd_int(VendorRequest::ReadLogEntry)?;
-            if raw == LOG_EOF {
-                break;
+    pub fn read_fw_log(&mut self) -> impl MaybeFuture<Output = Result<Vec<FwLogEntry>>> {
+        Op::new(async move {
+            let mut entries = Vec::new();
+            loop {
+                let raw = self
+                    .nios
+                    .usb_vendor_cmd_int(VendorRequest::ReadLogEntry)
+                    .await?;
+                if raw == LOG_EOF {
+                    break;
+                }
+                if raw == LOG_ERR {
+                    log::warn!("firmware log read error");
+                    break;
+                }
+                entries.push(FwLogEntry::from_u32(raw));
             }
-            if raw == LOG_ERR {
-                log::warn!("firmware log read error");
-                break;
-            }
-            entries.push(FwLogEntry::from_u32(raw));
-        }
-        Ok(entries)
+            Ok(entries)
+        })
     }
 }
 
@@ -175,37 +181,40 @@ impl ConfigSession<'_> {
     /// Returns `Error::Argument` if the bitstream size is not 40KLE or
     /// 115KLE. Returns `Error::Timeout` if the FPGA does not complete
     /// configuration within the polling window.
-    pub fn load_fpga(&mut self, bitstream: &[u8]) -> Result<()> {
-        if !is_valid_fpga_size(bitstream.len()) {
-            return Err(Error::Argument(format!(
-                "invalid FPGA bitstream size: {} bytes (expected {} or {})",
-                bitstream.len(),
-                BLADERF_FLASH_FPGA_SIZE_40KLE,
-                BLADERF_FLASH_FPGA_SIZE_115KLE,
-            )));
-        }
-
-        self.nios.usb_begin_fpga_prog()?;
-        self.nios
-            .usb_bulk_out(CONTROL_ENDPOINT_OUT, bitstream, FPGA_LOAD_TIMEOUT)?;
-
-        let configured = {
-            let mut result = false;
-            for _ in 0..FPGA_STATUS_POLL_ATTEMPTS {
-                if self.nios.usb_is_fpga_configured()? {
-                    result = true;
-                    break;
-                }
-                thread::sleep(FPGA_STATUS_POLL_INTERVAL);
+    pub fn load_fpga(&mut self, bitstream: &[u8]) -> impl MaybeFuture<Output = Result<()>> {
+        Op::new(async move {
+            if !is_valid_fpga_size(bitstream.len()) {
+                return Err(Error::Argument(format!(
+                    "invalid FPGA bitstream size: {} bytes (expected {} or {})",
+                    bitstream.len(),
+                    BLADERF_FLASH_FPGA_SIZE_40KLE,
+                    BLADERF_FLASH_FPGA_SIZE_115KLE,
+                )));
             }
-            result
-        };
 
-        if !configured {
-            return Err(Error::Timeout);
-        }
+            self.nios.usb_begin_fpga_prog().await?;
+            self.nios
+                .usb_bulk_out(CONTROL_ENDPOINT_OUT, bitstream, FPGA_LOAD_TIMEOUT)
+                .await?;
 
-        Ok(())
+            let configured = {
+                let mut result = false;
+                for _ in 0..FPGA_STATUS_POLL_ATTEMPTS {
+                    if self.nios.usb_is_fpga_configured().await? {
+                        result = true;
+                        break;
+                    }
+                    crate::maybe_future::sleep(FPGA_STATUS_POLL_INTERVAL).await;
+                }
+                result
+            };
+
+            if !configured {
+                return Err(Error::Timeout);
+            }
+
+            Ok(())
+        })
     }
 }
 
@@ -220,31 +229,33 @@ impl FlashSession<'_> {
     /// Returns `Error::Argument` if the bitstream size is not 40KLE or
     /// 115KLE. Returns `Error::FlashVerificationFailed` if verification
     /// fails after retries.
-    pub fn flash_fpga(&mut self, bitstream: &[u8]) -> Result<()> {
-        if !is_valid_fpga_size(bitstream.len()) {
-            return Err(Error::Argument(format!(
-                "invalid FPGA bitstream size: {} bytes (expected {} or {})",
-                bitstream.len(),
-                BLADERF_FLASH_FPGA_SIZE_40KLE,
-                BLADERF_FLASH_FPGA_SIZE_115KLE,
-            )));
-        }
+    pub fn flash_fpga(&mut self, bitstream: &[u8]) -> impl MaybeFuture<Output = Result<()>> {
+        Op::new(async move {
+            if !is_valid_fpga_size(bitstream.len()) {
+                return Err(Error::Argument(format!(
+                    "invalid FPGA bitstream size: {} bytes (expected {} or {})",
+                    bitstream.len(),
+                    BLADERF_FLASH_FPGA_SIZE_40KLE,
+                    BLADERF_FLASH_FPGA_SIZE_115KLE,
+                )));
+            }
 
-        let fpga_page = BLADERF_FLASH_ADDR_FPGA / BLADERF_FLASH_PAGE_SIZE as u32;
+            let fpga_page = BLADERF_FLASH_ADDR_FPGA / BLADERF_FLASH_PAGE_SIZE as u32;
 
-        let padded = pad_to_page(bitstream);
+            let padded = pad_to_page(bitstream);
 
-        let mut meta = [0xFFu8; BLADERF_FLASH_PAGE_SIZE];
-        let len_str = bitstream.len().to_string();
-        binkv_encode_field(&mut meta, 0, "LEN", &len_str)?;
+            let mut meta = [0xFFu8; BLADERF_FLASH_PAGE_SIZE];
+            let len_str = bitstream.len().to_string();
+            binkv_encode_field(&mut meta, 0, "LEN", &len_str)?;
 
-        let mut all_data = Vec::with_capacity(BLADERF_FLASH_PAGE_SIZE + padded.len());
-        all_data.extend_from_slice(&meta);
-        all_data.extend_from_slice(&padded);
+            let mut all_data = Vec::with_capacity(BLADERF_FLASH_PAGE_SIZE + padded.len());
+            all_data.extend_from_slice(&meta);
+            all_data.extend_from_slice(&padded);
 
-        self.erase_write_verify(fpga_page, &all_data)?;
+            self.erase_write_verify(fpga_page, &all_data).await?;
 
-        Ok(())
+            Ok(())
+        })
     }
 
     /// Erases the FPGA region of the SPI flash.
@@ -252,9 +263,11 @@ impl FlashSession<'_> {
     /// Erases all sectors from the FPGA start address to the end of flash,
     /// effectively removing any stored bitstream so the firmware can no
     /// longer autoload an FPGA image.
-    pub fn erase_stored_fpga(&mut self) -> Result<()> {
-        let fpga_sector = BLADERF_FLASH_ADDR_FPGA / BLADERF_FLASH_ERASE_BLOCK_SIZE as u32;
-        let count = self.total_sectors() - fpga_sector;
-        self.erase_sectors(fpga_sector, count)
+    pub fn erase_stored_fpga(&mut self) -> impl MaybeFuture<Output = Result<()>> {
+        Op::new(async move {
+            let fpga_sector = BLADERF_FLASH_ADDR_FPGA / BLADERF_FLASH_ERASE_BLOCK_SIZE as u32;
+            let count = self.total_sectors() - fpga_sector;
+            self.erase_sectors(fpga_sector, count).await
+        })
     }
 }

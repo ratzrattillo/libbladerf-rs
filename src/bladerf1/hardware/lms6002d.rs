@@ -11,10 +11,12 @@ pub mod gain;
 pub mod loopback;
 use crate::channel::Channel;
 use crate::error::{Error, Result};
+use crate::maybe_future::Op;
 use crate::nios_client::NiosCore;
 use crate::protocol::nios::NiosPkt8x8Target;
 pub use filters::LpfMode;
 use gain::{LmsLowNoiseAmplifier, LmsPowerAmplifier};
+use nusb::MaybeFuture;
 /// Frequency band: Low (<1.5 GHz) or High (>=1.5 GHz).
 #[derive(PartialEq, Eq, Debug, Clone, Copy)]
 pub enum Band {
@@ -121,72 +123,97 @@ pub struct Lms6002d<'a> {
 }
 
 impl<'a> Lms6002d<'a> {
-    pub(crate) fn read(&mut self, addr: u8) -> Result<u8> {
-        self.nios.nios_read::<u8, u8>(NiosPkt8x8Target::Lms6, addr)
+    pub(crate) fn read(&mut self, addr: u8) -> impl MaybeFuture<Output = Result<u8>> {
+        Op::new(async move {
+            self.nios
+                .nios_read::<u8, u8>(NiosPkt8x8Target::Lms6, addr)
+                .await
+        })
     }
 
-    pub(crate) fn write(&mut self, addr: u8, data: u8) -> Result<()> {
-        self.nios
-            .nios_write::<u8, u8>(NiosPkt8x8Target::Lms6, addr, data)
+    pub(crate) fn write(&mut self, addr: u8, data: u8) -> impl MaybeFuture<Output = Result<()>> {
+        Op::new(async move {
+            self.nios
+                .nios_write::<u8, u8>(NiosPkt8x8Target::Lms6, addr, data)
+                .await
+        })
     }
 
-    pub(crate) fn set(&mut self, addr: u8, mask: u8) -> Result<()> {
-        let data = self.read(addr)?;
-        self.write(addr, data | mask)
+    pub(crate) fn set(&mut self, addr: u8, mask: u8) -> impl MaybeFuture<Output = Result<()>> {
+        Op::new(async move {
+            let data = self.read(addr).await?;
+            self.write(addr, data | mask).await
+        })
     }
 
-    pub(crate) fn clear(&mut self, addr: u8, mask: u8) -> Result<()> {
-        let data = self.read(addr)?;
-        self.write(addr, data & !mask)
+    pub(crate) fn clear(&mut self, addr: u8, mask: u8) -> impl MaybeFuture<Output = Result<()>> {
+        Op::new(async move {
+            let data = self.read(addr).await?;
+            self.write(addr, data & !mask).await
+        })
     }
 
     #[allow(dead_code)]
-    pub(crate) fn soft_reset(&mut self) -> Result<()> {
-        self.write(0x05, 0x12)?;
-        self.write(0x05, 0x32)
+    pub(crate) fn soft_reset(&mut self) -> impl MaybeFuture<Output = Result<()>> {
+        Op::new(async move {
+            self.write(0x05, 0x12).await?;
+            self.write(0x05, 0x32).await
+        })
     }
 
-    pub(crate) fn enable_rffe(&mut self, channel: Channel, enable: bool) -> Result<()> {
-        let (addr, shift) = if channel == Channel::Tx {
-            (0x40u8, 1u8)
-        } else {
-            (0x70u8, 0u8)
-        };
-        let mut data = self.read(addr)?;
-        if enable {
-            data |= 1 << shift;
-        } else {
-            data &= !(1 << shift);
-        }
-        self.write(addr, data)
-    }
-
-    pub(crate) fn select_band(&mut self, channel: Channel, band: Band) -> Result<()> {
-        if self.is_loopback_enabled()? {
-            log::debug!("Loopback enabled!");
-            return Ok(());
-        }
-        match channel {
-            Channel::Tx => {
-                let lms_pa = if band == Band::Low {
-                    LmsPowerAmplifier::Pa1
-                } else {
-                    LmsPowerAmplifier::Pa2
-                };
-                self.select_pa(lms_pa)
+    pub(crate) fn enable_rffe(
+        &mut self,
+        channel: Channel,
+        enable: bool,
+    ) -> impl MaybeFuture<Output = Result<()>> {
+        Op::new(async move {
+            let (addr, shift) = if channel == Channel::Tx {
+                (0x40u8, 1u8)
+            } else {
+                (0x70u8, 0u8)
+            };
+            let mut data = self.read(addr).await?;
+            if enable {
+                data |= 1 << shift;
+            } else {
+                data &= !(1 << shift);
             }
-            Channel::Rx => {
-                let lms_lna = if band == Band::Low {
-                    LmsLowNoiseAmplifier::Lna1
-                } else {
-                    LmsLowNoiseAmplifier::Lna2
-                };
-                self.select_lna(lms_lna)
-            }
-        }
+            self.write(addr, data).await
+        })
     }
 
-    pub(crate) fn read_expansion_gpio(&mut self) -> Result<u32> {
-        self.nios.nios_expansion_gpio_read()
+    pub(crate) fn select_band(
+        &mut self,
+        channel: Channel,
+        band: Band,
+    ) -> impl MaybeFuture<Output = Result<()>> {
+        Op::new(async move {
+            if self.is_loopback_enabled().await? {
+                log::debug!("Loopback enabled!");
+                return Ok(());
+            }
+            match channel {
+                Channel::Tx => {
+                    let lms_pa = if band == Band::Low {
+                        LmsPowerAmplifier::Pa1
+                    } else {
+                        LmsPowerAmplifier::Pa2
+                    };
+                    self.select_pa(lms_pa).await
+                }
+                Channel::Rx => {
+                    let lms_lna = if band == Band::Low {
+                        LmsLowNoiseAmplifier::Lna1
+                    } else {
+                        LmsLowNoiseAmplifier::Lna2
+                    };
+                    self.select_lna(lms_lna).await
+                }
+            }
+        })
+    }
+
+    pub(crate) fn read_expansion_gpio(&mut self) -> impl MaybeFuture<Output = Result<u32>> {
+        Op::new(async move { self.nios.nios_expansion_gpio_read().await })
     }
 }
