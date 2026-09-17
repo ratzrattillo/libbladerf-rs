@@ -11,14 +11,16 @@
 
 use crate::channel::Channel;
 use crate::error::{Error, Result};
-use crate::maybe_future::Op;
+use crate::maybe_future::{NonWasmSend, Op};
 use crate::protocol::nios::NiosPacketError;
 use nusb::transfer::{
     Buffer, Bulk, Completion, ControlIn, ControlOut, ControlType, EndpointDirection, In, Out,
     Recipient, TransferError,
 };
 use nusb::{Device, Endpoint, Interface, MaybeFuture, Speed};
+use std::future::Future;
 use std::num::NonZero;
+use std::task::{Context, Poll};
 use std::time::Duration;
 
 /// USB endpoint address for the control OUT bulk endpoint.
@@ -420,12 +422,66 @@ impl BladeRf1UsbInterfaceCommands for Interface {
     }
 }
 
+/// A bulk endpoint as used by the NIOS transport and the streaming pools.
+///
+/// Implemented for [`nusb::Endpoint`]; the streaming state machine is
+/// generic over it so its lifecycle can be exercised without hardware.
+pub(crate) trait BulkEndpoint: NonWasmSend {
+    fn address(&self) -> u8;
+    fn max_packet_size(&self) -> usize;
+    fn allocate(&self, len: usize) -> Buffer;
+    fn submit(&mut self, buffer: Buffer);
+    fn pending(&self) -> usize;
+    fn poll_next_complete(&mut self, cx: &mut Context<'_>) -> Poll<Completion>;
+    #[cfg(not(target_arch = "wasm32"))]
+    fn wait_next_complete(&mut self, timeout: Duration) -> Option<Completion>;
+    #[cfg(not(target_arch = "wasm32"))]
+    fn cancel_all(&mut self);
+    fn clear_halt(&mut self) -> impl MaybeFuture<Output = std::result::Result<(), nusb::Error>>;
+
+    fn next_complete(&mut self) -> impl Future<Output = Completion> + NonWasmSend + '_ {
+        std::future::poll_fn(|cx| self.poll_next_complete(cx))
+    }
+}
+
+impl<Dir: EndpointDirection> BulkEndpoint for Endpoint<Bulk, Dir> {
+    fn address(&self) -> u8 {
+        self.endpoint_address()
+    }
+    fn max_packet_size(&self) -> usize {
+        Endpoint::max_packet_size(self)
+    }
+    fn allocate(&self, len: usize) -> Buffer {
+        Endpoint::allocate(self, len)
+    }
+    fn submit(&mut self, buffer: Buffer) {
+        Endpoint::submit(self, buffer)
+    }
+    fn pending(&self) -> usize {
+        Endpoint::pending(self)
+    }
+    fn poll_next_complete(&mut self, cx: &mut Context<'_>) -> Poll<Completion> {
+        Endpoint::poll_next_complete(self, cx)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    fn wait_next_complete(&mut self, timeout: Duration) -> Option<Completion> {
+        Endpoint::wait_next_complete(self, timeout)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    fn cancel_all(&mut self) {
+        Endpoint::cancel_all(self)
+    }
+    fn clear_halt(&mut self) -> impl MaybeFuture<Output = std::result::Result<(), nusb::Error>> {
+        Endpoint::clear_halt(self)
+    }
+}
+
 /// Awaits the next completion on `ep`, bounded by `timeout` on native.
 ///
 /// On timeout the pending transfers are cancelled and drained so the
 /// endpoint is left idle, then `Error::Timeout` is returned.
-pub(crate) async fn next_complete<Dir: EndpointDirection>(
-    ep: &mut Endpoint<Bulk, Dir>,
+pub(crate) async fn next_complete<E: BulkEndpoint>(
+    ep: &mut E,
     timeout: Duration,
 ) -> Result<Completion> {
     #[cfg(not(target_arch = "wasm32"))]
@@ -451,10 +507,7 @@ pub(crate) async fn next_complete<Dir: EndpointDirection>(
 /// Callers cancel first where cancellation is available. Stops early
 /// with a warning if `deadline` elapses (native only; WebUSB transfers
 /// always run to completion).
-pub(crate) async fn drain_pending<Dir: EndpointDirection>(
-    ep: &mut Endpoint<Bulk, Dir>,
-    deadline: Duration,
-) -> Vec<Buffer> {
+pub(crate) async fn drain_pending<E: BulkEndpoint>(ep: &mut E, deadline: Duration) -> Vec<Buffer> {
     let mut buffers = Vec::with_capacity(ep.pending());
     #[cfg(not(target_arch = "wasm32"))]
     let mut remaining = deadline;
@@ -469,7 +522,7 @@ pub(crate) async fn drain_pending<Dir: EndpointDirection>(
             else {
                 log::warn!(
                     "timeout draining endpoint {:#04x}, {} transfers remain",
-                    ep.endpoint_address(),
+                    ep.address(),
                     ep.pending()
                 );
                 break;
@@ -483,7 +536,7 @@ pub(crate) async fn drain_pending<Dir: EndpointDirection>(
             Ok(()) | Err(TransferError::Cancelled) => {}
             Err(e) => log::warn!(
                 "transfer error draining endpoint {:#04x}: {e}",
-                ep.endpoint_address()
+                ep.address()
             ),
         }
         buffers.push(completion.buffer);

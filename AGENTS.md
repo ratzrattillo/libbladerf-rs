@@ -174,7 +174,8 @@ Implementation rules (see `src/maybe_future.rs` and `ASYNC_PLAN.md`):
 - `let _ = some_io_method();` is a silent no-op (the future is never driven). Always `.wait()`/`.await`. `#[must_use]` on `MaybeFuture` catches bare statements but not `let _`.
 - Native-only nusb API: `wait()`, `wait_next_complete`, `cancel_all`. On wasm `close_stream`/`drain` await in-flight transfers instead of cancelling; `Device::speed()` is `None` and is inferred from the bulk endpoint max packet size (`BladeRf1::infer_speed`); `from_bus_addr` is unavailable.
 - `cargo +stable check --target wasm32-unknown-unknown --features bladerf1 --lib` must stay green (`.cargo/config.toml` supplies `--cfg=web_sys_unstable_apis`; the default nightly toolchain cannot fetch the wasm target from the configured mirror).
-- Streams track `started`; `stop()` requires a started stream, `close()` decrements the active-stream counter only if started.
+- Streams track `started`; `start()` rejects a started stream, `stop()` requires one, `close()` decrements the active-stream counter only if started, and all data-path calls (`read`, `try_read`, `get_buffer`, `submit`, `wait_completion`) require a started stream so no transfer is ever submitted while the module is off.
+- `BufferPool::drain_extras` is bounded by `buffer_count`; a device that completes resubmitted buffers immediately (or a mock) must not be able to livelock the caller.
 
 ## Feature flags
 
@@ -205,7 +206,7 @@ Default features enable all three expansion board features (which each imply `bl
 
 ## Design decisions
 
-- **No `Transport` trait or `MockTransport`.** Valuable tests are the protocol encode/decode tests in `tests/unit/`.
+- **No `MockTransport` for NIOS register I/O.** Register traffic is covered by the protocol encode/decode tests in `tests/unit/`. Streams are different: their lifecycle lives in `StreamCore<E: BulkEndpoint>` driven through a `StreamHost` trait, and `stream.rs` has a `#[cfg(test)]` module with a scripted `MockEndpoint`/`MockHost` plus an exhaustive lifecycle model (`lifecycle_model_holds_for_all_short_sequences`). Any change to start/stop/close/read/teardown semantics must keep those tests green and should add a case.
 - **`NiosCore` is concrete** (not generic over transport). Holds `UsbTransport` directly.
 - **No `Arc<Mutex<>>`.** The borrow checker enforces NIOS protocol serialization. `BladeRf1` owns `NiosCore` directly; `&mut self` on `BladeRf1` gives exclusive access.
 - **Each struct cleans up its own resources.** `RfLinkSession::close_stream()` handles stream teardown. `BladeRf1::drop()` disables modules. No cross-struct teardown routing.
@@ -214,7 +215,7 @@ Default features enable all three expansion board features (which each imply `bl
 - **No `SpiFlash` wrapper.** `spi_flash.rs` contains `FlashMeta` and an `impl FlashSession` block — there is no separate `SpiFlash<'a>` struct.
 - **`FlashMeta` owned by `FlashSession`.** Constructed inside `flash_session()` from a USB vendor query, not stored on `BladeRf1`. Flash queries (`size_bytes`, `fpga_flash_sectors`, etc.) are on `FlashSession` only.
 - **No `Drop` on streams.** `close(&mut self, dev: &mut RfLinkSession)` is the only way to cleanly tear down a stream. This avoids doing hardware I/O in a `Drop` impl without access to the session.
-- **Unified `close_stream()`.** `RfLinkSession::close_stream(channel, pool)` contains all teardown logic, shared by both `RxStream::close()` and `TxStream::close()`.
+- **Unified teardown.** `StreamCore::teardown()` (cancel → disable module → drain → clear halt → deconfigure format bits; no cancel on wasm) is shared by `stop()` and `close()` for both directions.
 - **Stream-active counter.** `NiosCore` tracks `active_streams: u8`. `flash_session()` and `config_session()` return `Error::StreamsActive` if any stream is running. `rf_link_session()` requires no special handling — if streams are active, the device is already in RfLink mode and the existing skip-if-already-correct optimization avoids a redundant `usb_change_setting`. Streams increment the counter on `build()`, decrement on `close()`. If a stream is dropped without `close()`, the counter stays elevated — consistent with the existing "no `Drop` on streams" principle.
 - **Single `MaybeFuture` API instead of sync + `_async` twins.** Matches hackrf-nusb / hydrasdr-rs so seify's bladerf1 backend can be two thin adapters (`.wait()` / `.await`) over one API. One definition per method, no drift.
 - **nusb's `smol`/`tokio` features are forwarded, `smol` is default.** A `blocking_op` adapter that ran nusb's blocking syscalls inline on native was tried and removed: it diverged from nusb's semantics and forced async blocks around single nusb calls. The remaining wrinkle of "sync over an async core" — `tokio::spawn_blocking` needing a runtime context — is handled in one place (`tokio_context()` in `Op::wait`).

@@ -801,23 +801,6 @@ impl RfLinkSession<'_> {
         })
     }
 
-    /// Tears down a stream: cancels pending transfers, disables the module,
-    /// drains cancelled transfers, clears halt, and deconfigures format GPIO bits.
-    pub(crate) fn close_stream<'a, Dir: nusb::transfer::EndpointDirection>(
-        &'a mut self,
-        channel: Channel,
-        pool: &'a mut stream::BufferPool<Dir>,
-    ) -> impl MaybeFuture<Output = crate::Result<()>> + 'a {
-        Op::new(async move {
-            #[cfg(not(target_arch = "wasm32"))]
-            pool.cancel_all();
-            self.enable_module(channel, false).await?;
-            pool.drain().await;
-            pool.clear_halt().await?;
-            self.perform_format_deconfig().await
-        })
-    }
-
     /// Queries whether the currently loaded FPGA came from flash or was loaded
     /// by the host.
     pub fn get_fpga_source(&mut self) -> impl MaybeFuture<Output = crate::Result<FpgaSource>> {
