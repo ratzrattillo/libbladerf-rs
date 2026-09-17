@@ -118,7 +118,7 @@ impl TryFrom<u8> for VcoState {
     }
 }
 /// LMS6002D RF transceiver interface.
-pub struct Lms6002d<'a> {
+pub(crate) struct Lms6002d<'a> {
     pub(crate) nios: &'a mut NiosCore,
 }
 

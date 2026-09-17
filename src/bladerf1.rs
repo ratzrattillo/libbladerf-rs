@@ -8,8 +8,6 @@ pub mod board;
 pub mod calibration;
 pub mod hardware;
 pub mod protocol;
-pub use crate::nios_client::NiosCore;
-pub use crate::usb::BladeRf1UsbInterfaceCommands;
 pub use board::QuickTune;
 pub use board::rf_port::RfPort;
 pub use board::xb::ExpansionBoard;

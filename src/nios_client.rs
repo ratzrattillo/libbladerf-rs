@@ -52,10 +52,6 @@ impl NiosCore {
     pub fn transport(&self) -> &UsbTransport {
         &self.transport
     }
-    /// Returns a mutable reference to the underlying `UsbTransport`.
-    pub fn transport_mut(&mut self) -> &mut UsbTransport {
-        &mut self.transport
-    }
     /// Returns the current number of active streams.
     pub(crate) fn active_streams(&self) -> u8 {
         self.active_streams

@@ -137,7 +137,7 @@ All transitions are unrestricted **except:** entering `FlashSession` or `ConfigS
 | `src/channel.rs`, `src/error.rs`, `src/version.rs`, `src/range.rs`, `src/flash.rs` | Pure data types |
 | `src/bladerf2.rs` | **Stub only, not implemented** |
 
-`src/hardware.rs` and `src/board.rs` are re-export modules only.
+`src/bladerf1.rs` is the public re-export surface for the board API. `src/usb.rs` and `src/nios_client.rs` are `pub(crate)`: nothing outside the crate can reach a `NiosCore` or `UsbTransport`. Chip-driver structs (`Lms6002d`, `Si5338`, `Dac161s055`) and their I/O methods are `pub(crate)`; only their data types (`GainDb`, `GainStage`, `Band`, `Loopback`, `DcCalModule`, `RationalRate`, ...) are public.
 
 ### Atomic read-modify-write
 

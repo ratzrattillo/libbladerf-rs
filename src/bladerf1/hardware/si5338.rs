@@ -105,7 +105,7 @@ pub(crate) struct Multisynth {
 }
 
 /// Si5338 clock generator interface.
-pub struct Si5338<'a> {
+pub(crate) struct Si5338<'a> {
     pub(crate) nios: &'a mut NiosCore,
 }
 
@@ -158,7 +158,7 @@ impl<'a> Si5338<'a> {
     ///
     /// May return a fractional rate internally; the returned `u32` is the integer part.
     /// Returns `Error::BoardState` if the actual rate exceeds `u32::MAX`.
-    pub fn set_sample_rate(
+    pub(crate) fn set_sample_rate(
         &mut self,
         channel: Channel,
         rate: u32,
@@ -188,7 +188,10 @@ impl<'a> Si5338<'a> {
     ///
     /// Truncates any fractional component.
     /// Returns `Error::BoardState` if the actual rate exceeds `u32::MAX`.
-    pub fn get_sample_rate(&mut self, channel: Channel) -> impl MaybeFuture<Output = Result<u32>> {
+    pub(crate) fn get_sample_rate(
+        &mut self,
+        channel: Channel,
+    ) -> impl MaybeFuture<Output = Result<u32>> {
         Op::new(async move {
             let actual = self.get_rational_sample_rate(channel).await?;
             if actual.numerator() != 0 {
@@ -204,7 +207,7 @@ impl<'a> Si5338<'a> {
     }
 
     /// Returns the range of supported sample rates.
-    pub fn get_sample_rate_range() -> Range {
+    pub(crate) fn get_sample_rate_range() -> Range {
         Range::new(vec![RangeItem::Step(
             BLADERF_SAMPLERATE_MIN as f64,
             BLADERF_SAMPLERATE_REC_MAX as f64,
@@ -217,7 +220,7 @@ impl<'a> Si5338<'a> {
     ///
     /// Reduces the input fraction before programming the MultiSynth.
     /// Returns `Error::InvalidSampleRate` if the rate is below the minimum.
-    pub fn set_rational_sample_rate(
+    pub(crate) fn set_rational_sample_rate(
         &mut self,
         channel: Channel,
         rate: &mut RationalRate,
@@ -237,7 +240,7 @@ impl<'a> Si5338<'a> {
     }
 
     /// Returns the current rational sample rate for the given channel.
-    pub fn get_rational_sample_rate(
+    pub(crate) fn get_rational_sample_rate(
         &mut self,
         channel: Channel,
     ) -> impl MaybeFuture<Output = Result<RationalRate>> {
@@ -257,7 +260,7 @@ impl<'a> Si5338<'a> {
     /// Sets the rational SMB clock frequency and returns the actual configured frequency.
     ///
     /// Returns `Error::Argument` if the frequency is outside the supported range.
-    pub fn set_rational_smb_freq(
+    pub(crate) fn set_rational_smb_freq(
         &mut self,
         mut rate: RationalRate,
     ) -> impl MaybeFuture<Output = Result<RationalRate>> {
@@ -278,7 +281,7 @@ impl<'a> Si5338<'a> {
     ///
     /// Returns `Error::Argument` if the frequency is out of range, or `Error::BoardState`
     /// if the actual frequency exceeds `u32::MAX`.
-    pub fn set_smb_freq(&mut self, rate: u32) -> impl MaybeFuture<Output = Result<u32>> {
+    pub(crate) fn set_smb_freq(&mut self, rate: u32) -> impl MaybeFuture<Output = Result<u32>> {
         Op::new(async move {
             let req = RationalRate::new(rate as u64, 0, 1);
             log::trace!("Setting integer SMB frequency: {rate}");
@@ -297,7 +300,9 @@ impl<'a> Si5338<'a> {
     }
 
     /// Returns the current rational SMB clock frequency.
-    pub fn get_rational_smb_freq(&mut self) -> impl MaybeFuture<Output = Result<RationalRate>> {
+    pub(crate) fn get_rational_smb_freq(
+        &mut self,
+    ) -> impl MaybeFuture<Output = Result<RationalRate>> {
         Op::new(async move {
             let mut ms = Multisynth::default();
             let mut rate = RationalRate::default();
@@ -313,7 +318,7 @@ impl<'a> Si5338<'a> {
     ///
     /// Truncates any fractional component.
     /// Returns `Error::BoardState` if the actual frequency exceeds `u32::MAX`.
-    pub fn get_smb_freq(&mut self) -> impl MaybeFuture<Output = Result<u32>> {
+    pub(crate) fn get_smb_freq(&mut self) -> impl MaybeFuture<Output = Result<u32>> {
         Op::new(async move {
             let actual = self.get_rational_smb_freq().await?;
             if actual.numerator() != 0 {
@@ -331,7 +336,7 @@ impl<'a> Si5338<'a> {
     /// Sets the SMB clock mode.
     ///
     /// Returns `Error::Argument` if the mode is `SmbMode::Unavailable`.
-    pub fn set_smb_mode(&mut self, mode: SmbMode) -> impl MaybeFuture<Output = Result<()>> {
+    pub(crate) fn set_smb_mode(&mut self, mode: SmbMode) -> impl MaybeFuture<Output = Result<()>> {
         Op::new(async move {
             match mode {
                 SmbMode::Disabled | SmbMode::Output | SmbMode::Input => {}
@@ -371,7 +376,7 @@ impl<'a> Si5338<'a> {
     /// Returns the current SMB clock mode.
     ///
     /// Returns `Error::Unsupported` if an unexpected register value is read.
-    pub fn get_smb_mode(&mut self) -> impl MaybeFuture<Output = Result<SmbMode>> {
+    pub(crate) fn get_smb_mode(&mut self) -> impl MaybeFuture<Output = Result<SmbMode>> {
         Op::new(async move {
             let val = self.read(39).await?;
             match val & 0x7 {
