@@ -11,7 +11,8 @@ composite action `.github/actions/check`, which runs:
 
 1. Build — `cargo build --features bladerf1`
 2. Unit tests — `cargo test --lib`
-3. Protocol tests — `cargo test --test unit`
+3. Protocol tests — `cargo test --test unit`; public API contract —
+   `cargo test --test public_api --features bladerf1`
 4. Clippy — `cargo clippy --features bladerf1 --all-targets -- -D warnings`
    (and once more with `--no-default-features --features bladerf1,xb100,xb200,xb300,tokio`)
 5. Format check — `cargo fmt --all --check`

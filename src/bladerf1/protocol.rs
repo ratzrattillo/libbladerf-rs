@@ -17,10 +17,12 @@ pub struct RetuneResult {
     duration: u64,
 }
 impl RetuneResult {
+    /// Wraps the duration reported by the FPGA.
     pub fn new(duration: u64) -> Self {
         Self { duration }
     }
 
+    /// Time the retune took, in FPGA timestamp ticks.
     pub fn duration(&self) -> u64 {
         self.duration
     }

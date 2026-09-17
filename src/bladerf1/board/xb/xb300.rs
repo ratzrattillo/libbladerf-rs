@@ -22,19 +22,29 @@ pub(crate) const BLADERF_XB_CSEL: u32 = 0x040000;
 pub(crate) const BLADERF_XB_DOUT: u32 = 0x100000;
 pub(crate) const BLADERF_XB_SCLK: u32 = 0x400000;
 pub(crate) const XB300_DETECT_MASK: u32 = BLADERF_XB_CS | BLADERF_XB_CSEL | BLADERF_XB_LNA_EN;
+/// XB-300 transmit/receive switch position.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BladeRfXb300Trx {
+    /// Antenna connected to the PA (transmit) path.
     Tx = 0,
+    /// Antenna connected to the LNA (receive) path.
     Rx,
+    /// Neither path selected.
     Unset,
 }
+/// XB-300 amplifier stage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BladeRfXb300Amplifier {
+    /// SE2623L power amplifier on the TX path.
     Pa = 0,
+    /// TSS-53LNB+ low-noise amplifier on the RX path.
     Lna,
+    /// Auxiliary amplifier on the antenna connector.
     Aux,
 }
 impl RfLinkSession<'_> {
+    /// Configures the expansion GPIOs for the XB-300 and powers it up with
+    /// the LNA disabled. Requires the board to be initialized.
     pub fn xb300_attach(&mut self) -> impl MaybeFuture<Output = Result<()>> {
         Op::new(async move {
             self.require_initialized().await?;
@@ -54,6 +64,9 @@ impl RfLinkSession<'_> {
             Ok(())
         })
     }
+    /// Selects the XB-300 on the expansion bus and reads the power detector
+    /// once to prime it. `enable` is accepted for API symmetry with the
+    /// other boards and currently has no effect, as in libbladeRF.
     pub fn xb300_enable(&mut self, _enable: bool) -> impl MaybeFuture<Output = Result<()>> {
         Op::new(async move {
             self.require_initialized().await?;
@@ -63,6 +76,7 @@ impl RfLinkSession<'_> {
             Ok(())
         })
     }
+    /// Puts the board into its default state (TRX switch on the TX path).
     pub fn xb300_init(&mut self) -> impl MaybeFuture<Output = Result<()>> {
         Op::new(async move {
             self.require_initialized().await?;
@@ -70,6 +84,7 @@ impl RfLinkSession<'_> {
             self.xb300_set_trx(BladeRfXb300Trx::Tx).await
         })
     }
+    /// Sets the transmit/receive switch position.
     pub fn xb300_set_trx(&mut self, trx: BladeRfXb300Trx) -> impl MaybeFuture<Output = Result<()>> {
         Op::new(async move {
             self.require_initialized().await?;
@@ -83,6 +98,7 @@ impl RfLinkSession<'_> {
             self.nios.nios_expansion_gpio_write(0xffffffff, val).await
         })
     }
+    /// Reads the transmit/receive switch position.
     pub fn xb300_get_trx(&mut self) -> impl MaybeFuture<Output = Result<BladeRfXb300Trx>> {
         Op::new(async move {
             self.require_initialized().await?;
@@ -98,6 +114,7 @@ impl RfLinkSession<'_> {
             Ok(trx)
         })
     }
+    /// Enables or disables one of the amplifier stages (and its LED).
     pub fn xb300_set_amplifier_enable(
         &mut self,
         amp: BladeRfXb300Amplifier,
@@ -136,6 +153,7 @@ impl RfLinkSession<'_> {
             self.nios.nios_expansion_gpio_write(0xffffffff, val).await
         })
     }
+    /// Returns whether the given amplifier stage is enabled.
     pub fn xb300_get_amplifier_enable(
         &mut self,
         amp: BladeRfXb300Amplifier,
@@ -150,6 +168,7 @@ impl RfLinkSession<'_> {
             }
         })
     }
+    /// Reads the RF output power in dBm from the board's power detector.
     pub fn xb300_get_output_power(&mut self) -> impl MaybeFuture<Output = Result<f32>> {
         Op::new(async move {
             self.require_initialized().await?;

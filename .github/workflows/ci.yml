@@ -86,6 +86,7 @@ jobs:
       - run: cargo build --no-default-features --features bladerf1,tokio
       - run: cargo test --lib
       - run: cargo test --test unit
+      - run: cargo test --test public_api --features bladerf1
 
   test-macos:
     name: Unit Tests macOS
@@ -99,6 +100,7 @@ jobs:
       - run: cargo build --features bladerf1
       - run: cargo test --lib
       - run: cargo test --test unit
+      - run: cargo test --test public_api --features bladerf1
 
   test-windows:
     name: Unit Tests Windows
@@ -112,3 +114,4 @@ jobs:
       - run: cargo build --features bladerf1
       - run: cargo test --lib
       - run: cargo test --test unit
+      - run: cargo test --test public_api --features bladerf1

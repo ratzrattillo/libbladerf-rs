@@ -31,6 +31,8 @@ cargo check --target wasm32-unknown-unknown --features bladerf1 --lib
 cargo test --lib
 # Protocol encode/decode tests (no hardware)
 cargo test --test unit
+# Public API contract (no hardware)
+cargo test --test public_api --features bladerf1
 # Hardware integration tests (single-threaded, shared device), default `smol`
 cargo test --features bladerf1 --tests -- --test-threads=1
 # Same suite plus the async tests with nusb's tokio integration only

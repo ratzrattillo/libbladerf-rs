@@ -160,7 +160,7 @@ impl Display for DcCals {
     }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct DcCalState {
+pub(crate) struct DcCalState {
     clk_en: u8,
     reg0x72: u8,
     lna_gain: LnaGainCode,
@@ -230,6 +230,7 @@ pub struct RxCal {
     tx_freq: u64,
 }
 impl RxCal {
+    /// Creates a configuration from sample count, timestamp and TX frequency.
     pub fn new(num_samples: u32, ts: u64, tx_freq: u64) -> Self {
         Self {
             num_samples,
@@ -238,22 +239,27 @@ impl RxCal {
         }
     }
 
+    /// Number of gain sample points used for interpolation.
     pub fn sample_count(&self) -> u32 {
         self.num_samples
     }
 
+    /// Timestamp recorded with the calibration data.
     pub fn timestamp(&self) -> u64 {
         self.ts
     }
 
+    /// TX frequency in Hz at which the calibration was performed.
     pub fn tx_frequency(&self) -> u64 {
         self.tx_freq
     }
 
+    /// Sets the timestamp.
     pub fn set_timestamp(&mut self, ts: u64) {
         self.ts = ts;
     }
 
+    /// Sets the TX frequency in Hz.
     pub fn set_tx_frequency(&mut self, tx_freq: u64) {
         self.tx_freq = tx_freq;
     }
@@ -270,6 +276,7 @@ pub struct RxCalBackup {
     tx_freq: u64,
 }
 impl RxCalBackup {
+    /// Captures the settings to restore after calibration.
     pub fn new(
         rational_sample_rate: crate::bladerf1::hardware::si5338::RationalRate,
         bandwidth: u32,
@@ -282,6 +289,7 @@ impl RxCalBackup {
         }
     }
 
+    /// Sample rate to restore.
     pub fn sample_rate(&self) -> &crate::bladerf1::hardware::si5338::RationalRate {
         &self.rational_sample_rate
     }
@@ -292,10 +300,12 @@ impl RxCalBackup {
         &mut self.rational_sample_rate
     }
 
+    /// Bandwidth in Hz to restore.
     pub fn bandwidth(&self) -> u32 {
         self.bandwidth
     }
 
+    /// TX frequency in Hz to restore.
     pub fn tx_frequency(&self) -> u64 {
         self.tx_freq
     }

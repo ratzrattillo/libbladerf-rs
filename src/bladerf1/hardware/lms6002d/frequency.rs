@@ -107,12 +107,12 @@ pub const DIV8: u8 = 0x6;
 /// Post-divider: divide by 16.
 pub const DIV16: u8 = 0x7;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct FreqRange {
+pub(crate) struct FreqRange {
     low: u64,
     high: u64,
     value: u8,
 }
-pub const BANDS: [FreqRange; 16] = [
+pub(crate) const BANDS: [FreqRange; 16] = [
     FreqRange {
         low: BLADERF_FREQUENCY_MIN as u64,
         high: VCO4_HIGH / 16,

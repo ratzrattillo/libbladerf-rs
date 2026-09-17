@@ -83,7 +83,7 @@ pub struct GainSpec {
     pub(crate) step: i8,
 }
 impl GainSpec {
-    pub const fn new(min: i8, max: i8, step: i8) -> Self {
+    pub(crate) const fn new(min: i8, max: i8, step: i8) -> Self {
         Self { min, max, step }
     }
 }

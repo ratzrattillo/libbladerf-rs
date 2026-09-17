@@ -59,6 +59,8 @@
 //!
 //! [nusb]: https://github.com/kevinmehall/nusb
 
+#![deny(missing_docs)]
+
 #[cfg(all(
     not(target_arch = "wasm32"),
     not(any(feature = "smol", feature = "tokio"))
@@ -72,6 +74,7 @@ compile_error!(
 pub mod bladerf1;
 #[cfg(feature = "bladerf2")]
 pub mod bladerf2;
+/// RX/TX channel selector.
 pub mod channel;
 pub mod error;
 pub mod flash;
@@ -80,6 +83,7 @@ pub(crate) mod nios_client;
 pub mod protocol;
 pub mod range;
 pub(crate) mod usb;
+/// Semantic version triple reported by firmware and FPGA.
 pub mod version;
 pub use channel::Channel;
 pub use error::{Error, ErrorKind, Result};

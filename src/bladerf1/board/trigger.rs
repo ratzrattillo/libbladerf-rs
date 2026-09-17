@@ -31,6 +31,7 @@ pub struct TriggerState {
     fire_requested: bool,
 }
 impl TriggerState {
+    /// Creates a trigger state from its components.
     pub fn new(role: Option<TriggerRole>, fired: bool, fire_requested: bool) -> Self {
         Self {
             role,
@@ -39,14 +40,17 @@ impl TriggerState {
         }
     }
 
+    /// Returns the armed role, or `None` if the trigger is disarmed.
     pub fn role(&self) -> Option<TriggerRole> {
         self.role
     }
 
+    /// Returns `true` if the trigger signal has been asserted.
     pub fn fired(&self) -> bool {
         self.fired
     }
 
+    /// Returns `true` if the master has issued a fire command.
     pub fn fire_requested(&self) -> bool {
         self.fire_requested
     }

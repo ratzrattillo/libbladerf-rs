@@ -15,6 +15,7 @@ All commands run from the **repository root**:
 | Build | `cargo build` |
 | Test (no hardware) | `cargo test --lib` |
 | Protocol tests (no hardware) | `cargo test --test unit` |
+| Public API contract (no hardware) | `cargo test --test public_api --features bladerf1` |
 | Run a single unit test | `cargo test --test unit -- <test_name>` |
 | Test (with hardware) | `cargo test --features bladerf1 --tests -- --test-threads=1` |
 | Async hardware tests only | `cargo test --features bladerf1,tokio --test bladerf1_async -- --test-threads=1` |
@@ -206,6 +207,7 @@ Default features enable all three expansion board features (which each imply `bl
 
 ## Design decisions
 
+- **`#![deny(missing_docs)]` and `tests/public_api.rs`.** Every public item is documented (the lint is an error). `tests/public_api.rs` is a compile-time contract: it pins constructors, sessions, stream builders, the `MaybeFuture` shape, feature gating and `Send`-ness of the main futures without touching hardware. Update it deliberately when the public API changes.
 - **No `MockTransport` for NIOS register I/O.** Register traffic is covered by the protocol encode/decode tests in `tests/unit/`. Streams are different: their lifecycle lives in `StreamCore<E: BulkEndpoint>` driven through a `StreamHost` trait, and `stream.rs` has a `#[cfg(test)]` module with a scripted `MockEndpoint`/`MockHost` plus an exhaustive lifecycle model (`lifecycle_model_holds_for_all_short_sequences`). Any change to start/stop/close/read/teardown semantics must keep those tests green and should add a case.
 - **`NiosCore` is concrete** (not generic over transport). Holds `UsbTransport` directly.
 - **No `Arc<Mutex<>>`.** The borrow checker enforces NIOS protocol serialization. `BladeRf1` owns `NiosCore` directly; `&mut self` on `BladeRf1` gives exclusive access.

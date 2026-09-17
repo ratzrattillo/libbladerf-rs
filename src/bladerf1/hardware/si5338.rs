@@ -24,18 +24,22 @@ pub struct RationalRate {
     den: u64,
 }
 impl RationalRate {
+    /// Creates `integer + num / den`.
     pub fn new(integer: u64, num: u64, den: u64) -> Self {
         Self { integer, num, den }
     }
 
+    /// Integer component.
     pub fn integer(&self) -> u64 {
         self.integer
     }
 
+    /// Numerator of the fractional component.
     pub fn numerator(&self) -> u64 {
         self.num
     }
 
+    /// Denominator of the fractional component.
     pub fn denominator(&self) -> u64 {
         self.den
     }

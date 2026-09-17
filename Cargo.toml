@@ -84,6 +84,10 @@ required-features = ["bladerf1", "tokio"]
 name = "unit"
 path = "tests/unit/main.rs"
 
+[[test]]
+name = "public_api"
+required-features = ["bladerf1"]
+
 [[bench]]
 name = "nios_packet_bench"
 harness = false

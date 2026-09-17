@@ -24,10 +24,15 @@ pub use crate::bladerf1::hardware::spi_flash::{
 /// KLE40/KLE115 are bladeRF1, A4/A5/A9 are bladeRF2.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FpgaSize {
+    /// bladeRF x40 (Cyclone IV 40 kLE).
     KLE40,
+    /// bladeRF x115 (Cyclone IV 115 kLE).
     KLE115,
+    /// bladeRF 2.0 micro xA4.
     A4,
+    /// bladeRF 2.0 micro xA5.
     A5,
+    /// bladeRF 2.0 micro xA9.
     A9,
 }
 
