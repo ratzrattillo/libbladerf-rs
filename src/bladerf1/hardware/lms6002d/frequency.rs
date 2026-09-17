@@ -257,7 +257,7 @@ impl TryFrom<u64> for LmsFreq {
         let vco_x = 1u64 << ((freqsel & 7) - 3);
         log::trace!("vco_x: {vco_x}");
         if vco_x > u8::MAX as u64 {
-            return Err(Error::BoardState("VCO divider out of u8 range"));
+            return Err(Error::Internal("VCO divider out of u8 range"));
         }
         let x = vco_x as u8;
         log::trace!("x: {x}");
@@ -272,7 +272,7 @@ impl TryFrom<u64> for LmsFreq {
         let nfrac_num = (1u64 << 23) * (vco_x * freq - nint as u64 * LMS_REFERENCE_HZ as u64);
         temp = (nfrac_num + LMS_REFERENCE_HZ as u64 / 2) / LMS_REFERENCE_HZ as u64;
         if temp > u32::MAX as u64 {
-            return Err(Error::BoardState("nfrac exceeds u32 range"));
+            return Err(Error::Internal("nfrac exceeds u32 range"));
         }
         let nfrac = temp as u32;
         log::trace!("nfrac: {nfrac}");
@@ -459,9 +459,7 @@ impl<'a> Lms6002d<'a> {
             f.freqsel = data >> 2;
             let frange = f.freqsel & 7;
             if frange < 4 {
-                return Err(crate::error::Error::BoardState(
-                    "PLL not configured (invalid FRANGE) — is the board initialized?",
-                ));
+                return Err(crate::error::Error::NotInitialized);
             }
             f.x = 1 << (frange - 3);
             let data = self.read(base + 9).await?;

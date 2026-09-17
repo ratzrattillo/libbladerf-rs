@@ -1,6 +1,6 @@
 # Code quality follow-up plan
 
-Status: in progress on branch `async-interface`. Done: 1 (surface), 2 (delegation, unsafe), 3 (stream seam + lifecycle tests). Open: 4 (errors), 5 (docs, public_api test).
+Status: in progress on branch `async-interface`. Done: 1 (surface), 2 (delegation, unsafe), 3 (stream seam + lifecycle tests), 4 (errors). Open: 5 (docs, public_api test).
 
 Goal: close the engineering-hygiene gaps identified when comparing
 libbladerf-rs with hackrf-nusb / hydrasdr-rs, while keeping the crate's

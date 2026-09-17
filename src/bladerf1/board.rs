@@ -609,7 +609,7 @@ impl RfLinkSession<'_> {
         Op::new(async move {
             let cfg = self.config_gpio_read().await?;
             if (cfg & 0x7f) == 0 {
-                return Err(Error::BoardState("device not initialized"));
+                return Err(Error::NotInitialized);
             }
             Ok(())
         })

@@ -223,8 +223,6 @@ pub(crate) struct StreamCore<E: BulkEndpoint> {
     started: bool,
 }
 
-const NOT_STARTED: &str = "stream not started";
-
 impl<E: BulkEndpoint> StreamCore<E> {
     /// Creates the pool. `buffer_size` is rounded up to the endpoint's max
     /// packet size.
@@ -267,7 +265,7 @@ impl<E: BulkEndpoint> StreamCore<E> {
         let started = self.started;
         let pool = self.pool_mut()?;
         if !started {
-            return Err(Error::BoardState(NOT_STARTED));
+            return Err(Error::StreamNotStarted);
         }
         Ok(pool)
     }
@@ -292,7 +290,7 @@ impl<E: BulkEndpoint> StreamCore<E> {
     ) -> impl MaybeFuture<Output = Result<()>> + 'a {
         Op::new(async move {
             if self.started {
-                return Err(Error::BoardState("stream already started"));
+                return Err(Error::StreamAlreadyStarted);
             }
             self.pool_mut()?;
             host.enable_module(self.channel, true).await?;
@@ -314,7 +312,7 @@ impl<E: BulkEndpoint> StreamCore<E> {
             let channel = self.channel;
             let pool = self.pool.as_mut().ok_or(Error::StreamClosed)?;
             if !std::mem::take(&mut self.started) {
-                return Err(Error::BoardState(NOT_STARTED));
+                return Err(Error::StreamNotStarted);
             }
             host.stream_stopped();
             Self::teardown(pool, host, channel).await
@@ -427,8 +425,6 @@ pub(crate) struct RxRead<'a, E: BulkEndpoint> {
     submitted: bool,
 }
 
-const NO_RX_IN_FLIGHT: &str = "no RX transfers in flight; recycle buffers before reading";
-
 impl<E: BulkEndpoint> Future for RxRead<'_, E> {
     type Output = Result<Buffer>;
 
@@ -443,7 +439,7 @@ impl<E: BulkEndpoint> Future for RxRead<'_, E> {
             this.submitted = true;
         }
         if pool.pending() == 0 {
-            return Poll::Ready(Err(Error::BoardState(NO_RX_IN_FLIGHT)));
+            return Poll::Ready(Err(Error::NoTransfersInFlight));
         }
         let completion = std::task::ready!(pool.poll_next(cx));
         if let Err(e) = completion.status {
@@ -462,7 +458,7 @@ impl<E: BulkEndpoint> MaybeFuture for RxRead<'_, E> {
         let pool = self.core.started_pool_mut()?;
         pool.submit_all_available();
         if pool.pending() == 0 {
-            return Err(Error::BoardState(NO_RX_IN_FLIGHT));
+            return Err(Error::NoTransfersInFlight);
         }
         let completion = pool.wait_completion(timeout).ok_or(Error::Timeout)?;
         if let Err(TransferError::Cancelled) = completion.status {
@@ -485,8 +481,6 @@ pub(crate) struct TxGetBuffer<'a, E: BulkEndpoint> {
     timeout: Option<Duration>,
 }
 
-const NO_TX_BUFFERS: &str = "no TX buffers available and none in flight";
-
 impl<E: BulkEndpoint> Future for TxGetBuffer<'_, E> {
     type Output = Result<Buffer>;
 
@@ -499,7 +493,7 @@ impl<E: BulkEndpoint> Future for TxGetBuffer<'_, E> {
             return Poll::Ready(Ok(buffer));
         }
         if pool.pending() == 0 {
-            return Poll::Ready(Err(Error::BoardState(NO_TX_BUFFERS)));
+            return Poll::Ready(Err(Error::NoTransfersInFlight));
         }
         let completion = std::task::ready!(pool.poll_next(cx));
         let mut buf = completion.buffer;
@@ -530,7 +524,7 @@ impl<E: BulkEndpoint> MaybeFuture for TxGetBuffer<'_, E> {
                 return Err(Error::Timeout);
             }
             if pool.pending() == 0 {
-                return Err(Error::BoardState(NO_TX_BUFFERS));
+                return Err(Error::NoTransfersInFlight);
             }
             let wait = remaining.min(Duration::from_secs(1));
             if let Some(completion) = pool.wait_completion(wait) {
@@ -1172,6 +1166,7 @@ impl RfLinkSession<'_> {
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
+    use crate::error::ErrorKind;
     use crate::maybe_future::block_on;
     use std::sync::{Arc, Mutex};
 
@@ -1330,7 +1325,7 @@ mod tests {
             if self.initialized {
                 Ok(())
             } else {
-                Err(Error::BoardState("device not initialized"))
+                Err(Error::NotInitialized)
             }
         }
         async fn enable_module(&mut self, channel: Channel, enable: bool) -> Result<()> {
@@ -1416,8 +1411,8 @@ mod tests {
         }
     }
 
-    fn bs(e: &Error) -> bool {
-        matches!(e, Error::BoardState(_))
+    fn is_kind(e: &Error, kind: ErrorKind) -> bool {
+        e.kind() == kind
     }
 
     #[test]
@@ -1442,7 +1437,10 @@ mod tests {
             MPS,
             2,
         );
-        assert!(bs(&block_on(core.configure(&mut host)).unwrap_err()));
+        assert!(matches!(
+            block_on(core.configure(&mut host)),
+            Err(Error::NotInitialized)
+        ));
         assert!(host.format.is_none());
     }
 
@@ -1492,15 +1490,24 @@ mod tests {
     #[test]
     fn start_twice_and_stop_when_not_started_are_rejected() {
         let mut f = Fixture::rx();
-        assert!(bs(&f.core.stop(&mut f.host).wait().unwrap_err()));
+        assert!(matches!(
+            f.core.stop(&mut f.host).wait(),
+            Err(Error::StreamNotStarted)
+        ));
         f.core.start(&mut f.host).wait().unwrap();
-        assert!(bs(&f.core.start(&mut f.host).wait().unwrap_err()));
+        assert!(matches!(
+            f.core.start(&mut f.host).wait(),
+            Err(Error::StreamAlreadyStarted)
+        ));
         assert_eq!(
             f.host.active, 1,
             "rejected start must not touch the counter"
         );
         f.core.stop(&mut f.host).wait().unwrap();
-        assert!(bs(&f.core.stop(&mut f.host).wait().unwrap_err()));
+        assert!(matches!(
+            f.core.stop(&mut f.host).wait(),
+            Err(Error::StreamNotStarted)
+        ));
         assert_eq!(f.host.active, 0);
     }
 
@@ -1524,18 +1531,34 @@ mod tests {
     #[test]
     fn io_before_start_is_rejected() {
         let mut f = Fixture::rx();
-        assert!(bs(&f.core.read(None).wait().unwrap_err()));
-        assert!(bs(&f.core.try_read().unwrap_err()));
+        assert!(matches!(
+            f.core.read(None).wait(),
+            Err(Error::StreamNotStarted)
+        ));
+        assert!(matches!(f.core.try_read(), Err(Error::StreamNotStarted)));
         assert_eq!(
             f.ep.pending(),
             0,
             "nothing may be submitted while the module is off"
         );
         let mut t = Fixture::tx();
-        assert!(bs(&t.core.get_buffer(None).wait().unwrap_err()));
-        assert!(bs(&t.core.wait_completion(None).wait().unwrap_err()));
+        assert!(matches!(
+            t.core.get_buffer(None).wait(),
+            Err(Error::StreamNotStarted)
+        ));
+        assert!(matches!(
+            t.core.wait_completion(None).wait(),
+            Err(Error::StreamNotStarted)
+        ));
         let buf = Buffer::new(16);
-        assert!(bs(&t.core.submit(buf, 0).unwrap_err()));
+        assert!(matches!(
+            t.core.submit(buf, 0),
+            Err(Error::StreamNotStarted)
+        ));
+        assert!(is_kind(
+            &t.core.try_get_buffer().unwrap_err(),
+            ErrorKind::State
+        ));
     }
 
     #[test]
@@ -1546,8 +1569,14 @@ mod tests {
             .map(|_| f.core.read(None).wait().unwrap())
             .collect();
         f.assert_pool_invariant(BUFFERS);
-        assert!(bs(&f.core.read(None).wait().unwrap_err()));
-        assert!(bs(&block_on(f.core.read(None).into_future()).unwrap_err()));
+        assert!(matches!(
+            f.core.read(None).wait(),
+            Err(Error::NoTransfersInFlight)
+        ));
+        assert!(matches!(
+            block_on(f.core.read(None).into_future()),
+            Err(Error::NoTransfersInFlight)
+        ));
         for b in held {
             f.core.recycle(b);
         }

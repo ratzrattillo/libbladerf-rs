@@ -26,7 +26,7 @@ impl FlashSession<'_> {
             let dac_str = binkv_decode_field(&buf, "DAC")?;
             dac_str
                 .parse::<u16>()
-                .map_err(|_| Error::BoardState("failed to parse DAC trim from flash"))
+                .map_err(|_| Error::FlashData("failed to parse DAC trim from flash"))
         })
     }
 

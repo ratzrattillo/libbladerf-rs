@@ -130,7 +130,7 @@ impl RfLinkSession<'_> {
             let f = self.lms().get_frequency(channel).await?;
             if f.x == 0 {
                 log::error!("LMSFreq.x was zero!");
-                return Err(Error::BoardState("LMSFreq.x was zero"));
+                return Err(Error::Internal("LMSFreq.x was zero"));
             }
             #[allow(unused_mut)]
             let mut frequency_hz: u64 = (&f).into();

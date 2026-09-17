@@ -86,22 +86,22 @@ impl Range {
     /// Returns the step value, or an error if the range does not have a step.
     pub fn step_checked(&self) -> crate::error::Result<f64> {
         self.step()
-            .ok_or(crate::error::Error::BoardState("gain range missing step"))
+            .ok_or(crate::error::Error::Internal("gain range missing step"))
     }
     /// Returns the scale factor, or an error if the range does not have a scale.
     pub fn scale_checked(&self) -> crate::error::Result<f64> {
         self.scale()
-            .ok_or(crate::error::Error::BoardState("gain range missing scale"))
+            .ok_or(crate::error::Error::Internal("gain range missing scale"))
     }
     /// Returns the minimum value, or an error if the range is empty.
     pub fn min_checked(&self) -> crate::error::Result<f64> {
         self.min()
-            .ok_or(crate::error::Error::BoardState("gain range missing min"))
+            .ok_or(crate::error::Error::Internal("gain range missing min"))
     }
     /// Returns the maximum value, or an error if the range is empty.
     pub fn max_checked(&self) -> crate::error::Result<f64> {
         self.max()
-            .ok_or(crate::error::Error::BoardState("gain range missing max"))
+            .ok_or(crate::error::Error::Internal("gain range missing max"))
     }
     /// Returns `true` if the value falls within any of the range items.
     /// For stepped ranges, checks that the value aligns with the step grid.

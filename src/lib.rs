@@ -82,7 +82,7 @@ pub mod range;
 pub(crate) mod usb;
 pub mod version;
 pub use channel::Channel;
-pub use error::{Error, Result};
+pub use error::{Error, ErrorKind, Result};
 pub use nusb;
 pub use nusb::MaybeFuture;
 pub use nusb::transfer::Buffer;

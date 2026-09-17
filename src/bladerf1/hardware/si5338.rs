@@ -177,7 +177,7 @@ impl<'a> Si5338<'a> {
                 );
             }
             if act.integer() > u32::MAX as u64 {
-                return Err(Error::BoardState("actual sample rate exceeds u32 range"));
+                return Err(Error::Internal("actual sample rate exceeds u32 range"));
             }
             log::trace!("Set actual integer sample rate: {}", act.integer());
             Ok(act.integer() as u32)
@@ -200,7 +200,7 @@ impl<'a> Si5338<'a> {
                 );
             }
             if actual.integer() > u32::MAX as u64 {
-                return Err(Error::BoardState("actual sample rate exceeds u32 range"));
+                return Err(Error::Internal("actual sample rate exceeds u32 range"));
             }
             Ok(actual.integer() as u32)
         })
@@ -292,7 +292,7 @@ impl<'a> Si5338<'a> {
                 );
             }
             if act.integer() > u32::MAX as u64 {
-                return Err(Error::BoardState("actual SMB frequency exceeds u32 range"));
+                return Err(Error::Internal("actual SMB frequency exceeds u32 range"));
             }
             log::trace!("Set actual integer SMB frequency: {}", act.integer());
             Ok(act.integer() as u32)
@@ -327,7 +327,7 @@ impl<'a> Si5338<'a> {
                 );
             }
             if actual.integer() > u32::MAX as u64 {
-                return Err(Error::BoardState("actual SMB frequency exceeds u32 range"));
+                return Err(Error::Internal("actual SMB frequency exceeds u32 range"));
             }
             Ok(actual.integer() as u32)
         })

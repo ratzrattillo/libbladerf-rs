@@ -115,10 +115,10 @@ impl RfLinkSession<'_> {
             self.require_initialized().await?;
             let reg = self.trigger_read(channel).await?;
             if (reg & REG_ARM) == 0 {
-                return Err(Error::BoardState("trigger not armed"));
+                return Err(Error::TriggerNotArmed);
             }
             if (reg & REG_MASTER) == 0 {
-                return Err(Error::BoardState("only master can fire trigger"));
+                return Err(Error::TriggerNotMaster);
             }
             self.trigger_write(channel, reg | REG_FIRE).await
         })

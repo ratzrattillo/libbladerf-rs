@@ -36,11 +36,11 @@ impl RfLinkSession<'_> {
             bandwidth = bandwidth.clamp(
                 bandwidth_range
                     .min()
-                    .ok_or(Error::BoardState("bandwidth range has no minimum"))?
+                    .ok_or(Error::Internal("bandwidth range has no minimum"))?
                     as u32,
                 bandwidth_range
                     .max()
-                    .ok_or(Error::BoardState("bandwidth range has no maximum"))?
+                    .ok_or(Error::Internal("bandwidth range has no maximum"))?
                     as u32,
             );
             log::trace!("Clamped bandwidth to {bandwidth}");
