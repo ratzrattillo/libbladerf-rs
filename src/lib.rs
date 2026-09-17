@@ -64,8 +64,8 @@
     not(any(feature = "smol", feature = "tokio"))
 ))]
 compile_error!(
-    "libbladerf-rs requires the `smol` (default) or `tokio` feature on native targets; \
-     nusb resolves blocking USB operations through one of these runtimes"
+    "libbladerf-rs requires the `smol` or `tokio` feature on native targets (`smol` is part of \
+     the default features); nusb resolves blocking USB operations through one of these runtimes"
 );
 
 #[cfg(feature = "bladerf1")]
