@@ -225,7 +225,6 @@ pub const METADATA_HEADER_SIZE: usize = 16;
 ///
 /// Each field serves a dual purpose depending on whether the format
 /// uses timestamp metadata or packet metadata.
-#[repr(C, packed)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct MetadataHeader {
     reserved_or_length: u16,
@@ -253,10 +252,13 @@ impl MetadataHeader {
     /// Parses a `MetadataHeader` from a byte slice.
     /// Returns `None` if the slice is shorter than `METADATA_HEADER_SIZE`.
     pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
-        if bytes.len() < METADATA_HEADER_SIZE {
-            return None;
-        }
-        Some(unsafe { std::ptr::read_unaligned(bytes.as_ptr() as *const Self) })
+        let (b, _) = bytes.split_first_chunk::<METADATA_HEADER_SIZE>()?;
+        Some(Self {
+            reserved_or_length: u16::from_le_bytes([b[0], b[1]]),
+            flags_or_core: u16::from_le_bytes([b[2], b[3]]),
+            timestamp: u64::from_le_bytes([b[4], b[5], b[6], b[7], b[8], b[9], b[10], b[11]]),
+            meta_flags: u32::from_le_bytes([b[12], b[13], b[14], b[15]]),
+        })
     }
 
     /// Returns the 40-bit hardware timestamp from the header.
