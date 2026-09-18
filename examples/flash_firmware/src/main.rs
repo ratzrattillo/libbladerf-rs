@@ -1,5 +1,6 @@
 use anyhow::{Context, Result, bail};
 use clap::Parser;
+use libbladerf_rs::MaybeFuture;
 use libbladerf_rs::bladerf1::BladeRf1;
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
@@ -62,7 +63,7 @@ fn verify_sha256(data: &[u8], expected_hex: &str) -> Result<()> {
 fn reopen_with_retry(attempts: u32, delay: Duration) -> Result<BladeRf1> {
     for i in 0..attempts {
         log::info!("Attempt {}/{} to reconnect device...", i + 1, attempts);
-        match BladeRf1::from_first() {
+        match BladeRf1::from_first().wait() {
             Ok(dev) => return Ok(dev),
             Err(_) => {
                 if i + 1 < attempts {
@@ -123,24 +124,24 @@ fn main() -> Result<()> {
         (data, ver_key.to_string())
     };
 
-    let mut bladerf = BladeRf1::from_first()?;
-    let current_version = bladerf.fx3_firmware_version()?;
+    let mut bladerf = BladeRf1::from_first().wait()?;
+    let current_version = bladerf.fx3_firmware_version().wait()?;
     log::info!("Current firmware: {}", current_version);
 
     log::info!("Flashing firmware...");
-    let mut flash = bladerf.flash_session()?;
-    flash.flash_firmware(&firmware)?;
+    let mut flash = bladerf.flash_session().wait()?;
+    flash.flash_firmware(&firmware).wait()?;
     log::info!("Firmware written and verified");
 
     log::info!("Resetting device...");
-    bladerf.device_reset()?;
+    bladerf.device_reset().wait()?;
 
     drop(bladerf);
 
     log::info!("Waiting for device to reconnect...");
     let bladerf = reopen_with_retry(10, Duration::from_secs(2))?;
 
-    let new_version = bladerf.fx3_firmware_version()?;
+    let new_version = bladerf.fx3_firmware_version().wait()?;
     log::info!("Firmware after flash: {}", new_version);
 
     let expected = label.trim_start_matches('v');

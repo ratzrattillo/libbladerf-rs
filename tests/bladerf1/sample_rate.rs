@@ -1,4 +1,5 @@
 use super::common::*;
+use libbladerf_rs::MaybeFuture;
 use libbladerf_rs::bladerf1::RfLinkSession;
 use libbladerf_rs::range::RangeItem;
 use libbladerf_rs::{Channel, Result};
@@ -8,7 +9,7 @@ fn sample_rate() -> Result<()> {
     logging_init("bladerf1_sample_rate");
 
     let mut sdr = sdr();
-    let mut rf = sdr.rf_link_session()?;
+    let mut rf = sdr.rf_link_session().wait()?;
     let supported_sample_rates = RfLinkSession::get_sample_rate_range();
 
     log::trace!("supported_sample_rates: {supported_sample_rates:?}");
@@ -24,17 +25,17 @@ fn sample_rate() -> Result<()> {
         let mut desired = min.round() as u32;
         while desired <= max.round() as u32 {
             for channel in [Channel::Rx, Channel::Tx] {
-                let current = rf.get_sample_rate(channel)?;
+                let current = rf.get_sample_rate(channel).wait()?;
                 log::trace!("Channel {channel:?} Sample Rate (CURRENT):\t{current}");
                 log::trace!("Channel {channel:?} Sample Rate (DESIRED):\t{desired}");
 
-                rf.set_sample_rate(channel, desired)?;
+                rf.set_sample_rate(channel, desired).wait()?;
 
-                let new = rf.get_sample_rate(channel)?;
+                let new = rf.get_sample_rate(channel).wait()?;
                 log::trace!("Channel {channel:?} Sample Rate (NEW):\t\t{new}");
                 assert_eq!(new, desired);
 
-                rf.set_sample_rate(channel, current)?;
+                rf.set_sample_rate(channel, current).wait()?;
             }
 
             desired += (*step * *scale * offset).round() as u32;

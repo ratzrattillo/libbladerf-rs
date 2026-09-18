@@ -25,6 +25,20 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --features bladerf1 --all-targets -- -D warnings
+      - run: cargo clippy --no-default-features --features bladerf1,xb100,xb200,xb300,tokio --all-targets -- -D warnings
+
+  clippy-nightly:
+    name: Clippy (nightly, early warning)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --features bladerf1 --all-targets -- -D warnings
+      - run: cargo clippy --no-default-features --features bladerf1,xb100,xb200,xb300,tokio --all-targets -- -D warnings
 
   audit:
     runs-on: ubuntu-latest
@@ -50,6 +64,17 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo doc --features bladerf1 --no-deps
 
+  wasm:
+    name: Check wasm32-unknown-unknown
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --target wasm32-unknown-unknown --features bladerf1 --lib
+
   build-examples:
     runs-on: ubuntu-latest
     steps:
@@ -71,8 +96,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --features bladerf1
+      - run: cargo build --no-default-features --features bladerf1,tokio
       - run: cargo test --lib
       - run: cargo test --test unit
+      - run: cargo test --test public_api --features bladerf1
 
   test-macos:
     name: Unit Tests macOS
@@ -86,6 +113,7 @@ jobs:
       - run: cargo build --features bladerf1
       - run: cargo test --lib
       - run: cargo test --test unit
+      - run: cargo test --test public_api --features bladerf1
 
   test-windows:
     name: Unit Tests Windows
@@ -99,3 +127,4 @@ jobs:
       - run: cargo build --features bladerf1
       - run: cargo test --lib
       - run: cargo test --test unit
+      - run: cargo test --test public_api --features bladerf1

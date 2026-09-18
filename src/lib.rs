@@ -13,6 +13,8 @@
 //! | `xb100`     | yes     | XB-100 expansion board support         |
 //! | `xb200`     | yes     | XB-200 transverter board support       |
 //! | `xb300`     | yes     | XB-300 amplifier board support         |
+//! | `smol`      | yes     | nusb `smol` runtime integration         |
+//! | `tokio`     | no      | nusb `tokio` runtime integration        |
 //!
 //! \* Enabled implicitly by the `xb100`, `xb200`, or `xb300` features.
 //!
@@ -29,32 +31,64 @@
 //! borrow `&mut NiosCore`. The Rust borrow checker enforces that only one
 //! session is active at a time, serializing all register I/O at compile time.
 //!
+//! # Sync and async
+//!
+//! Every I/O method returns a [`MaybeFuture`]: call `.wait()` to block the
+//! current thread (native targets only) or `.await` it from async code. The
+//! crate mirrors nusb's semantics: like every nusb-based driver it needs
+//! nusb's `smol` (default) or `tokio` feature on native targets, selected
+//! through the features of the same name. Streaming timeouts apply to the
+//! blocking path only; awaited stream futures consume one USB completion per
+//! await and are cancel-safe.
+//!
+//! On `wasm32-unknown-unknown` (WebUSB) there is no `.wait()`; open the
+//! device with [`bladerf1::BladeRf1::from_device`] and shut it down with
+//! [`bladerf1::BladeRf1::close`].
+//!
 //! # Entry point
 //!
 //! Open a device and obtain an [`bladerf1::RfLinkSession`] to begin RF operations:
 //!
 //! ```ignore
-//! let mut dev = BladeRf1::from_first()?;
-//! let mut sess = dev.rf_link_session()?;
-//! sess.initialize(false)?;
+//! use libbladerf_rs::MaybeFuture;
+//!
+//! let mut dev = BladeRf1::from_first().wait()?;
+//! let mut sess = dev.rf_link_session().wait()?;
+//! sess.initialize(false).wait()?;
 //! ```
 //!
 //! [nusb]: https://github.com/kevinmehall/nusb
+
+#![deny(missing_docs)]
+
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    not(any(feature = "smol", feature = "tokio"))
+))]
+compile_error!(
+    "libbladerf-rs requires the `smol` or `tokio` feature on native targets (`smol` is part of \
+     the default features); nusb resolves blocking USB operations through one of these runtimes"
+);
 
 #[cfg(feature = "bladerf1")]
 pub mod bladerf1;
 #[cfg(feature = "bladerf2")]
 pub mod bladerf2;
+/// RX/TX channel selector.
 pub mod channel;
 pub mod error;
 pub mod flash;
-pub mod nios_client;
+pub(crate) mod maybe_future;
+pub(crate) mod nios_client;
 pub mod protocol;
 pub mod range;
-pub mod usb;
+pub(crate) mod usb;
+/// Semantic version triple reported by firmware and FPGA.
 pub mod version;
 pub use channel::Channel;
-pub use error::{Error, Result};
+pub use error::{Error, ErrorKind, Result};
+pub use nusb;
+pub use nusb::MaybeFuture;
 pub use nusb::transfer::Buffer;
 pub use version::SemanticVersion;
 pub(crate) const fn khz(value: u32) -> u32 {

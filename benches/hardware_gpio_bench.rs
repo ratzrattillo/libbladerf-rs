@@ -1,52 +1,53 @@
 use criterion::{Criterion, criterion_group, criterion_main};
+use libbladerf_rs::MaybeFuture;
 use libbladerf_rs::bladerf1::BladeRf1;
 use libbladerf_rs::channel::Channel;
 use std::cell::Cell;
 
 fn bench_gpio_read(c: &mut Criterion) {
-    let mut device = BladeRf1::from_first().expect("No BladeRF1 found");
-    let mut rf = device.rf_link_session().expect("Session failed");
-    rf.initialize(true).expect("Initialize failed");
+    let mut device = BladeRf1::from_first().wait().expect("No BladeRF1 found");
+    let mut rf = device.rf_link_session().wait().expect("Session failed");
+    rf.initialize(true).wait().expect("Initialize failed");
     let mut group = c.benchmark_group("hardware_gpio");
     group.sample_size(20);
     group.measurement_time(std::time::Duration::from_secs(5));
 
     group.bench_function("config_gpio_read", |b| {
-        b.iter(|| rf.config_gpio_read().unwrap())
+        b.iter(|| rf.config_gpio_read().wait().unwrap())
     });
 }
 
 fn bench_gpio_write(c: &mut Criterion) {
-    let mut device = BladeRf1::from_first().expect("No BladeRF1 found");
-    let mut rf = device.rf_link_session().expect("Session failed");
-    rf.initialize(true).expect("Initialize failed");
-    let value = rf.config_gpio_read().unwrap();
+    let mut device = BladeRf1::from_first().wait().expect("No BladeRF1 found");
+    let mut rf = device.rf_link_session().wait().expect("Session failed");
+    rf.initialize(true).wait().expect("Initialize failed");
+    let value = rf.config_gpio_read().wait().unwrap();
     let mut group = c.benchmark_group("hardware_gpio");
     group.sample_size(20);
     group.measurement_time(std::time::Duration::from_secs(5));
 
     group.bench_function("config_gpio_write", |b| {
-        b.iter(|| rf.config_gpio_write(value).unwrap())
+        b.iter(|| rf.config_gpio_write(value).wait().unwrap())
     });
 }
 
 fn bench_gpio_modify(c: &mut Criterion) {
-    let mut device = BladeRf1::from_first().expect("No BladeRF1 found");
-    let mut rf = device.rf_link_session().expect("Session failed");
-    rf.initialize(true).expect("Initialize failed");
+    let mut device = BladeRf1::from_first().wait().expect("No BladeRF1 found");
+    let mut rf = device.rf_link_session().wait().expect("Session failed");
+    rf.initialize(true).wait().expect("Initialize failed");
     let mut group = c.benchmark_group("hardware_gpio");
     group.sample_size(20);
     group.measurement_time(std::time::Duration::from_secs(5));
 
     group.bench_function("config_gpio_modify", |b| {
-        b.iter(|| rf.config_gpio_modify(|gpio| gpio).unwrap())
+        b.iter(|| rf.config_gpio_modify(|gpio| gpio).wait().unwrap())
     });
 }
 
 fn bench_enable_module(c: &mut Criterion) {
-    let mut device = BladeRf1::from_first().expect("No BladeRF1 found");
-    let mut rf = device.rf_link_session().expect("Session failed");
-    rf.initialize(true).expect("Initialize failed");
+    let mut device = BladeRf1::from_first().wait().expect("No BladeRF1 found");
+    let mut rf = device.rf_link_session().wait().expect("Session failed");
+    rf.initialize(true).wait().expect("Initialize failed");
     let mut group = c.benchmark_group("hardware_gpio_module");
     group.sample_size(10);
     group.measurement_time(std::time::Duration::from_secs(5));
@@ -56,7 +57,7 @@ fn bench_enable_module(c: &mut Criterion) {
         b.iter(|| {
             let enable = toggle.get();
             toggle.set(!enable);
-            rf.enable_module(Channel::Rx, enable).unwrap()
+            rf.enable_module(Channel::Rx, enable).wait().unwrap()
         })
     });
 }

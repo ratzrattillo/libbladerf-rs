@@ -9,7 +9,9 @@
 use crate::bladerf1::board::RfLinkSession;
 use crate::bladerf1::hardware::si5338;
 use crate::error::Result;
+use crate::maybe_future::Op;
 use crate::range::{Range, RangeItem};
+use nusb::MaybeFuture;
 
 impl RfLinkSession<'_> {
     /// Sets the SMB clock mode on the Si5338.
@@ -18,17 +20,21 @@ impl RfLinkSession<'_> {
     /// the connector as an external clock input, or disables SMB operation.
     ///
     /// Returns `Error::BoardState` if the board is not initialized.
-    pub fn set_smb_mode(&mut self, mode: si5338::SmbMode) -> Result<()> {
-        self.require_initialized()?;
-        self.si().set_smb_mode(mode)
+    pub fn set_smb_mode(&mut self, mode: si5338::SmbMode) -> impl MaybeFuture<Output = Result<()>> {
+        Op::new(async move {
+            self.require_initialized().await?;
+            self.si().set_smb_mode(mode).await
+        })
     }
 
     /// Returns the current SMB clock mode.
     ///
     /// Returns `Error::BoardState` if the board is not initialized.
-    pub fn get_smb_mode(&mut self) -> Result<si5338::SmbMode> {
-        self.require_initialized()?;
-        self.si().get_smb_mode()
+    pub fn get_smb_mode(&mut self) -> impl MaybeFuture<Output = Result<si5338::SmbMode>> {
+        Op::new(async move {
+            self.require_initialized().await?;
+            self.si().get_smb_mode().await
+        })
     }
 
     /// Sets the SMB output frequency in Hz.
@@ -38,17 +44,21 @@ impl RfLinkSession<'_> {
     /// frequency is returned.
     ///
     /// Returns `Error::BoardState` if the board is not initialized.
-    pub fn set_smb_freq(&mut self, rate: u32) -> Result<u32> {
-        self.require_initialized()?;
-        self.si().set_smb_freq(rate)
+    pub fn set_smb_freq(&mut self, rate: u32) -> impl MaybeFuture<Output = Result<u32>> {
+        Op::new(async move {
+            self.require_initialized().await?;
+            self.si().set_smb_freq(rate).await
+        })
     }
 
     /// Returns the current SMB output frequency in Hz.
     ///
     /// Returns `Error::BoardState` if the board is not initialized.
-    pub fn get_smb_freq(&mut self) -> Result<u32> {
-        self.require_initialized()?;
-        self.si().get_smb_freq()
+    pub fn get_smb_freq(&mut self) -> impl MaybeFuture<Output = Result<u32>> {
+        Op::new(async move {
+            self.require_initialized().await?;
+            self.si().get_smb_freq().await
+        })
     }
 
     /// Sets the SMB output frequency using a rational numerator/denominator.
@@ -61,17 +71,23 @@ impl RfLinkSession<'_> {
     pub fn set_rational_smb_freq(
         &mut self,
         rate: si5338::RationalRate,
-    ) -> Result<si5338::RationalRate> {
-        self.require_initialized()?;
-        self.si().set_rational_smb_freq(rate)
+    ) -> impl MaybeFuture<Output = Result<si5338::RationalRate>> {
+        Op::new(async move {
+            self.require_initialized().await?;
+            self.si().set_rational_smb_freq(rate).await
+        })
     }
 
     /// Returns the current SMB output rate as a rational numerator/denominator.
     ///
     /// Returns `Error::BoardState` if the board is not initialized.
-    pub fn get_rational_smb_freq(&mut self) -> Result<si5338::RationalRate> {
-        self.require_initialized()?;
-        self.si().get_rational_smb_freq()
+    pub fn get_rational_smb_freq(
+        &mut self,
+    ) -> impl MaybeFuture<Output = Result<si5338::RationalRate>> {
+        Op::new(async move {
+            self.require_initialized().await?;
+            self.si().get_rational_smb_freq().await
+        })
     }
 
     /// Returns the valid frequency range for the SMB clock output.

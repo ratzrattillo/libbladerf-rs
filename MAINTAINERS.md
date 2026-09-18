@@ -11,20 +11,27 @@ composite action `.github/actions/check`, which runs:
 
 1. Build — `cargo build --features bladerf1`
 2. Unit tests — `cargo test --lib`
-3. Protocol tests — `cargo test --test unit`
+3. Protocol tests — `cargo test --test unit`; public API contract —
+   `cargo test --test public_api --features bladerf1`
 4. Clippy — `cargo clippy --features bladerf1 --all-targets -- -D warnings`
+   (and once more with `--no-default-features --features bladerf1,xb100,xb200,xb300,tokio`)
 5. Format check — `cargo fmt --all --check`
 6. Security audit — `cargo install cargo-audit && cargo audit`
 7. License/deny check — `cargo install cargo-deny && cargo deny check`
 8. Documentation — `cargo doc --features bladerf1 --no-deps`
 9. Build all examples — every `examples/*/Cargo.toml`
+10. WebUSB — `cargo check --target wasm32-unknown-unknown --features bladerf1 --lib`
+    (`.cargo/config.toml` supplies `--cfg=web_sys_unstable_apis`)
 
 CI does **not** run hardware integration tests (no BladeRF1 attached to the
 runner) and does **not** run the local-only conventional-commits validation.
 
 ## Local pre-flight
 
-`scripts/check.sh` is the local pre-flight check. It is also the
+`scripts/check.sh` is the local pre-flight check. It pins the stable
+toolchain (attempting `rustup update stable` first so new default-warn lints
+are caught locally), checks formatting with nightly rustfmt, and runs clippy on
+both stable (the CI gate) and nightly (early warning for lints about to land). It is also the
 `cargo-release` pre-release hook (see `release.toml`). It runs, in order:
 
 - Build (`--features bladerf1`)

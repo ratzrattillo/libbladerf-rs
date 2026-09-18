@@ -1,4 +1,5 @@
 use super::common::*;
+use libbladerf_rs::MaybeFuture;
 use libbladerf_rs::bladerf1::RfLinkSession;
 use libbladerf_rs::range::RangeItem;
 use libbladerf_rs::{Channel, Result};
@@ -8,7 +9,7 @@ fn bandwidth() -> Result<()> {
     logging_init("bladerf1_bandwidth");
 
     let mut sdr = sdr();
-    let mut rf = sdr.rf_link_session()?;
+    let mut rf = sdr.rf_link_session().wait()?;
     let supported_bandwidths = RfLinkSession::get_bandwidth_range();
 
     log::trace!("supported_bandwidths: {supported_bandwidths:?}");
@@ -18,15 +19,15 @@ fn bandwidth() -> Result<()> {
             _ => panic!("bandwidth range item should be Variant of type \"Value\"!"),
         };
         for channel in [Channel::Rx, Channel::Tx] {
-            let current = rf.get_bandwidth(channel)?;
+            let current = rf.get_bandwidth(channel).wait()?;
             log::trace!("Channel {channel:?} Bandwidth (CURRENT):\t{current}");
             log::trace!("Channel {channel:?} Bandwidth (DESIRED):\t{desired}");
 
-            let actual = rf.set_bandwidth(channel, desired)?;
+            let actual = rf.set_bandwidth(channel, desired).wait()?;
             log::trace!("Channel {channel:?} Bandwidth (ACTUAL):\t{actual}");
             assert_eq!(actual, desired);
 
-            rf.set_bandwidth(channel, current)?;
+            rf.set_bandwidth(channel, current).wait()?;
         }
     }
 

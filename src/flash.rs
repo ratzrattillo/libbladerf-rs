@@ -24,10 +24,15 @@ pub use crate::bladerf1::hardware::spi_flash::{
 /// KLE40/KLE115 are bladeRF1, A4/A5/A9 are bladeRF2.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FpgaSize {
+    /// bladeRF x40 (Cyclone IV 40 kLE).
     KLE40,
+    /// bladeRF x115 (Cyclone IV 115 kLE).
     KLE115,
+    /// bladeRF 2.0 micro xA4.
     A4,
+    /// bladeRF 2.0 micro xA5.
     A5,
+    /// bladeRF 2.0 micro xA9.
     A9,
 }
 
@@ -96,9 +101,7 @@ pub fn binkv_encode_field(buf: &mut [u8], idx: usize, field: &str, val: &str) ->
     let tlen = flen + vlen + 1; // +1 for length byte included in CRC
 
     if tlen >= 256 || idx + tlen + 2 > buf.len() {
-        return Err(Error::BoardState(
-            "binkv field too large or buffer overflow",
-        ));
+        return Err(Error::FlashData("binkv field too large or buffer overflow"));
     }
 
     buf[idx] = (flen + vlen) as u8;
@@ -138,7 +141,7 @@ pub fn binkv_decode_field(buf: &[u8], field: &str) -> Result<String> {
         let calc_crc = zcrc(&buf[pos..pos + c + 1]);
 
         if stored_crc != calc_crc {
-            return Err(Error::BoardState("binkv CRC mismatch"));
+            return Err(Error::FlashData("binkv CRC mismatch"));
         }
 
         // Check if field name matches (starts right after length byte)
@@ -152,7 +155,7 @@ pub fn binkv_decode_field(buf: &[u8], field: &str) -> Result<String> {
         pos += c + 3;
     }
 
-    Err(Error::BoardState("binkv field not found"))
+    Err(Error::FlashData("binkv field not found"))
 }
 
 /// Appends a BINKV field at the end of existing fields in the buffer.
