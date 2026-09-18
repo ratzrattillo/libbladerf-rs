@@ -10,7 +10,7 @@
 //!
 //! # Ownership model
 //!
-//! [`BladeRf1`] owns the USB device and the [`NiosCore`]
+//! [`BladeRf1`] owns the USB device and the `NiosCore`
 //! that serializes all register I/O. Session types borrow `&mut NiosCore`, so the
 //! Rust borrow checker guarantees that at most one session is active at a time.
 //! Users never access `NiosCore` directly; they call methods on the session.
@@ -106,7 +106,7 @@ fn is_bladerf1(dev: &DeviceInfo) -> bool {
 
 /// Primary device handle for the BladeRF1.
 ///
-/// Owns the USB device and the internal [`NiosCore`].
+/// Owns the USB device and the internal `NiosCore`.
 /// Construct via [`from_first`](BladeRf1::from_first),
 /// [`from_serial`](BladeRf1::from_serial),
 /// [`from_bus_addr`](BladeRf1::from_bus_addr),
