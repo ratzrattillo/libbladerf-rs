@@ -91,8 +91,10 @@ fn firmware_loopback_stream() -> Result<()> {
     let rx_data: &[u8] = &rx_buf;
 
     let non_zero = rx_data
-        .chunks_exact(4)
-        .filter(|chunk| chunk != &[0, 0, 0, 0])
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .filter(|chunk| **chunk != [0, 0, 0, 0])
         .count();
     log::trace!(
         "Firmware loopback: received {} bytes, {} non-zero samples out of {}",
@@ -176,8 +178,10 @@ fn run_loopback_stream_test(loopback_mode: Loopback, test_name: &str) -> Result<
     let rx_data: &[u8] = &rx_buf;
 
     let non_zero = rx_data
-        .chunks_exact(4)
-        .filter(|chunk| chunk != &[0, 0, 0, 0])
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .filter(|chunk| **chunk != [0, 0, 0, 0])
         .count();
     log::trace!(
         "{test_name}: received {} bytes, {} non-zero samples out of {}",

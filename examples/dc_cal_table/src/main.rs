@@ -453,7 +453,9 @@ fn tx_cal_mix(samples: &[i16], rx_low: bool) -> Vec<ComplexF> {
         -std::f32::consts::FRAC_PI_2
     };
     samples
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .enumerate()
         .map(|(n, iq)| {
             let s = ComplexF::new(iq[0] as f32 / 2048.0, iq[1] as f32 / 2048.0);

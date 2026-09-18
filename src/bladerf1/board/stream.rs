@@ -746,9 +746,9 @@ impl SampleFormat {
             return Err(Error::Argument("destination buffer too small".into()));
         }
         let pairs = num_samples / 2;
-        let src_chunks = src[..src_needed].chunks_exact(6);
-        let dst_chunks = dst[..dst_needed].chunks_exact_mut(8);
-        for (s, d) in src_chunks.zip(dst_chunks).take(pairs) {
+        let src_chunks = src[..src_needed].as_chunks::<6>().0;
+        let dst_chunks = dst[..dst_needed].as_chunks_mut::<8>().0;
+        for (s, d) in src_chunks.iter().zip(dst_chunks.iter_mut()).take(pairs) {
             let w0 = u16::from_le_bytes([s[0], s[1]]);
             let w1 = u16::from_le_bytes([s[2], s[3]]);
             let w2 = u16::from_le_bytes([s[4], s[5]]);
@@ -785,9 +785,9 @@ impl SampleFormat {
             return Err(Error::Argument("destination buffer too small".into()));
         }
         let pairs = num_samples / 2;
-        let src_chunks = src[..src_needed].chunks_exact(8);
-        let dst_chunks = dst[..dst_needed].chunks_exact_mut(6);
-        for (s, d) in src_chunks.zip(dst_chunks).take(pairs) {
+        let src_chunks = src[..src_needed].as_chunks::<8>().0;
+        let dst_chunks = dst[..dst_needed].as_chunks_mut::<6>().0;
+        for (s, d) in src_chunks.iter().zip(dst_chunks.iter_mut()).take(pairs) {
             let v0 = i16::from_le_bytes([s[0], s[1]]) as u16;
             let v1 = i16::from_le_bytes([s[2], s[3]]) as u16;
             let v2 = i16::from_le_bytes([s[4], s[5]]) as u16;

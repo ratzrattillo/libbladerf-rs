@@ -110,8 +110,10 @@ async fn firmware_loopback_stream() -> Result<()> {
         .await
         .expect("RX read timed out")?;
     let non_zero = rx_buf
-        .chunks_exact(4)
-        .filter(|chunk| chunk != &[0, 0, 0, 0])
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .filter(|chunk| **chunk != [0, 0, 0, 0])
         .count();
     log::info!(
         "async firmware loopback: {} bytes, {non_zero} non-zero samples",

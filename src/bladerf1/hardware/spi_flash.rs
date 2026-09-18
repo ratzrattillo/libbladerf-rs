@@ -249,13 +249,16 @@ impl FlashSession<'_> {
         expected: &[u8],
     ) -> impl MaybeFuture<Output = Result<()>> {
         Op::new(async move {
-            for (page_idx, expected_page) in
-                expected.chunks_exact(BLADERF_FLASH_PAGE_SIZE).enumerate()
+            for (page_idx, expected_page) in expected
+                .as_chunks::<BLADERF_FLASH_PAGE_SIZE>()
+                .0
+                .iter()
+                .enumerate()
             {
                 let mut actual = [0u8; BLADERF_FLASH_PAGE_SIZE];
                 self.read_page(page_start + page_idx as u32, &mut actual)
                     .await?;
-                if expected_page != actual {
+                if *expected_page != actual {
                     let local = expected_page
                         .iter()
                         .zip(&actual)

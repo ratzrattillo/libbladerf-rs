@@ -68,7 +68,9 @@ impl FlashSession<'_> {
 
                     let start_page = sector * pages_per_sector;
                     for (page_idx, page_data) in sector_data
-                        .chunks_exact(BLADERF_FLASH_PAGE_SIZE)
+                        .as_chunks::<BLADERF_FLASH_PAGE_SIZE>()
+                        .0
+                        .iter()
                         .enumerate()
                     {
                         self.write_page(start_page + page_idx as u32, page_data)
