@@ -6,8 +6,10 @@
 //! bandwidth and frequency band.
 
 use crate::bladerf1::hardware::lms6002d::Lms6002d;
+use crate::maybe_future::Op;
 use crate::range::{Range, RangeItem};
 use crate::{Channel, khz, mhz};
+use nusb::MaybeFuture;
 
 /// Band split frequency in Hz: frequencies below use low band, at or above use high band.
 pub const BLADERF1_BAND_HIGH: u32 = 1_500_000_000;
@@ -138,19 +140,26 @@ impl<'a> Lms6002d<'a> {
         &mut self,
         channel: Channel,
         bw: LmsBandwidth,
-    ) -> crate::Result<()> {
-        let addr = if channel == Channel::Rx { 0x54 } else { 0x34 };
-        let mut data = self.read(addr)?;
-        data &= !0x3c;
-        data |= bw.to_index() << 2;
-        self.write(addr, data)
+    ) -> impl MaybeFuture<Output = crate::Result<()>> {
+        Op::new(async move {
+            let addr = if channel == Channel::Rx { 0x54 } else { 0x34 };
+            let mut data = self.read(addr).await?;
+            data &= !0x3c;
+            data |= bw.to_index() << 2;
+            self.write(addr, data).await
+        })
     }
 
-    pub(crate) fn get_bandwidth(&mut self, channel: Channel) -> crate::Result<LmsBandwidth> {
-        let addr = if channel == Channel::Rx { 0x54 } else { 0x34 };
-        let mut data = self.read(addr)?;
-        data >>= 2;
-        data &= 0xf;
-        Ok(LmsBandwidth::from_index(data))
+    pub(crate) fn get_bandwidth(
+        &mut self,
+        channel: Channel,
+    ) -> impl MaybeFuture<Output = crate::Result<LmsBandwidth>> {
+        Op::new(async move {
+            let addr = if channel == Channel::Rx { 0x54 } else { 0x34 };
+            let mut data = self.read(addr).await?;
+            data >>= 2;
+            data &= 0xf;
+            Ok(LmsBandwidth::from_index(data))
+        })
     }
 }

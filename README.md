@@ -5,7 +5,9 @@
 [![Downloads](https://img.shields.io/crates/d/libbladerf-rs.svg)](https://crates.io/crates/libbladerf-rs)
 
 Pure Rust driver for the Nuand BladeRF1 (x40/x115) SDR. No C libbladeRF dependency.
-USB transport via [nusb]. Supports Windows, macOS, and Linux.
+USB transport via [nusb]. Supports Windows, macOS, Linux, Android (via file
+descriptor) and WebUSB (`wasm32-unknown-unknown`). Every I/O method can be
+used synchronously or asynchronously.
 
 [nusb]: https://github.com/kevinmehall/nusb
 [libbladeRF]: https://github.com/Nuand/bladeRF
@@ -19,6 +21,13 @@ USB transport via [nusb]. Supports Windows, macOS, and Linux.
 | `xb100`     | yes     | XB-100 LED expansion board             |
 | `xb200`     | yes     | XB-200 transverter board               |
 | `xb300`     | yes     | XB-300 amplifier board                 |
+| `smol`      | yes     | nusb `smol` integration (`blocking` thread pool) |
+| `tokio`     | no      | nusb `tokio` integration (`spawn_blocking`)     |
+
+Exactly like every nusb-based driver, one of `smol`/`tokio` is required on
+native targets: nusb resolves device open, interface claim, alternate-setting
+switches and clear-halt through the selected runtime's blocking pool. Neither
+is needed on wasm32. If both are enabled nusb uses `smol`.
 
 \* Enabled implicitly by `xb100`, `xb200`, or `xb300`.
 
@@ -38,6 +47,69 @@ at compile time.
 
 `FlashSession` and `ConfigSession` return `Error::StreamsActive` if any stream is running.
 
+### Sync or async
+
+Every I/O method returns an [`nusb::MaybeFuture`] (re-exported as
+`libbladerf_rs::MaybeFuture`). Call `.wait()` to block the current thread, or
+`.await` it from async code:
+
+```rust,ignore
+use libbladerf_rs::MaybeFuture;
+use libbladerf_rs::bladerf1::{BladeRf1, RxStream, TuningMode};
+use libbladerf_rs::Channel;
+
+// Blocking (native targets only)
+let mut dev = BladeRf1::from_first().wait()?;
+let mut rf = dev.rf_link_session().wait()?;
+rf.initialize(false).wait()?;
+rf.set_frequency(Channel::Rx, 100_000_000, TuningMode::Fpga).wait()?;
+let mut rx = RxStream::builder(&mut rf).build().wait()?;
+rx.start(&mut rf).wait()?;
+let buffer = rx.read(Some(std::time::Duration::from_secs(1))).wait()?;
+rx.recycle(buffer);
+rx.close(&mut rf).wait()?;
+
+// Async — identical calls, `.await` instead of `.wait()`
+let mut dev = BladeRf1::from_first().await?;
+let mut rf = dev.rf_link_session().await?;
+rf.initialize(false).await?;
+let mut rx = RxStream::builder(&mut rf).build().await?;
+rx.start(&mut rf).await?;
+let buffer = rx.read(None).await?;
+rx.recycle(buffer);
+rx.close(&mut rf).await?;
+dev.close().await?;
+```
+
+The crate mirrors [nusb]'s semantics exactly: transfers are real futures
+completed by nusb's event thread, and the handful of blocking syscalls (device
+open, interface claim, alternate-setting switch, clear halt) are offloaded
+through nusb's `smol` or `tokio` integration. With the default `smol` feature
+both `.wait()` and `.await` work under any executor. With `tokio` instead,
+`.await` must run inside a tokio runtime; `.wait()` works anywhere (the crate
+enters a private runtime context for callers outside tokio).
+
+Streaming timeouts (`RxStream::read`, `TxStream::get_buffer`,
+`TxStream::wait_completion`) apply to the blocking path only. The awaited
+futures ignore the timeout argument, consume at most one USB completion per
+await and are cancel-safe, so wrap them in your executor's timeout
+(`tokio::time::timeout`, `gloo_timers`, ...) if you need a deadline.
+
+### WebUSB
+
+The crate compiles for `wasm32-unknown-unknown`. nusb's WebUSB backend needs
+web-sys unstable APIs, so consumers must add to their `.cargo/config.toml`:
+
+```toml
+[target.wasm32-unknown-unknown]
+rustflags = ["--cfg=web_sys_unstable_apis"]
+```
+
+Obtain a device with `nusb::request_device` (from a user gesture) or
+`nusb::list_devices`, then open it with `BladeRf1::from_device(device).await`.
+There is no `.wait()` on wasm, `Drop` performs no I/O, and transfers cannot be
+cancelled, so always `close()` streams and the device explicitly.
+
 ## Examples
 
 Git-tracked examples (build and run from the repository root):
@@ -46,6 +118,7 @@ Git-tracked examples (build and run from the repository root):
 |---------|---------|
 | `info` | Basic device info and FPGA version |
 | `rx_tx` | Streaming RX/TX with metadata headers |
+| `rx_async` | RX streaming with the awaited API on tokio (`--features tokio`) |
 | `calibrate` | DC calibration on LMS6002D |
 | `dc_cal_table` | DC calibration table management |
 | `flash_firmware` | FX3 firmware flashing |
@@ -54,6 +127,7 @@ Git-tracked examples (build and run from the repository root):
 ```bash
 cargo run -p info
 cargo run -p rx_tx
+cargo run -p rx_async
 ```
 
 ## Supported features

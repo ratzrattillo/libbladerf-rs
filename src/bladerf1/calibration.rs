@@ -10,10 +10,15 @@ use std::path::Path;
 /// Single calibration entry with frequency, DC offset I/Q pair, and AGC sub-ranges.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct DcCalEntry {
+    /// Frequency in Hz at which the entry was measured.
     pub freq: u32,
+    /// DC offset correction for manual gain.
     pub dc: DcPair,
+    /// AGC DC correction at maximum gain.
     pub max_dc: DcPair,
+    /// AGC DC correction at mid gain.
     pub mid_dc: DcPair,
+    /// AGC DC correction at minimum gain.
     pub min_dc: DcPair,
 }
 

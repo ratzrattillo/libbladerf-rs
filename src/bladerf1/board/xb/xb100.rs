@@ -6,6 +6,8 @@
 
 use crate::bladerf1::board::RfLinkSession;
 use crate::error::Result;
+use crate::maybe_future::Op;
+use nusb::MaybeFuture;
 
 macro_rules! bladerf_xb_gpio {
     ($n:expr) => {
@@ -54,25 +56,33 @@ const XB100_LED_MASK: u32 = XB100_DETECT_MASK;
 
 impl RfLinkSession<'_> {
     /// Prepares the XB-100 board. Currently a no-op placeholder.
-    pub fn xb100_attach(&mut self) -> Result<()> {
-        self.require_initialized()?;
-        Ok(())
+    pub fn xb100_attach(&mut self) -> impl MaybeFuture<Output = Result<()>> {
+        Op::new(async move {
+            self.require_initialized().await?;
+            Ok(())
+        })
     }
     /// Enables the XB-100 board. When enabled, configures all LED GPIO pins
     /// as outputs and turns the LEDs on. Requires the board to be initialized.
-    pub fn xb100_enable(&mut self, enable: bool) -> Result<()> {
-        self.require_initialized()?;
-        if enable {
-            self.nios
-                .nios_expansion_gpio_dir_write(XB100_LED_MASK, XB100_LED_MASK)?;
-            self.nios
-                .nios_expansion_gpio_write(XB100_LED_MASK, XB100_LED_MASK)?;
-        }
-        Ok(())
+    pub fn xb100_enable(&mut self, enable: bool) -> impl MaybeFuture<Output = Result<()>> {
+        Op::new(async move {
+            self.require_initialized().await?;
+            if enable {
+                self.nios
+                    .nios_expansion_gpio_dir_write(XB100_LED_MASK, XB100_LED_MASK)
+                    .await?;
+                self.nios
+                    .nios_expansion_gpio_write(XB100_LED_MASK, XB100_LED_MASK)
+                    .await?;
+            }
+            Ok(())
+        })
     }
     /// Initializes the XB-100 board. Currently a no-op placeholder.
-    pub fn xb100_init(&mut self) -> Result<()> {
-        self.require_initialized()?;
-        Ok(())
+    pub fn xb100_init(&mut self) -> impl MaybeFuture<Output = Result<()>> {
+        Op::new(async move {
+            self.require_initialized().await?;
+            Ok(())
+        })
     }
 }

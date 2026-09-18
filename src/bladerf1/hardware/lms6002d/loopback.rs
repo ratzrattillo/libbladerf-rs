@@ -10,7 +10,9 @@ use crate::bladerf1::hardware::lms6002d::Lms6002d;
 use crate::bladerf1::hardware::lms6002d::LmsPowerAmplifier;
 use crate::bladerf1::hardware::lms6002d::filters::LpfMode;
 use crate::bladerf1::hardware::lms6002d::gain::LmsLowNoiseAmplifier;
+use crate::maybe_future::Op;
 use crate::{Channel, Error};
+use nusb::MaybeFuture;
 
 /// LBEN register: output pin loopback.
 pub const LBEN_OPIN: u8 = 1 << 4;
@@ -80,183 +82,205 @@ pub struct BladeRf1LoopbackModes {
     _mode: Loopback,
 }
 impl<'a> Lms6002d<'a> {
-    pub(crate) fn set_loopback_mode(&mut self, mode: Loopback) -> crate::Result<()> {
-        if !matches!(
-            mode,
-            Loopback::None
-                | Loopback::BbTxlpfRxvga2
+    pub(crate) fn set_loopback_mode(
+        &mut self,
+        mode: Loopback,
+    ) -> impl MaybeFuture<Output = crate::Result<()>> {
+        Op::new(async move {
+            if !matches!(
+                mode,
+                Loopback::None
+                    | Loopback::BbTxlpfRxvga2
+                    | Loopback::BbTxvga1Rxvga2
+                    | Loopback::BbTxlpfRxlpf
+                    | Loopback::BbTxvga1Rxlpf
+                    | Loopback::Lna1
+                    | Loopback::Lna2
+                    | Loopback::Lna3
+            ) {
+                return Err(Error::Unsupported("loopback mode"));
+            }
+            self.select_pa(LmsPowerAmplifier::PaNone).await?;
+            self.select_lna(LmsLowNoiseAmplifier::LnaNone).await?;
+            self.loopback_path(&Loopback::None).await?;
+            self.loopback_rx(&mode).await?;
+            self.loopback_tx(&mode).await?;
+            self.loopback_path(&mode).await
+        })
+    }
+
+    pub(crate) fn get_loopback_mode(
+        &mut self,
+    ) -> impl MaybeFuture<Output = crate::Result<Loopback>> {
+        Op::new(async move {
+            let lben_lbrfen = self.read(0x08).await?;
+            let loopbben = self.read(0x46).await?;
+            let mut loopback = Loopback::None;
+            match lben_lbrfen & 0x7 {
+                LBRFEN_LNA1 => {
+                    loopback = Loopback::Lna1;
+                }
+                LBRFEN_LNA2 => {
+                    loopback = Loopback::Lna2;
+                }
+                LBRFEN_LNA3 => {
+                    loopback = Loopback::Lna3;
+                }
+                _ => {}
+            }
+            match lben_lbrfen & LBEN_MASK {
+                LBEN_VGA2IN => {
+                    if (loopbben & LOOPBBEN_TXLPF) != 0 {
+                        loopback = Loopback::BbTxlpfRxvga2;
+                    } else if (loopbben & LOOPBBEN_TXVGA) != 0 {
+                        loopback = Loopback::BbTxvga1Rxvga2;
+                    }
+                }
+                LBEN_LPFIN => {
+                    if (loopbben & LOOPBBEN_TXLPF) != 0 {
+                        loopback = Loopback::BbTxlpfRxlpf;
+                    } else if (loopbben & LOOPBBEN_TXVGA) != 0 {
+                        loopback = Loopback::BbTxvga1Rxlpf;
+                    }
+                }
+                _ => {}
+            }
+            Ok(loopback)
+        })
+    }
+
+    pub(crate) fn is_loopback_enabled(&mut self) -> impl MaybeFuture<Output = crate::Result<bool>> {
+        Op::new(async move {
+            let loopback = self.get_loopback_mode().await?;
+            Ok(loopback != Loopback::None)
+        })
+    }
+
+    fn loopback_path(&mut self, mode: &Loopback) -> impl MaybeFuture<Output = crate::Result<()>> {
+        Op::new(async move {
+            let mut loopbben = self.read(0x46).await?;
+            let mut lben_lbrf = self.read(0x08).await?;
+            loopbben &= !LOOBBBEN_MASK;
+            lben_lbrf &= !(LBRFEN_MASK | LBEN_MASK);
+            match mode {
+                Loopback::None => {}
+                Loopback::BbTxlpfRxvga2 => {
+                    loopbben |= LOOPBBEN_TXLPF;
+                    lben_lbrf |= LBEN_VGA2IN;
+                }
+                Loopback::BbTxvga1Rxvga2 => {
+                    loopbben |= LOOPBBEN_TXVGA;
+                    lben_lbrf |= LBEN_VGA2IN;
+                }
+                Loopback::BbTxlpfRxlpf => {
+                    loopbben |= LOOPBBEN_TXLPF;
+                    lben_lbrf |= LBEN_LPFIN;
+                }
+                Loopback::BbTxvga1Rxlpf => {
+                    loopbben |= LOOPBBEN_TXVGA;
+                    lben_lbrf |= LBEN_LPFIN;
+                }
+                Loopback::Lna1 => {
+                    lben_lbrf |= LBRFEN_LNA1;
+                }
+                Loopback::Lna2 => {
+                    lben_lbrf |= LBRFEN_LNA2;
+                }
+                Loopback::Lna3 => {
+                    lben_lbrf |= LBRFEN_LNA3;
+                }
+                _ => Err(Error::Unsupported("loopback mode"))?,
+            }
+            self.write(0x46, loopbben).await?;
+            self.write(0x08, lben_lbrf).await
+        })
+    }
+
+    fn enable_rf_loopback_switch(
+        &mut self,
+        enable: bool,
+    ) -> impl MaybeFuture<Output = crate::Result<()>> {
+        Op::new(async move {
+            let mut regval = self.read(0x0b).await?;
+            if enable {
+                regval |= 1;
+            } else {
+                regval &= !1;
+            }
+            self.write(0x0b, regval).await
+        })
+    }
+
+    fn loopback_rx(&mut self, mode: &Loopback) -> impl MaybeFuture<Output = crate::Result<()>> {
+        Op::new(async move {
+            let lpf_mode = self.lpf_get_mode(Channel::Rx).await?;
+            match mode {
+                Loopback::None => {
+                    self.rxvga1_enable(true).await?;
+                    self.rxvga2_enable(true).await?;
+                    self.enable_rf_loopback_switch(false).await?;
+                    self.enable_lna_power(true).await?;
+                    let f = self.get_frequency(Channel::Rx).await?;
+                    self.set_frequency(Channel::Rx, (&f).into()).await?;
+                    let f_hz: u64 = (&f).into();
+                    let band = Band::from(f_hz);
+                    self.select_band(Channel::Rx, band).await
+                }
+                Loopback::BbTxvga1Rxvga2 | Loopback::BbTxlpfRxvga2 => {
+                    self.rxvga2_enable(true).await?;
+                    self.lpf_set_mode(Channel::Rx, LpfMode::Disabled).await
+                }
+                Loopback::BbTxlpfRxlpf | Loopback::BbTxvga1Rxlpf => {
+                    self.rxvga1_enable(false).await?;
+                    if lpf_mode == LpfMode::Disabled {
+                        self.lpf_set_mode(Channel::Rx, LpfMode::Normal).await?;
+                    }
+                    self.rxvga2_enable(true).await
+                }
+                Loopback::Lna1 | Loopback::Lna2 | Loopback::Lna3 => {
+                    let lms_lna = match mode {
+                        Loopback::Lna1 => LmsLowNoiseAmplifier::Lna1,
+                        Loopback::Lna2 => LmsLowNoiseAmplifier::Lna2,
+                        Loopback::Lna3 => LmsLowNoiseAmplifier::Lna3,
+                        _ => unreachable!(),
+                    };
+                    self.enable_lna_power(false).await?;
+                    self.rxvga1_enable(true).await?;
+                    if lpf_mode == LpfMode::Disabled {
+                        self.lpf_set_mode(Channel::Rx, LpfMode::Normal).await?;
+                    }
+                    self.rxvga2_enable(true).await?;
+                    let mut regval = self.read(0x25).await?;
+                    regval &= !0x03;
+                    regval |= u8::from(lms_lna);
+                    self.write(0x25, regval).await?;
+                    self.select_lna(lms_lna).await?;
+                    self.enable_rf_loopback_switch(true).await
+                }
+                _ => Err(Error::Unsupported("loopback mode")),
+            }
+        })
+    }
+
+    fn loopback_tx(&mut self, mode: &Loopback) -> impl MaybeFuture<Output = crate::Result<()>> {
+        Op::new(async move {
+            match mode {
+                Loopback::None => {
+                    let f = self.get_frequency(Channel::Tx).await?;
+                    self.set_frequency(Channel::Tx, (&f).into()).await?;
+                    let f_hz: u64 = (&f).into();
+                    let band = Band::from(f_hz);
+                    self.select_band(Channel::Tx, band).await
+                }
+                Loopback::BbTxlpfRxvga2
                 | Loopback::BbTxvga1Rxvga2
                 | Loopback::BbTxlpfRxlpf
-                | Loopback::BbTxvga1Rxlpf
-                | Loopback::Lna1
-                | Loopback::Lna2
-                | Loopback::Lna3
-        ) {
-            return Err(Error::Unsupported("loopback mode"));
-        }
-        self.select_pa(LmsPowerAmplifier::PaNone)?;
-        self.select_lna(LmsLowNoiseAmplifier::LnaNone)?;
-        self.loopback_path(&Loopback::None)?;
-        self.loopback_rx(&mode)?;
-        self.loopback_tx(&mode)?;
-        self.loopback_path(&mode)
-    }
-
-    pub(crate) fn get_loopback_mode(&mut self) -> crate::Result<Loopback> {
-        let lben_lbrfen = self.read(0x08)?;
-        let loopbben = self.read(0x46)?;
-        let mut loopback = Loopback::None;
-        match lben_lbrfen & 0x7 {
-            LBRFEN_LNA1 => {
-                loopback = Loopback::Lna1;
-            }
-            LBRFEN_LNA2 => {
-                loopback = Loopback::Lna2;
-            }
-            LBRFEN_LNA3 => {
-                loopback = Loopback::Lna3;
-            }
-            _ => {}
-        }
-        match lben_lbrfen & LBEN_MASK {
-            LBEN_VGA2IN => {
-                if (loopbben & LOOPBBEN_TXLPF) != 0 {
-                    loopback = Loopback::BbTxlpfRxvga2;
-                } else if (loopbben & LOOPBBEN_TXVGA) != 0 {
-                    loopback = Loopback::BbTxvga1Rxvga2;
+                | Loopback::BbTxvga1Rxlpf => Ok(()),
+                Loopback::Lna1 | Loopback::Lna2 | Loopback::Lna3 => {
+                    self.select_pa(LmsPowerAmplifier::PaAux).await
                 }
+                _ => Err(Error::Unsupported("loopback mode")),
             }
-            LBEN_LPFIN => {
-                if (loopbben & LOOPBBEN_TXLPF) != 0 {
-                    loopback = Loopback::BbTxlpfRxlpf;
-                } else if (loopbben & LOOPBBEN_TXVGA) != 0 {
-                    loopback = Loopback::BbTxvga1Rxlpf;
-                }
-            }
-            _ => {}
-        }
-        Ok(loopback)
-    }
-
-    pub(crate) fn is_loopback_enabled(&mut self) -> crate::Result<bool> {
-        let loopback = self.get_loopback_mode()?;
-        Ok(loopback != Loopback::None)
-    }
-
-    fn loopback_path(&mut self, mode: &Loopback) -> crate::Result<()> {
-        let mut loopbben = self.read(0x46)?;
-        let mut lben_lbrf = self.read(0x08)?;
-        loopbben &= !LOOBBBEN_MASK;
-        lben_lbrf &= !(LBRFEN_MASK | LBEN_MASK);
-        match mode {
-            Loopback::None => {}
-            Loopback::BbTxlpfRxvga2 => {
-                loopbben |= LOOPBBEN_TXLPF;
-                lben_lbrf |= LBEN_VGA2IN;
-            }
-            Loopback::BbTxvga1Rxvga2 => {
-                loopbben |= LOOPBBEN_TXVGA;
-                lben_lbrf |= LBEN_VGA2IN;
-            }
-            Loopback::BbTxlpfRxlpf => {
-                loopbben |= LOOPBBEN_TXLPF;
-                lben_lbrf |= LBEN_LPFIN;
-            }
-            Loopback::BbTxvga1Rxlpf => {
-                loopbben |= LOOPBBEN_TXVGA;
-                lben_lbrf |= LBEN_LPFIN;
-            }
-            Loopback::Lna1 => {
-                lben_lbrf |= LBRFEN_LNA1;
-            }
-            Loopback::Lna2 => {
-                lben_lbrf |= LBRFEN_LNA2;
-            }
-            Loopback::Lna3 => {
-                lben_lbrf |= LBRFEN_LNA3;
-            }
-            _ => Err(Error::Unsupported("loopback mode"))?,
-        }
-        self.write(0x46, loopbben)?;
-        self.write(0x08, lben_lbrf)
-    }
-
-    fn enable_rf_loopback_switch(&mut self, enable: bool) -> crate::Result<()> {
-        let mut regval = self.read(0x0b)?;
-        if enable {
-            regval |= 1;
-        } else {
-            regval &= !1;
-        }
-        self.write(0x0b, regval)
-    }
-
-    fn loopback_rx(&mut self, mode: &Loopback) -> crate::Result<()> {
-        let lpf_mode = self.lpf_get_mode(Channel::Rx)?;
-        match mode {
-            Loopback::None => {
-                self.rxvga1_enable(true)?;
-                self.rxvga2_enable(true)?;
-                self.enable_rf_loopback_switch(false)?;
-                self.enable_lna_power(true)?;
-                let f = self.get_frequency(Channel::Rx)?;
-                self.set_frequency(Channel::Rx, (&f).into())?;
-                let f_hz: u64 = (&f).into();
-                let band = Band::from(f_hz);
-                self.select_band(Channel::Rx, band)
-            }
-            Loopback::BbTxvga1Rxvga2 | Loopback::BbTxlpfRxvga2 => {
-                self.rxvga2_enable(true)?;
-                self.lpf_set_mode(Channel::Rx, LpfMode::Disabled)
-            }
-            Loopback::BbTxlpfRxlpf | Loopback::BbTxvga1Rxlpf => {
-                self.rxvga1_enable(false)?;
-                if lpf_mode == LpfMode::Disabled {
-                    self.lpf_set_mode(Channel::Rx, LpfMode::Normal)?;
-                }
-                self.rxvga2_enable(true)
-            }
-            Loopback::Lna1 | Loopback::Lna2 | Loopback::Lna3 => {
-                let lms_lna = match mode {
-                    Loopback::Lna1 => LmsLowNoiseAmplifier::Lna1,
-                    Loopback::Lna2 => LmsLowNoiseAmplifier::Lna2,
-                    Loopback::Lna3 => LmsLowNoiseAmplifier::Lna3,
-                    _ => unreachable!(),
-                };
-                self.enable_lna_power(false)?;
-                self.rxvga1_enable(true)?;
-                if lpf_mode == LpfMode::Disabled {
-                    self.lpf_set_mode(Channel::Rx, LpfMode::Normal)?;
-                }
-                self.rxvga2_enable(true)?;
-                let mut regval = self.read(0x25)?;
-                regval &= !0x03;
-                regval |= u8::from(lms_lna);
-                self.write(0x25, regval)?;
-                self.select_lna(lms_lna)?;
-                self.enable_rf_loopback_switch(true)
-            }
-            _ => Err(Error::Unsupported("loopback mode")),
-        }
-    }
-
-    fn loopback_tx(&mut self, mode: &Loopback) -> crate::Result<()> {
-        match mode {
-            Loopback::None => {
-                let f = self.get_frequency(Channel::Tx)?;
-                self.set_frequency(Channel::Tx, (&f).into())?;
-                let f_hz: u64 = (&f).into();
-                let band = Band::from(f_hz);
-                self.select_band(Channel::Tx, band)
-            }
-            Loopback::BbTxlpfRxvga2
-            | Loopback::BbTxvga1Rxvga2
-            | Loopback::BbTxlpfRxlpf
-            | Loopback::BbTxvga1Rxlpf => Ok(()),
-            Loopback::Lna1 | Loopback::Lna2 | Loopback::Lna3 => {
-                self.select_pa(LmsPowerAmplifier::PaAux)
-            }
-            _ => Err(Error::Unsupported("loopback mode")),
-        }
+        })
     }
 }

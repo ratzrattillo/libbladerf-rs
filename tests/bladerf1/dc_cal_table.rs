@@ -1,5 +1,6 @@
 use super::common::*;
 use libbladerf_rs::Channel;
+use libbladerf_rs::MaybeFuture;
 use libbladerf_rs::bladerf1::board::Correction;
 use libbladerf_rs::bladerf1::calibration::{DcCalEntry, DcCalTable};
 use libbladerf_rs::bladerf1::hardware::lms6002d::dc_calibration::DcCals;
@@ -25,12 +26,13 @@ fn load_and_lookup() -> libbladerf_rs::Result<()> {
     let mut sdr = sdr();
     sdr.load_dc_cal_table(Channel::Rx, &path)?;
 
-    let mut rf = sdr.rf_link_session()?;
-    rf.initialize(false)?;
+    let mut rf = sdr.rf_link_session().wait()?;
+    rf.initialize(false).wait()?;
 
-    rf.set_frequency(Channel::Rx, 1_000_000_000, TuningMode::Fpga)?;
-    let i = rf.get_correction(Channel::Rx, &Correction::DcOffI)?;
-    let q = rf.get_correction(Channel::Rx, &Correction::DcOffQ)?;
+    rf.set_frequency(Channel::Rx, 1_000_000_000, TuningMode::Fpga)
+        .wait()?;
+    let i = rf.get_correction(Channel::Rx, &Correction::DcOffI).wait()?;
+    let q = rf.get_correction(Channel::Rx, &Correction::DcOffQ).wait()?;
     log::debug!("At 1GHz: dc_i={i}, dc_q={q}");
 
     let _ = std::fs::remove_dir_all(&dir);

@@ -1,5 +1,6 @@
 use anyhow::{Context, Result, bail};
 use clap::Parser;
+use libbladerf_rs::MaybeFuture;
 use libbladerf_rs::bladerf1::BladeRf1;
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
@@ -74,9 +75,9 @@ fn main() -> Result<()> {
 
     let cli = Cli::parse();
 
-    let mut bladerf = BladeRf1::from_first()?;
-    let mut flash = bladerf.flash_session()?;
-    let fpga_size = flash.read_flash_fpga_size()?;
+    let mut bladerf = BladeRf1::from_first().wait()?;
+    let mut flash = bladerf.flash_session().wait()?;
+    let fpga_size = flash.read_flash_fpga_size().wait()?;
     let variant = fpga_size.variant_label()?;
     log::info!("Detected FPGA variant: {variant} ({fpga_size:?})");
 
@@ -120,7 +121,7 @@ fn main() -> Result<()> {
         (data, fpga_version.to_string())
     };
 
-    let expected = flash.get_fpga_bytes()?;
+    let expected = flash.get_fpga_bytes().wait()?;
     if bitstream.len() != expected {
         bail!(
             "FPGA bitstream size mismatch: expected {expected} bytes for {variant}, got {} bytes",
@@ -129,20 +130,20 @@ fn main() -> Result<()> {
     }
 
     log::info!("Flashing FPGA bitstream...");
-    flash.flash_fpga(&bitstream)?;
+    flash.flash_fpga(&bitstream).wait()?;
     log::info!("FPGA bitstream written and verified");
     drop(flash);
 
     if cli.load {
         log::info!("Loading FPGA bitstream...");
-        let mut config = bladerf.config_session()?;
-        config.load_fpga(&bitstream)?;
+        let mut config = bladerf.config_session().wait()?;
+        config.load_fpga(&bitstream).wait()?;
         log::info!("FPGA loaded");
         drop(config);
 
         if !cli.no_init {
-            let mut rf = bladerf.rf_link_session()?;
-            rf.initialize(false)?;
+            let mut rf = bladerf.rf_link_session().wait()?;
+            rf.initialize(false).wait()?;
             log::info!("FPGA initialized");
         }
     }

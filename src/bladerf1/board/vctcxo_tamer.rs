@@ -7,7 +7,9 @@
 
 use crate::bladerf1::board::RfLinkSession;
 use crate::error::{Error, Result};
+use crate::maybe_future::Op;
 use crate::protocol::nios::NiosPkt8x8Target;
+use nusb::MaybeFuture;
 
 /// VCTCXO tamer reference mode.
 ///
@@ -49,10 +51,16 @@ impl RfLinkSession<'_> {
     /// operation.
     ///
     /// Returns `Error::BoardState` if the board is not initialized.
-    pub fn set_vctcxo_tamer_mode(&mut self, mode: VctcxoTamerMode) -> Result<()> {
-        self.require_initialized()?;
-        self.nios
-            .nios_write::<u8, u8>(NiosPkt8x8Target::VctcxoTamer, MODE_ADDR, mode as u8)
+    pub fn set_vctcxo_tamer_mode(
+        &mut self,
+        mode: VctcxoTamerMode,
+    ) -> impl MaybeFuture<Output = Result<()>> {
+        Op::new(async move {
+            self.require_initialized().await?;
+            self.nios
+                .nios_write::<u8, u8>(NiosPkt8x8Target::VctcxoTamer, MODE_ADDR, mode as u8)
+                .await
+        })
     }
 
     /// Returns the current VCTCXO tamer mode.
@@ -60,11 +68,14 @@ impl RfLinkSession<'_> {
     /// Reads the NIOS VCTCXO tamer register and decodes the mode value.
     /// Returns `Error::BoardState` if the board is not initialized, or
     /// `Error::Unsupported` if the device reports an unrecognized mode.
-    pub fn get_vctcxo_tamer_mode(&mut self) -> Result<VctcxoTamerMode> {
-        self.require_initialized()?;
-        let raw = self
-            .nios
-            .nios_read::<u8, u8>(NiosPkt8x8Target::VctcxoTamer, MODE_ADDR)?;
-        VctcxoTamerMode::try_from(raw)
+    pub fn get_vctcxo_tamer_mode(&mut self) -> impl MaybeFuture<Output = Result<VctcxoTamerMode>> {
+        Op::new(async move {
+            self.require_initialized().await?;
+            let raw = self
+                .nios
+                .nios_read::<u8, u8>(NiosPkt8x8Target::VctcxoTamer, MODE_ADDR)
+                .await?;
+            VctcxoTamerMode::try_from(raw)
+        })
     }
 }

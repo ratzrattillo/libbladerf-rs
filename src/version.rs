@@ -13,6 +13,7 @@ pub struct SemanticVersion {
     pub(crate) patch: u16,
 }
 impl SemanticVersion {
+    /// Creates a version from its components.
     pub fn new(major: u16, minor: u16, patch: u16) -> Self {
         Self {
             major,
@@ -21,14 +22,17 @@ impl SemanticVersion {
         }
     }
 
+    /// Major version.
     pub fn major(&self) -> u16 {
         self.major
     }
 
+    /// Minor version.
     pub fn minor(&self) -> u16 {
         self.minor
     }
 
+    /// Patch version.
     pub fn patch(&self) -> u16 {
         self.patch
     }

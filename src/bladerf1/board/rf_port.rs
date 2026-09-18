@@ -9,6 +9,8 @@ use crate::bladerf1::board::RfLinkSession;
 use crate::bladerf1::hardware::lms6002d::gain::{LmsLowNoiseAmplifier, LmsPowerAmplifier};
 use crate::channel::Channel;
 use crate::error::{Error, Result};
+use crate::maybe_future::Op;
+use nusb::MaybeFuture;
 
 /// RF front-end port selection for BladeRF1.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -145,21 +147,27 @@ impl RfLinkSession<'_> {
     /// is not valid for the channel.
     ///
     /// Returns `Error::NotInitialized` if the board has not been initialized.
-    pub fn set_rf_port(&mut self, channel: Channel, port: RfPort) -> Result<()> {
-        self.require_initialized()?;
-        if !port.is_valid_for(channel) {
-            return Err(Error::Argument("RF port not valid for channel".into()));
-        }
-        match channel {
-            Channel::Rx => {
-                let lna = LmsLowNoiseAmplifier::try_from(port)?;
-                self.lms().select_lna(lna)
+    pub fn set_rf_port(
+        &mut self,
+        channel: Channel,
+        port: RfPort,
+    ) -> impl MaybeFuture<Output = Result<()>> {
+        Op::new(async move {
+            self.require_initialized().await?;
+            if !port.is_valid_for(channel) {
+                return Err(Error::Argument("RF port not valid for channel".into()));
             }
-            Channel::Tx => {
-                let pa = LmsPowerAmplifier::try_from(port)?;
-                self.lms().select_pa(pa)
+            match channel {
+                Channel::Rx => {
+                    let lna = LmsLowNoiseAmplifier::try_from(port)?;
+                    self.lms().select_lna(lna).await
+                }
+                Channel::Tx => {
+                    let pa = LmsPowerAmplifier::try_from(port)?;
+                    self.lms().select_pa(pa).await
+                }
             }
-        }
+        })
     }
 
     /// Returns the current RF port for the given channel.
@@ -168,12 +176,14 @@ impl RfLinkSession<'_> {
     /// converts it to the corresponding `RfPort`.
     ///
     /// Returns `Error::NotInitialized` if the board has not been initialized.
-    pub fn get_rf_port(&mut self, channel: Channel) -> Result<RfPort> {
-        self.require_initialized()?;
-        match channel {
-            Channel::Rx => self.lms().get_lna().map(RfPort::from),
-            Channel::Tx => self.lms().get_pa().map(RfPort::from),
-        }
+    pub fn get_rf_port(&mut self, channel: Channel) -> impl MaybeFuture<Output = Result<RfPort>> {
+        Op::new(async move {
+            self.require_initialized().await?;
+            match channel {
+                Channel::Rx => self.lms().get_lna().await.map(RfPort::from),
+                Channel::Tx => self.lms().get_pa().await.map(RfPort::from),
+            }
+        })
     }
 
     /// Returns the list of valid RF ports for the given channel.

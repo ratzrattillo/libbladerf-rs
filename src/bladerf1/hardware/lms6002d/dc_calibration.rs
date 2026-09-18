@@ -14,6 +14,8 @@ use crate::bladerf1::hardware::lms6002d::gain::{
     GAIN_SPEC_LNA, GAIN_SPEC_RXVGA1, GAIN_SPEC_RXVGA2, LnaGainCode,
 };
 use crate::error::{Error, Result};
+use crate::maybe_future::Op;
+use nusb::MaybeFuture;
 use std::cmp::PartialEq;
 use std::fmt::{Display, Formatter};
 
@@ -158,7 +160,7 @@ impl Display for DcCals {
     }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct DcCalState {
+pub(crate) struct DcCalState {
     clk_en: u8,
     reg0x72: u8,
     lna_gain: LnaGainCode,
@@ -228,6 +230,7 @@ pub struct RxCal {
     tx_freq: u64,
 }
 impl RxCal {
+    /// Creates a configuration from sample count, timestamp and TX frequency.
     pub fn new(num_samples: u32, ts: u64, tx_freq: u64) -> Self {
         Self {
             num_samples,
@@ -236,22 +239,27 @@ impl RxCal {
         }
     }
 
+    /// Number of gain sample points used for interpolation.
     pub fn sample_count(&self) -> u32 {
         self.num_samples
     }
 
+    /// Timestamp recorded with the calibration data.
     pub fn timestamp(&self) -> u64 {
         self.ts
     }
 
+    /// TX frequency in Hz at which the calibration was performed.
     pub fn tx_frequency(&self) -> u64 {
         self.tx_freq
     }
 
+    /// Sets the timestamp.
     pub fn set_timestamp(&mut self, ts: u64) {
         self.ts = ts;
     }
 
+    /// Sets the TX frequency in Hz.
     pub fn set_tx_frequency(&mut self, tx_freq: u64) {
         self.tx_freq = tx_freq;
     }
@@ -268,6 +276,7 @@ pub struct RxCalBackup {
     tx_freq: u64,
 }
 impl RxCalBackup {
+    /// Captures the settings to restore after calibration.
     pub fn new(
         rational_sample_rate: crate::bladerf1::hardware::si5338::RationalRate,
         bandwidth: u32,
@@ -280,6 +289,7 @@ impl RxCalBackup {
         }
     }
 
+    /// Sample rate to restore.
     pub fn sample_rate(&self) -> &crate::bladerf1::hardware::si5338::RationalRate {
         &self.rational_sample_rate
     }
@@ -290,10 +300,12 @@ impl RxCalBackup {
         &mut self.rational_sample_rate
     }
 
+    /// Bandwidth in Hz to restore.
     pub fn bandwidth(&self) -> u32 {
         self.bandwidth
     }
 
+    /// TX frequency in Hz to restore.
     pub fn tx_frequency(&self) -> u64 {
         self.tx_freq
     }
@@ -353,200 +365,258 @@ fn unscale_dc_offset(channel: Channel, mut regval: u8) -> i16 {
     }
 }
 impl<'a> Lms6002d<'a> {
-    pub(crate) fn calibrate_dc(&mut self, module: DcCalModule) -> Result<()> {
-        let mut state = self.dc_cal_backup(module)?;
-        if self.dc_cal_module_init(module, &mut state).is_err() {
-            let _ = self.dc_cal_module_deinit(module);
-            return self.dc_cal_restore(module, &state);
-        }
-        let mut converged = false;
-        let mut limit_reached = false;
-        while !converged && !limit_reached {
-            if let Ok(c) = self.dc_cal_module(module, &mut state) {
-                converged = c;
-                if !converged {
-                    if let Ok(l) = self.dc_cal_retry_adjustment(module, &mut state) {
-                        limit_reached = l;
-                    } else {
-                        break;
+    pub(crate) fn calibrate_dc(
+        &mut self,
+        module: DcCalModule,
+    ) -> impl MaybeFuture<Output = Result<()>> {
+        Op::new(async move {
+            let mut state = self.dc_cal_backup(module).await?;
+            if self.dc_cal_module_init(module, &mut state).await.is_err() {
+                let _ = self.dc_cal_module_deinit(module).await;
+                return self.dc_cal_restore(module, &state).await;
+            }
+            let mut converged = false;
+            let mut limit_reached = false;
+            while !converged && !limit_reached {
+                if let Ok(c) = self.dc_cal_module(module, &mut state).await {
+                    converged = c;
+                    if !converged {
+                        if let Ok(l) = self.dc_cal_retry_adjustment(module, &mut state).await {
+                            limit_reached = l;
+                        } else {
+                            break;
+                        }
                     }
+                } else {
+                    break;
                 }
-            } else {
-                break;
             }
-        }
-        if !converged {
-            log::warn!("DC Calibration (module={module:?}) failed to converge.");
-        }
-        let _ = self.dc_cal_module_deinit(module);
-        self.dc_cal_restore(module, &state)
-    }
-
-    pub(crate) fn set_dc_cals(&mut self, dc_cals: DcCals) -> Result<()> {
-        let cal_tx_lpf: bool = (dc_cals.tx_lpf_i >= 0) || (dc_cals.tx_lpf_q >= 0);
-        let cal_rx_lpf: bool = (dc_cals.rx_lpf_i >= 0) || (dc_cals.rx_lpf_q >= 0);
-        let cal_rxvga2: bool = (dc_cals.dc_ref >= 0)
-            || (dc_cals.rxvga2a_i >= 0)
-            || (dc_cals.rxvga2a_q >= 0)
-            || (dc_cals.rxvga2b_i >= 0)
-            || (dc_cals.rxvga2b_q >= 0);
-        if dc_cals.lpf_tuning >= 0 {
-            self.enable_lpf_cal_clock(true)?;
-            self.set_dc_cal_value(0x00, 0, dc_cals.lpf_tuning as u8)?;
-            self.enable_lpf_cal_clock(false)?;
-        }
-        if cal_tx_lpf {
-            self.enable_txlpf_dccal_clock(true)?;
-            if dc_cals.tx_lpf_i >= 0 {
-                self.set_dc_cal_value(0x30, 0, dc_cals.tx_lpf_i as u8)?;
+            if !converged {
+                log::warn!("DC Calibration (module={module:?}) failed to converge.");
             }
-            if dc_cals.tx_lpf_q >= 0 {
-                self.set_dc_cal_value(0x30, 1, dc_cals.tx_lpf_q as u8)?;
-            }
-            self.enable_txlpf_dccal_clock(false)?;
-        }
-        if cal_rx_lpf {
-            self.enable_rxlpf_dccal_clock(true)?;
-            if dc_cals.rx_lpf_i >= 0 {
-                self.set_dc_cal_value(0x50, 0, dc_cals.rx_lpf_i as u8)?;
-            }
-            if dc_cals.rx_lpf_q >= 0 {
-                self.set_dc_cal_value(0x50, 1, dc_cals.rx_lpf_q as u8)?;
-            }
-            self.enable_rxlpf_dccal_clock(false)?;
-        }
-        if cal_rxvga2 {
-            self.enable_rxvga2_dccal_clock(true)?;
-            if dc_cals.dc_ref >= 0 {
-                self.set_dc_cal_value(0x60, 0, dc_cals.dc_ref as u8)?;
-            }
-            if dc_cals.rxvga2a_i >= 0 {
-                self.set_dc_cal_value(0x60, 1, dc_cals.rxvga2a_i as u8)?;
-            }
-            if dc_cals.rxvga2a_q >= 0 {
-                self.set_dc_cal_value(0x60, 2, dc_cals.rxvga2a_q as u8)?;
-            }
-            if dc_cals.rxvga2b_i >= 0 {
-                self.set_dc_cal_value(0x60, 3, dc_cals.rxvga2b_i as u8)?;
-            }
-            if dc_cals.rxvga2b_q >= 0 {
-                self.set_dc_cal_value(0x60, 4, dc_cals.rxvga2b_q as u8)?;
-            }
-            self.enable_rxvga2_dccal_clock(false)?;
-        }
-        Ok(())
-    }
-
-    pub(crate) fn get_dc_cals(&mut self) -> Result<DcCals> {
-        Ok(DcCals {
-            lpf_tuning: self.get_dc_cal_value(0x00, 0)? as i16,
-            tx_lpf_i: self.get_dc_cal_value(0x30, 0)? as i16,
-            tx_lpf_q: self.get_dc_cal_value(0x30, 1)? as i16,
-            rx_lpf_i: self.get_dc_cal_value(0x50, 0)? as i16,
-            rx_lpf_q: self.get_dc_cal_value(0x50, 1)? as i16,
-            dc_ref: self.get_dc_cal_value(0x60, 0)? as i16,
-            rxvga2a_i: self.get_dc_cal_value(0x60, 1)? as i16,
-            rxvga2a_q: self.get_dc_cal_value(0x60, 2)? as i16,
-            rxvga2b_i: self.get_dc_cal_value(0x60, 3)? as i16,
-            rxvga2b_q: self.get_dc_cal_value(0x60, 4)? as i16,
+            let _ = self.dc_cal_module_deinit(module).await;
+            self.dc_cal_restore(module, &state).await
         })
     }
 
-    pub(crate) fn set_dc_offset_i(&mut self, channel: Channel, value: i16) -> Result<()> {
+    pub(crate) fn set_dc_cals(&mut self, dc_cals: DcCals) -> impl MaybeFuture<Output = Result<()>> {
+        Op::new(async move {
+            let cal_tx_lpf: bool = (dc_cals.tx_lpf_i >= 0) || (dc_cals.tx_lpf_q >= 0);
+            let cal_rx_lpf: bool = (dc_cals.rx_lpf_i >= 0) || (dc_cals.rx_lpf_q >= 0);
+            let cal_rxvga2: bool = (dc_cals.dc_ref >= 0)
+                || (dc_cals.rxvga2a_i >= 0)
+                || (dc_cals.rxvga2a_q >= 0)
+                || (dc_cals.rxvga2b_i >= 0)
+                || (dc_cals.rxvga2b_q >= 0);
+            if dc_cals.lpf_tuning >= 0 {
+                self.enable_lpf_cal_clock(true).await?;
+                self.set_dc_cal_value(0x00, 0, dc_cals.lpf_tuning as u8)
+                    .await?;
+                self.enable_lpf_cal_clock(false).await?;
+            }
+            if cal_tx_lpf {
+                self.enable_txlpf_dccal_clock(true).await?;
+                if dc_cals.tx_lpf_i >= 0 {
+                    self.set_dc_cal_value(0x30, 0, dc_cals.tx_lpf_i as u8)
+                        .await?;
+                }
+                if dc_cals.tx_lpf_q >= 0 {
+                    self.set_dc_cal_value(0x30, 1, dc_cals.tx_lpf_q as u8)
+                        .await?;
+                }
+                self.enable_txlpf_dccal_clock(false).await?;
+            }
+            if cal_rx_lpf {
+                self.enable_rxlpf_dccal_clock(true).await?;
+                if dc_cals.rx_lpf_i >= 0 {
+                    self.set_dc_cal_value(0x50, 0, dc_cals.rx_lpf_i as u8)
+                        .await?;
+                }
+                if dc_cals.rx_lpf_q >= 0 {
+                    self.set_dc_cal_value(0x50, 1, dc_cals.rx_lpf_q as u8)
+                        .await?;
+                }
+                self.enable_rxlpf_dccal_clock(false).await?;
+            }
+            if cal_rxvga2 {
+                self.enable_rxvga2_dccal_clock(true).await?;
+                if dc_cals.dc_ref >= 0 {
+                    self.set_dc_cal_value(0x60, 0, dc_cals.dc_ref as u8).await?;
+                }
+                if dc_cals.rxvga2a_i >= 0 {
+                    self.set_dc_cal_value(0x60, 1, dc_cals.rxvga2a_i as u8)
+                        .await?;
+                }
+                if dc_cals.rxvga2a_q >= 0 {
+                    self.set_dc_cal_value(0x60, 2, dc_cals.rxvga2a_q as u8)
+                        .await?;
+                }
+                if dc_cals.rxvga2b_i >= 0 {
+                    self.set_dc_cal_value(0x60, 3, dc_cals.rxvga2b_i as u8)
+                        .await?;
+                }
+                if dc_cals.rxvga2b_q >= 0 {
+                    self.set_dc_cal_value(0x60, 4, dc_cals.rxvga2b_q as u8)
+                        .await?;
+                }
+                self.enable_rxvga2_dccal_clock(false).await?;
+            }
+            Ok(())
+        })
+    }
+
+    pub(crate) fn get_dc_cals(&mut self) -> impl MaybeFuture<Output = Result<DcCals>> {
+        Op::new(async move {
+            Ok(DcCals {
+                lpf_tuning: self.get_dc_cal_value(0x00, 0).await? as i16,
+                tx_lpf_i: self.get_dc_cal_value(0x30, 0).await? as i16,
+                tx_lpf_q: self.get_dc_cal_value(0x30, 1).await? as i16,
+                rx_lpf_i: self.get_dc_cal_value(0x50, 0).await? as i16,
+                rx_lpf_q: self.get_dc_cal_value(0x50, 1).await? as i16,
+                dc_ref: self.get_dc_cal_value(0x60, 0).await? as i16,
+                rxvga2a_i: self.get_dc_cal_value(0x60, 1).await? as i16,
+                rxvga2a_q: self.get_dc_cal_value(0x60, 2).await? as i16,
+                rxvga2b_i: self.get_dc_cal_value(0x60, 3).await? as i16,
+                rxvga2b_q: self.get_dc_cal_value(0x60, 4).await? as i16,
+            })
+        })
+    }
+
+    pub(crate) fn set_dc_offset_i(
+        &mut self,
+        channel: Channel,
+        value: i16,
+    ) -> impl MaybeFuture<Output = Result<()>> {
         self.set_dc_offset(channel, dc_offset_i_addr(channel), value)
     }
 
-    pub(crate) fn set_dc_offset_q(&mut self, channel: Channel, value: i16) -> Result<()> {
+    pub(crate) fn set_dc_offset_q(
+        &mut self,
+        channel: Channel,
+        value: i16,
+    ) -> impl MaybeFuture<Output = Result<()>> {
         self.set_dc_offset(channel, dc_offset_q_addr(channel), value)
     }
 
-    pub(crate) fn get_dc_offset_i(&mut self, channel: Channel) -> Result<i16> {
-        self.get_dc_offset(channel, dc_offset_i_addr(channel))
+    pub(crate) fn get_dc_offset_i(
+        &mut self,
+        channel: Channel,
+    ) -> impl MaybeFuture<Output = Result<i16>> {
+        Op::new(async move { self.get_dc_offset(channel, dc_offset_i_addr(channel)).await })
     }
 
-    pub(crate) fn get_dc_offset_q(&mut self, channel: Channel) -> Result<i16> {
-        self.get_dc_offset(channel, dc_offset_q_addr(channel))
+    pub(crate) fn get_dc_offset_q(
+        &mut self,
+        channel: Channel,
+    ) -> impl MaybeFuture<Output = Result<i16>> {
+        Op::new(async move { self.get_dc_offset(channel, dc_offset_q_addr(channel)).await })
     }
 
-    fn dc_cal_loop(&mut self, base: u8, cal_address: u8, dc_cntval: u8) -> Result<u8> {
-        log::debug!("Calibrating module {base:#x}:{cal_address:#x}");
-        let mut val = self.read(base + 0x03)?;
-        val &= !0x07;
-        val |= cal_address & 0x07;
-        self.write(base + 0x03, val)?;
-        self.write(base + 0x02, dc_cntval)?;
-        val |= 1 << 4;
-        self.write(base + 0x03, val)?;
-        val &= !(1 << 4);
-        self.write(base + 0x03, val)?;
-        val |= 1 << 5;
-        self.write(base + 0x03, val)?;
-        val &= !(1 << 5);
-        self.write(base + 0x03, val)?;
-        for _ in 0..25 {
-            let val = self.read(base + 0x01)?;
-            if ((val >> 1) & 1) == 0 {
-                let dc_regval = self.read(base)? & 0x3f;
-                log::debug!("DC_REGVAL: {dc_regval}");
-                return Ok(dc_regval);
+    fn dc_cal_loop(
+        &mut self,
+        base: u8,
+        cal_address: u8,
+        dc_cntval: u8,
+    ) -> impl MaybeFuture<Output = Result<u8>> {
+        Op::new(async move {
+            log::debug!("Calibrating module {base:#x}:{cal_address:#x}");
+            let mut val = self.read(base + 0x03).await?;
+            val &= !0x07;
+            val |= cal_address & 0x07;
+            self.write(base + 0x03, val).await?;
+            self.write(base + 0x02, dc_cntval).await?;
+            val |= 1 << 4;
+            self.write(base + 0x03, val).await?;
+            val &= !(1 << 4);
+            self.write(base + 0x03, val).await?;
+            val |= 1 << 5;
+            self.write(base + 0x03, val).await?;
+            val &= !(1 << 5);
+            self.write(base + 0x03, val).await?;
+            for _ in 0..25 {
+                let val = self.read(base + 0x01).await?;
+                if ((val >> 1) & 1) == 0 {
+                    let dc_regval = self.read(base).await? & 0x3f;
+                    log::debug!("DC_REGVAL: {dc_regval}");
+                    return Ok(dc_regval);
+                }
             }
-        }
-        log::warn!("DC calibration loop did not converge.");
-        Err(Error::CalibrationFailed("loop did not converge"))
+            log::warn!("DC calibration loop did not converge.");
+            Err(Error::CalibrationFailed("loop did not converge"))
+        })
     }
 
-    fn dc_cal_backup(&mut self, module: DcCalModule) -> Result<DcCalState> {
-        let mut state = DcCalState {
-            clk_en: self.read(0x09)?,
-            reg0x72: 0,
-            lna_gain: LnaGainCode::BypassLna1Lna2,
-            rxvga1_gain: 0,
-            rxvga2_gain: 0,
-            rxvga1_curr_gain: 0,
-            rxvga2_curr_gain: 0,
-        };
-        if module == DcCalModule::RxLpf || module == DcCalModule::RxVga2 {
-            state.reg0x72 = self.read(0x72)?;
-            state.lna_gain = LnaGainCode::from(self.lna_get_gain()?);
-            state.rxvga1_gain = self.rxvga1_get_gain()?.db() as i32;
-            state.rxvga2_gain = self.rxvga2_get_gain()?.db() as i32;
-        }
-        Ok(state)
+    fn dc_cal_backup(
+        &mut self,
+        module: DcCalModule,
+    ) -> impl MaybeFuture<Output = Result<DcCalState>> {
+        Op::new(async move {
+            let mut state = DcCalState {
+                clk_en: self.read(0x09).await?,
+                reg0x72: 0,
+                lna_gain: LnaGainCode::BypassLna1Lna2,
+                rxvga1_gain: 0,
+                rxvga2_gain: 0,
+                rxvga1_curr_gain: 0,
+                rxvga2_curr_gain: 0,
+            };
+            if module == DcCalModule::RxLpf || module == DcCalModule::RxVga2 {
+                state.reg0x72 = self.read(0x72).await?;
+                state.lna_gain = LnaGainCode::from(self.lna_get_gain().await?);
+                state.rxvga1_gain = self.rxvga1_get_gain().await?.db() as i32;
+                state.rxvga2_gain = self.rxvga2_get_gain().await?.db() as i32;
+            }
+            Ok(state)
+        })
     }
 
-    fn dc_cal_module_init(&mut self, module: DcCalModule, state: &mut DcCalState) -> Result<()> {
-        match module {
-            DcCalModule::LpfTuning => {
-                self.write(0x09, state.clk_en | module.cal_clock_mask())?;
+    fn dc_cal_module_init(
+        &mut self,
+        module: DcCalModule,
+        state: &mut DcCalState,
+    ) -> impl MaybeFuture<Output = Result<()>> {
+        Op::new(async move {
+            match module {
+                DcCalModule::LpfTuning => {
+                    self.write(0x09, state.clk_en | module.cal_clock_mask())
+                        .await?;
+                }
+                DcCalModule::TxLpf => {
+                    self.write(0x09, state.clk_en | module.cal_clock_mask())
+                        .await?;
+                    self.set(0x36, 1 << 7).await?;
+                    self.clear(0x3f, 1 << 7).await?;
+                }
+                DcCalModule::RxLpf => {
+                    self.write(0x09, state.clk_en | module.cal_clock_mask())
+                        .await?;
+                    self.clear(0x5f, 1 << 7).await?;
+                    self.write(0x72, state.reg0x72 & !(1 << 7)).await?;
+                    self.lna_set_gain(GAIN_SPEC_LNA.max.into()).await?;
+                    state.rxvga1_curr_gain = GAIN_SPEC_RXVGA1.max as i32;
+                    self.rxvga1_set_gain((state.rxvga1_curr_gain as i8).into())
+                        .await?;
+                    state.rxvga2_curr_gain = GAIN_SPEC_RXVGA2.max as i32;
+                    self.rxvga2_set_gain((state.rxvga2_curr_gain as i8).into())
+                        .await?;
+                }
+                DcCalModule::RxVga2 => {
+                    self.write(0x09, state.clk_en | module.cal_clock_mask())
+                        .await?;
+                    self.clear(0x6e, 3 << 6).await?;
+                    self.write(0x72, state.reg0x72 & !(1 << 7)).await?;
+                    self.lna_set_gain(GAIN_SPEC_LNA.max.into()).await?;
+                    state.rxvga1_curr_gain = GAIN_SPEC_RXVGA1.max as i32;
+                    self.rxvga1_set_gain((state.rxvga1_curr_gain as i8).into())
+                        .await?;
+                    state.rxvga2_curr_gain = GAIN_SPEC_RXVGA2.max as i32;
+                    self.rxvga2_set_gain((state.rxvga2_curr_gain as i8).into())
+                        .await?;
+                }
+                _ => return Err(Error::Unsupported("DC calibration module")),
             }
-            DcCalModule::TxLpf => {
-                self.write(0x09, state.clk_en | module.cal_clock_mask())?;
-                self.set(0x36, 1 << 7)?;
-                self.clear(0x3f, 1 << 7)?;
-            }
-            DcCalModule::RxLpf => {
-                self.write(0x09, state.clk_en | module.cal_clock_mask())?;
-                self.clear(0x5f, 1 << 7)?;
-                self.write(0x72, state.reg0x72 & !(1 << 7))?;
-                self.lna_set_gain(GAIN_SPEC_LNA.max.into())?;
-                state.rxvga1_curr_gain = GAIN_SPEC_RXVGA1.max as i32;
-                self.rxvga1_set_gain((state.rxvga1_curr_gain as i8).into())?;
-                state.rxvga2_curr_gain = GAIN_SPEC_RXVGA2.max as i32;
-                self.rxvga2_set_gain((state.rxvga2_curr_gain as i8).into())?;
-            }
-            DcCalModule::RxVga2 => {
-                self.write(0x09, state.clk_en | module.cal_clock_mask())?;
-                self.clear(0x6e, 3 << 6)?;
-                self.write(0x72, state.reg0x72 & !(1 << 7))?;
-                self.lna_set_gain(GAIN_SPEC_LNA.max.into())?;
-                state.rxvga1_curr_gain = GAIN_SPEC_RXVGA1.max as i32;
-                self.rxvga1_set_gain((state.rxvga1_curr_gain as i8).into())?;
-                state.rxvga2_curr_gain = GAIN_SPEC_RXVGA2.max as i32;
-                self.rxvga2_set_gain((state.rxvga2_curr_gain as i8).into())?;
-            }
-            _ => return Err(Error::Unsupported("DC calibration module")),
-        }
-        Ok(())
+            Ok(())
+        })
     }
 
     fn dc_cal_submodule(
@@ -554,191 +624,241 @@ impl<'a> Lms6002d<'a> {
         module: DcCalModule,
         submodule: u8,
         _state: &DcCalState,
-    ) -> Result<bool> {
-        let mut converged: bool = false;
-        if module == DcCalModule::RxVga2 {
-            match submodule {
-                0 => {
-                    self.clear(0x64, 0x01)?;
-                    self.write(0x68, 0x01)?;
-                }
-                1 => {
-                    self.set(0x64, 0x01)?;
-                    self.write(0x68, 0x06)?;
-                }
-                2 => {}
-                3 => {
-                    self.write(0x68, 0x60)?;
-                }
-                4 => {}
-                _ => {
-                    return Err(Error::CalibrationFailed("invalid submodule index"));
+    ) -> impl MaybeFuture<Output = Result<bool>> {
+        Op::new(async move {
+            let mut converged: bool = false;
+            if module == DcCalModule::RxVga2 {
+                match submodule {
+                    0 => {
+                        self.clear(0x64, 0x01).await?;
+                        self.write(0x68, 0x01).await?;
+                    }
+                    1 => {
+                        self.set(0x64, 0x01).await?;
+                        self.write(0x68, 0x06).await?;
+                    }
+                    2 => {}
+                    3 => {
+                        self.write(0x68, 0x60).await?;
+                    }
+                    4 => {}
+                    _ => {
+                        return Err(Error::CalibrationFailed("invalid submodule index"));
+                    }
                 }
             }
-        }
-        let base = module.base_addr();
-        let mut dc_regval = self.dc_cal_loop(base, submodule, 31)?;
-        if dc_regval == 31 {
-            log::debug!("DC_REGVAL suboptimal value - retrying DC cal loop.");
-            dc_regval = self.dc_cal_loop(base, submodule, 0)?;
-            if dc_regval == 0 {
-                log::debug!("Bad DC_REGVAL detected. DC cal failed.");
-                return Ok(converged);
+            let base = module.base_addr();
+            let mut dc_regval = self.dc_cal_loop(base, submodule, 31).await?;
+            if dc_regval == 31 {
+                log::debug!("DC_REGVAL suboptimal value - retrying DC cal loop.");
+                dc_regval = self.dc_cal_loop(base, submodule, 0).await?;
+                if dc_regval == 0 {
+                    log::debug!("Bad DC_REGVAL detected. DC cal failed.");
+                    return Ok(converged);
+                }
             }
-        }
-        if module == DcCalModule::LpfTuning {
-            let mut val = self.read(0x35)?;
-            val &= !0x3f;
-            val |= dc_regval;
-            self.write(0x35, val)?;
-            let mut val = self.read(0x55)?;
-            val &= !0x3f;
-            val |= dc_regval;
-            self.write(0x55, val)?;
-        }
-        converged = true;
-        Ok(converged)
+            if module == DcCalModule::LpfTuning {
+                let mut val = self.read(0x35).await?;
+                val &= !0x3f;
+                val |= dc_regval;
+                self.write(0x35, val).await?;
+                let mut val = self.read(0x55).await?;
+                val &= !0x3f;
+                val |= dc_regval;
+                self.write(0x55, val).await?;
+            }
+            converged = true;
+            Ok(converged)
+        })
     }
 
     fn dc_cal_retry_adjustment(
         &mut self,
         module: DcCalModule,
         state: &mut DcCalState,
-    ) -> Result<bool> {
-        let mut limit_reached: bool = false;
-        match module {
-            DcCalModule::LpfTuning | DcCalModule::TxLpf => {
-                limit_reached = true;
-            }
-            DcCalModule::RxLpf => {
-                if state.rxvga1_curr_gain > GAIN_SPEC_RXVGA1.min as i32 {
-                    state.rxvga1_curr_gain -= 1;
-                    log::debug!("Retrying DC cal with RXVGA1={}", state.rxvga1_curr_gain);
-                    self.rxvga1_set_gain((state.rxvga1_curr_gain as i8).into())?;
-                } else {
+    ) -> impl MaybeFuture<Output = Result<bool>> {
+        Op::new(async move {
+            let mut limit_reached: bool = false;
+            match module {
+                DcCalModule::LpfTuning | DcCalModule::TxLpf => {
                     limit_reached = true;
                 }
-            }
-            DcCalModule::RxVga2 => {
-                if state.rxvga1_curr_gain > GAIN_SPEC_RXVGA1.min as i32 {
-                    state.rxvga1_curr_gain -= 1;
-                    log::debug!("Retrying DC cal with RXVGA1={}", state.rxvga1_curr_gain);
-                    self.rxvga1_set_gain((state.rxvga1_curr_gain as i8).into())?;
-                } else if state.rxvga2_curr_gain > GAIN_SPEC_RXVGA2.min as i32 {
-                    state.rxvga2_curr_gain -= 3;
-                    log::debug!("Retrying DC cal with RXVGA2={}", state.rxvga2_curr_gain);
-                    self.rxvga2_set_gain((state.rxvga2_curr_gain as i8).into())?;
-                } else {
-                    limit_reached = true;
+                DcCalModule::RxLpf => {
+                    if state.rxvga1_curr_gain > GAIN_SPEC_RXVGA1.min as i32 {
+                        state.rxvga1_curr_gain -= 1;
+                        log::debug!("Retrying DC cal with RXVGA1={}", state.rxvga1_curr_gain);
+                        self.rxvga1_set_gain((state.rxvga1_curr_gain as i8).into())
+                            .await?;
+                    } else {
+                        limit_reached = true;
+                    }
+                }
+                DcCalModule::RxVga2 => {
+                    if state.rxvga1_curr_gain > GAIN_SPEC_RXVGA1.min as i32 {
+                        state.rxvga1_curr_gain -= 1;
+                        log::debug!("Retrying DC cal with RXVGA1={}", state.rxvga1_curr_gain);
+                        self.rxvga1_set_gain((state.rxvga1_curr_gain as i8).into())
+                            .await?;
+                    } else if state.rxvga2_curr_gain > GAIN_SPEC_RXVGA2.min as i32 {
+                        state.rxvga2_curr_gain -= 3;
+                        log::debug!("Retrying DC cal with RXVGA2={}", state.rxvga2_curr_gain);
+                        self.rxvga2_set_gain((state.rxvga2_curr_gain as i8).into())
+                            .await?;
+                    } else {
+                        limit_reached = true;
+                    }
+                }
+                _ => {
+                    return Err(Error::Unsupported("DC calibration module"));
                 }
             }
-            _ => {
-                return Err(Error::Unsupported("DC calibration module"));
+            if limit_reached {
+                log::debug!("DC Cal retry limit reached");
             }
-        }
-        if limit_reached {
-            log::debug!("DC Cal retry limit reached");
-        }
-        Ok(limit_reached)
+            Ok(limit_reached)
+        })
     }
 
-    fn dc_cal_module_deinit(&mut self, module: DcCalModule) -> Result<()> {
-        match module {
-            DcCalModule::LpfTuning => {}
-            DcCalModule::RxLpf => {
-                self.set(0x5f, 1 << 7)?;
+    fn dc_cal_module_deinit(
+        &mut self,
+        module: DcCalModule,
+    ) -> impl MaybeFuture<Output = Result<()>> {
+        Op::new(async move {
+            match module {
+                DcCalModule::LpfTuning => {}
+                DcCalModule::RxLpf => {
+                    self.set(0x5f, 1 << 7).await?;
+                }
+                DcCalModule::RxVga2 => {
+                    self.write(0x68, 0x01).await?;
+                    self.clear(0x64, 0x01).await?;
+                    self.set(0x6e, 3 << 6).await?;
+                }
+                DcCalModule::TxLpf => {
+                    self.set(0x3f, 1 << 7).await?;
+                    self.clear(0x36, 1 << 7).await?;
+                }
+                _ => {
+                    return Err(Error::Unsupported("DC calibration module"));
+                }
             }
-            DcCalModule::RxVga2 => {
-                self.write(0x68, 0x01)?;
-                self.clear(0x64, 0x01)?;
-                self.set(0x6e, 3 << 6)?;
+            Ok(())
+        })
+    }
+
+    fn dc_cal_restore(
+        &mut self,
+        module: DcCalModule,
+        state: &DcCalState,
+    ) -> impl MaybeFuture<Output = Result<()>> {
+        Op::new(async move {
+            self.write(0x09, state.clk_en).await?;
+            if module == DcCalModule::RxLpf || module == DcCalModule::RxVga2 {
+                self.write(0x72, state.reg0x72).await?;
+                self.lna_set_gain(state.lna_gain.into()).await?;
+                self.rxvga1_set_gain((state.rxvga1_gain as i8).into())
+                    .await?;
+                self.rxvga2_set_gain((state.rxvga2_gain as i8).into())
+                    .await?;
             }
-            DcCalModule::TxLpf => {
-                self.set(0x3f, 1 << 7)?;
-                self.clear(0x36, 1 << 7)?;
+            Ok(())
+        })
+    }
+
+    fn dc_cal_module(
+        &mut self,
+        module: DcCalModule,
+        state: &mut DcCalState,
+    ) -> impl MaybeFuture<Output = Result<bool>> {
+        Op::new(async move {
+            let mut converged = true;
+            for submodule in 0..module.num_submodules() {
+                converged = self.dc_cal_submodule(module, submodule, state).await?;
+                if !converged {
+                    return Err(Error::CalibrationFailed("submodule did not converge"));
+                }
             }
-            _ => {
-                return Err(Error::Unsupported("DC calibration module"));
+            Ok(converged)
+        })
+    }
+
+    fn set_cal_clock(&mut self, enable: bool, mask: u8) -> impl MaybeFuture<Output = Result<()>> {
+        Op::new(async move {
+            if enable {
+                self.set(0x09, mask).await
+            } else {
+                self.clear(0x09, mask).await
             }
-        }
-        Ok(())
+        })
     }
 
-    fn dc_cal_restore(&mut self, module: DcCalModule, state: &DcCalState) -> Result<()> {
-        self.write(0x09, state.clk_en)?;
-        if module == DcCalModule::RxLpf || module == DcCalModule::RxVga2 {
-            self.write(0x72, state.reg0x72)?;
-            self.lna_set_gain(state.lna_gain.into())?;
-            self.rxvga1_set_gain((state.rxvga1_gain as i8).into())?;
-            self.rxvga2_set_gain((state.rxvga2_gain as i8).into())?;
-        }
-        Ok(())
+    fn enable_lpf_cal_clock(&mut self, enable: bool) -> impl MaybeFuture<Output = Result<()>> {
+        Op::new(async move { self.set_cal_clock(enable, 1 << 5).await })
     }
 
-    fn dc_cal_module(&mut self, module: DcCalModule, state: &mut DcCalState) -> Result<bool> {
-        let mut converged = true;
-        for submodule in 0..module.num_submodules() {
-            converged = self.dc_cal_submodule(module, submodule, state)?;
-            if !converged {
-                return Err(Error::CalibrationFailed("submodule did not converge"));
-            }
-        }
-        Ok(converged)
+    fn enable_rxvga2_dccal_clock(&mut self, enable: bool) -> impl MaybeFuture<Output = Result<()>> {
+        Op::new(async move { self.set_cal_clock(enable, 1 << 4).await })
     }
 
-    fn set_cal_clock(&mut self, enable: bool, mask: u8) -> Result<()> {
-        if enable {
-            self.set(0x09, mask)
-        } else {
-            self.clear(0x09, mask)
-        }
+    fn enable_rxlpf_dccal_clock(&mut self, enable: bool) -> impl MaybeFuture<Output = Result<()>> {
+        Op::new(async move { self.set_cal_clock(enable, 1 << 3).await })
     }
 
-    fn enable_lpf_cal_clock(&mut self, enable: bool) -> Result<()> {
-        self.set_cal_clock(enable, 1 << 5)
+    fn enable_txlpf_dccal_clock(&mut self, enable: bool) -> impl MaybeFuture<Output = Result<()>> {
+        Op::new(async move { self.set_cal_clock(enable, 1 << 1).await })
     }
 
-    fn enable_rxvga2_dccal_clock(&mut self, enable: bool) -> Result<()> {
-        self.set_cal_clock(enable, 1 << 4)
+    fn set_dc_cal_value(
+        &mut self,
+        base: u8,
+        dc_addr: u8,
+        value: u8,
+    ) -> impl MaybeFuture<Output = Result<u8>> {
+        Op::new(async move {
+            let mut regval: u8 = 0x08 | dc_addr;
+            self.write(base + 3, regval).await?;
+            self.write(base + 2, value).await?;
+            regval |= 1 << 4;
+            self.write(base + 3, regval).await?;
+            regval &= !(1 << 4);
+            self.write(base + 3, regval).await?;
+            self.read(base).await
+        })
     }
 
-    fn enable_rxlpf_dccal_clock(&mut self, enable: bool) -> Result<()> {
-        self.set_cal_clock(enable, 1 << 3)
+    fn get_dc_cal_value(&mut self, base: u8, dc_addr: u8) -> impl MaybeFuture<Output = Result<u8>> {
+        Op::new(async move {
+            self.write(base + 3, 0x08 | dc_addr).await?;
+            self.read(base).await
+        })
     }
 
-    fn enable_txlpf_dccal_clock(&mut self, enable: bool) -> Result<()> {
-        self.set_cal_clock(enable, 1 << 1)
+    fn set_dc_offset(
+        &mut self,
+        channel: Channel,
+        addr: u8,
+        value: i16,
+    ) -> impl MaybeFuture<Output = Result<()>> {
+        Op::new(async move {
+            let regval = match channel {
+                Channel::Rx => {
+                    let tmp = self.read(addr).await?;
+                    tmp & (1 << 7) | scale_dc_offset(channel, value)
+                }
+                Channel::Tx => scale_dc_offset(channel, value),
+            };
+            self.write(addr, regval).await
+        })
     }
 
-    fn set_dc_cal_value(&mut self, base: u8, dc_addr: u8, value: u8) -> Result<u8> {
-        let mut regval: u8 = 0x08 | dc_addr;
-        self.write(base + 3, regval)?;
-        self.write(base + 2, value)?;
-        regval |= 1 << 4;
-        self.write(base + 3, regval)?;
-        regval &= !(1 << 4);
-        self.write(base + 3, regval)?;
-        self.read(base)
-    }
-
-    fn get_dc_cal_value(&mut self, base: u8, dc_addr: u8) -> Result<u8> {
-        self.write(base + 3, 0x08 | dc_addr)?;
-        self.read(base)
-    }
-
-    fn set_dc_offset(&mut self, channel: Channel, addr: u8, value: i16) -> Result<()> {
-        let regval = match channel {
-            Channel::Rx => {
-                let tmp = self.read(addr)?;
-                tmp & (1 << 7) | scale_dc_offset(channel, value)
-            }
-            Channel::Tx => scale_dc_offset(channel, value),
-        };
-        self.write(addr, regval)
-    }
-
-    fn get_dc_offset(&mut self, channel: Channel, addr: u8) -> Result<i16> {
-        let regval = self.read(addr)?;
-        Ok(unscale_dc_offset(channel, regval))
+    fn get_dc_offset(
+        &mut self,
+        channel: Channel,
+        addr: u8,
+    ) -> impl MaybeFuture<Output = Result<i16>> {
+        Op::new(async move {
+            let regval = self.read(addr).await?;
+            Ok(unscale_dc_offset(channel, regval))
+        })
     }
 }

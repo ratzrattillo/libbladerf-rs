@@ -5,7 +5,9 @@
 //! or digital loopback.
 
 use crate::bladerf1::board::RfLinkSession;
+use crate::maybe_future::Op;
 use crate::{Error, Result};
+use nusb::MaybeFuture;
 
 /// RX input select.
 ///
@@ -54,21 +56,26 @@ impl RfLinkSession<'_> {
     /// register using an atomic read-modify-write.
     ///
     /// Returns `Error::BoardState` if the board is not initialized.
-    pub fn set_rx_mux(&mut self, mode: RxMux) -> Result<()> {
-        self.require_initialized()?;
-        let rx_mux_val = (mode as u32) << BLADERF_GPIO_RX_MUX_SHIFT;
-        self.config_gpio_modify(|gpio| (gpio & !(BLADERF_GPIO_RX_MUX_MASK as u32)) | rx_mux_val)
+    pub fn set_rx_mux(&mut self, mode: RxMux) -> impl MaybeFuture<Output = Result<()>> {
+        Op::new(async move {
+            self.require_initialized().await?;
+            let rx_mux_val = (mode as u32) << BLADERF_GPIO_RX_MUX_SHIFT;
+            self.config_gpio_modify(|gpio| (gpio & !(BLADERF_GPIO_RX_MUX_MASK as u32)) | rx_mux_val)
+                .await
+        })
     }
 
     /// Returns the currently selected RX input mux.
     ///
     /// Reads the config GPIO register and extracts the RX mux field.
     /// Returns `Error::BoardState` if the board is not initialized.
-    pub fn get_rx_mux(&mut self) -> Result<RxMux> {
-        self.require_initialized()?;
-        let mut config_gpio = self.config_gpio_read()?;
-        config_gpio &= BLADERF_GPIO_RX_MUX_MASK as u32;
-        config_gpio >>= BLADERF_GPIO_RX_MUX_SHIFT;
-        RxMux::try_from(config_gpio)
+    pub fn get_rx_mux(&mut self) -> impl MaybeFuture<Output = Result<RxMux>> {
+        Op::new(async move {
+            self.require_initialized().await?;
+            let mut config_gpio = self.config_gpio_read().await?;
+            config_gpio &= BLADERF_GPIO_RX_MUX_MASK as u32;
+            config_gpio >>= BLADERF_GPIO_RX_MUX_SHIFT;
+            RxMux::try_from(config_gpio)
+        })
     }
 }

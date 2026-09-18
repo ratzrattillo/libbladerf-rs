@@ -1,4 +1,5 @@
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
+use libbladerf_rs::MaybeFuture;
 use libbladerf_rs::bladerf1::{BladeRf1, RxStream, SampleFormat};
 use std::time::Duration;
 
@@ -10,20 +11,21 @@ fn bench_stream_build_teardown(c: &mut Criterion) {
 
     group.bench_function("rx_stream_build_teardown", |b| {
         b.iter_batched(
-            || BladeRf1::from_first().unwrap(),
+            || BladeRf1::from_first().wait().unwrap(),
             |mut device| {
-                let mut rf = device.rf_link_session().unwrap();
-                rf.initialize(true).unwrap();
+                let mut rf = device.rf_link_session().wait().unwrap();
+                rf.initialize(true).wait().unwrap();
                 let mut streamer = RxStream::builder(&mut rf)
                     .buffer_size(65_536)
                     .buffer_count(8)
                     .format(SampleFormat::Sc16Q11)
                     .build()
+                    .wait()
                     .unwrap();
-                streamer.start(&mut rf).unwrap();
-                let buf = streamer.read(Some(Duration::from_secs(2))).unwrap();
+                streamer.start(&mut rf).wait().unwrap();
+                let buf = streamer.read(Some(Duration::from_secs(2))).wait().unwrap();
                 streamer.recycle(buf);
-                streamer.close(&mut rf).unwrap();
+                streamer.close(&mut rf).wait().unwrap();
             },
             criterion::BatchSize::PerIteration,
         )

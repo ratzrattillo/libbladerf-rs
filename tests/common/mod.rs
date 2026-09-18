@@ -1,11 +1,12 @@
+use libbladerf_rs::MaybeFuture;
 use libbladerf_rs::bladerf1::BladeRf1;
 use std::sync::Mutex;
 
 pub static BLADERF: std::sync::LazyLock<Mutex<BladeRf1>> = std::sync::LazyLock::new(|| {
-    let mut sdr = BladeRf1::from_first().unwrap();
+    let mut sdr = BladeRf1::from_first().wait().unwrap();
     {
-        let mut rf = sdr.rf_link_session().unwrap();
-        rf.initialize(false).unwrap();
+        let mut rf = sdr.rf_link_session().wait().unwrap();
+        rf.initialize(false).wait().unwrap();
     }
     Mutex::new(sdr)
 });
