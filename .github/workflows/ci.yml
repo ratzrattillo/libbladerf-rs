@@ -27,6 +27,19 @@ jobs:
       - run: cargo clippy --features bladerf1 --all-targets -- -D warnings
       - run: cargo clippy --no-default-features --features bladerf1,xb100,xb200,xb300,tokio --all-targets -- -D warnings
 
+  clippy-nightly:
+    name: Clippy (nightly, early warning)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --features bladerf1 --all-targets -- -D warnings
+      - run: cargo clippy --no-default-features --features bladerf1,xb100,xb200,xb300,tokio --all-targets -- -D warnings
+
   audit:
     runs-on: ubuntu-latest
     steps:

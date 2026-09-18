@@ -7,6 +7,20 @@ set -xe
 # resolve regardless of the invocation directory.
 cd "$(dirname "$0")/.."
 
+###########################################################
+# TOOLCHAINS
+###########################################################
+# CI uses the latest stable (dtolnay/rust-toolchain@stable). Run everything
+# on stable regardless of the local default toolchain, and try to bring it
+# up to date first so new default-warn lints are caught here, not in CI.
+# Explicit `cargo +nightly` invocations below override this variable.
+export RUSTUP_TOOLCHAIN=stable
+if ! rustup update stable; then
+  echo "WARNING: could not update the stable toolchain; CI may run a newer stable with additional lints." >&2
+fi
+rustc --version
+cargo +nightly --version
+
 # cargo clean
 
 ###########################################################
@@ -41,13 +55,21 @@ cargo test --no-default-features --features bladerf1,xb100,xb200,xb300,tokio --t
 ###########################################################
 # CLIPPY
 ###########################################################
+# Stable is the gate CI enforces.
 cargo clippy --features bladerf1 --all-targets -- -D warnings
 cargo clippy --no-default-features --features bladerf1,xb100,xb200,xb300,tokio --all-targets -- -D warnings
+# Nightly clippy is the early warning: lints that are warn-by-default on
+# nightly today become CI failures on the next stable. Fix them now or
+# `#[allow]` them deliberately.
+cargo +nightly clippy --features bladerf1 --all-targets -- -D warnings
+cargo +nightly clippy --no-default-features --features bladerf1,xb100,xb200,xb300,tokio --all-targets -- -D warnings
 
 ###########################################################
 # FMT
 ###########################################################
-cargo fmt --all --check
+# rustfmt.toml enables nightly-only options; check with the toolchain that
+# honours them.
+cargo +nightly fmt --all --check
 
 ###########################################################
 # CONVENTIONAL COMMITS

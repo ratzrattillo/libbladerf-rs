@@ -28,7 +28,10 @@ runner) and does **not** run the local-only conventional-commits validation.
 
 ## Local pre-flight
 
-`scripts/check.sh` is the local pre-flight check. It is also the
+`scripts/check.sh` is the local pre-flight check. It pins the stable
+toolchain (attempting `rustup update stable` first so new default-warn lints
+are caught locally), checks formatting with nightly rustfmt, and runs clippy on
+both stable (the CI gate) and nightly (early warning for lints about to land). It is also the
 `cargo-release` pre-release hook (see `release.toml`). It runs, in order:
 
 - Build (`--features bladerf1`)
