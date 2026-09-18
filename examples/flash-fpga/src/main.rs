@@ -9,7 +9,7 @@ const VERSIONS_URL: &str = "https://nuand.com/versions.json";
 const FPGA_BASE_URL: &str = "https://www.nuand.com/fpga";
 
 #[derive(Parser)]
-#[command(name = "flash_fpga", about = "Flash FPGA bitstream to bladeRF1")]
+#[command(name = "flash-fpga", about = "Flash FPGA bitstream to bladeRF1")]
 struct Cli {
     /// Flash FPGA from a local file instead of downloading
     #[arg(short, long)]

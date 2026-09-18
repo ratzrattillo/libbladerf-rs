@@ -1,4 +1,4 @@
-# flash_fpga
+# flash-fpga
 
 Downloads the latest FPGA bitstream from Nuand, flashes it to the bladeRF1 SPI flash, and optionally loads it into the FPGA. Auto-detects the FPGA variant (x40/x115) from calibration data.
 
@@ -8,8 +8,8 @@ All commands run from the **repository root**:
 
 | Action | Command |
 |--------|---------|
-| Build | `cargo build -p flash_fpga` |
-| Run | `cargo run -p flash_fpga` |
+| Build | `cargo build -p flash-fpga` |
+| Run | `cargo run -p flash-fpga` |
 
 ## API used
 

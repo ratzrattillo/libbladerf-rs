@@ -1,5 +1,5 @@
 [package]
-name = "flash_fpga"
+name = "flash-fpga"
 version = "0.1.0"
 edition = "2024"
 

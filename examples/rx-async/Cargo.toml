@@ -1,5 +1,5 @@
 [package]
-name = "rx_async"
+name = "rx-async"
 version = "0.1.0"
 edition = "2024"
 

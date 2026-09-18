@@ -478,7 +478,7 @@ Files: `src/bladerf1/board.rs`, `src/bladerf1/board/*.rs` (~20 files),
       singleton pattern (`--test-threads=1` still mandatory); the async tests
       must not hold the sync `MutexGuard` across `.await` — open a separate
       handle or run them in a dedicated test binary that owns the device.
-- [x] New example `examples/rx_async` (tokio) mirroring `rx_tx` RX half.
+- [x] New example `examples/rx-async` (tokio) mirroring `rx-tx` RX half.
 - [x] Docs: README (sync `.wait()` and async `.await` examples, executor
       notes, wasm notes), crate-level docs, `AGENTS.md` async section
       (design rules from §2: `Op`, nusb feature forwarding, dual futures,
