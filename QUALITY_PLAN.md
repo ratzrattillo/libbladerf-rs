@@ -59,8 +59,10 @@ Changes:
   (`usb_change_setting` releasing NIOS endpoints, `usb_set_firmware_loopback`
   cycling the alt setting) as inherent methods. Call sites change from
   `self.nios.usb_x(..)` to `self.nios.interface().usb_x(..)`.
-* `MetadataHeader::from_bytes`: replace `ptr::read_unaligned` with
-  `from_le_bytes` field decoding; drop `#[repr(C, packed)]`. Zero `unsafe`.
+* `MetadataHeader::from_bytes`: kept as the `#[repr(C, packed)]` +
+  `ptr::read_unaligned` read by maintainer preference (a `from_le_bytes`
+  version was tried and reverted; it measured identically in
+  `metadata_header_full_parse`). This is the crate's single `unsafe` block.
 
 ## 3. Stream backend seam and lifecycle tests
 
