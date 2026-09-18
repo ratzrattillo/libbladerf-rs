@@ -1,0 +1,10 @@
+[package]
+name = "rx-tx"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0"
+env_logger = "0.11"
+libbladerf-rs= { path= "../..", features = ["xb200"] }
+log = "0.4"

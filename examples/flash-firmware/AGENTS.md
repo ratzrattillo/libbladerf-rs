@@ -1,4 +1,4 @@
-# flash_firmware
+# flash-firmware
 
 Downloads the latest FX3 firmware from Nuand, flashes it to the bladeRF1 SPI flash, resets the device, and verifies the new firmware version.
 
@@ -8,8 +8,8 @@ All commands run from the **repository root**:
 
 | Action | Command |
 |--------|---------|
-| Build | `cargo build -p flash_firmware` |
-| Run | `cargo run -p flash_firmware` |
+| Build | `cargo build -p flash-firmware` |
+| Run | `cargo run -p flash-firmware` |
 
 ## API used
 

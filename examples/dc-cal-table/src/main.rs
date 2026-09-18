@@ -729,7 +729,7 @@ fn main() -> Result<()> {
 
     let f_min: u64 = std::env::args()
         .nth(2)
-        .ok_or_else(|| anyhow::anyhow!("usage: dc_cal_table <rx|tx> <f_min> <f_max> <f_inc>"))?
+        .ok_or_else(|| anyhow::anyhow!("usage: dc-cal-table <rx|tx> <f_min> <f_max> <f_inc>"))?
         .parse()?;
     let f_max: u64 = std::env::args()
         .nth(3)

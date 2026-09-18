@@ -1,4 +1,4 @@
-# dc_cal_table
+# dc-cal-table
 
 Generates DC calibration lookup tables for the BladeRF1.
 
@@ -8,13 +8,13 @@ All commands run from the **repository root**:
 
 | Action | Command |
 |--------|---------|
-| Build | `cargo build -p dc_cal_table` |
-| Run | `cargo run -p dc_cal_table -- <rx\|tx> <f_min> <f_max> <f_inc>` |
+| Build | `cargo build -p dc-cal-table` |
+| Run | `cargo run -p dc-cal-table -- <rx\|tx> <f_min> <f_max> <f_inc>` |
 
 ## Example
 
 ```bash
-cargo run -p dc_cal_table -- rx 300000000 3800000000 10000000
+cargo run -p dc-cal-table -- rx 300000000 3800000000 10000000
 ```
 
 ## API used

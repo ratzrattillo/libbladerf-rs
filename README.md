@@ -117,17 +117,17 @@ Git-tracked examples (build and run from the repository root):
 | Package | Purpose |
 |---------|---------|
 | `info` | Basic device info and FPGA version |
-| `rx_tx` | Streaming RX/TX with metadata headers |
-| `rx_async` | RX streaming with the awaited API on tokio (`--features tokio`) |
+| `rx-tx` | Streaming RX/TX with metadata headers |
+| `rx-async` | RX streaming with the awaited API on tokio (`--features tokio`) |
 | `calibrate` | DC calibration on LMS6002D |
-| `dc_cal_table` | DC calibration table management |
-| `flash_firmware` | FX3 firmware flashing |
-| `flash_fpga` | FPGA bitstream flashing |
+| `dc-cal-table` | DC calibration table management |
+| `flash-firmware` | FX3 firmware flashing |
+| `flash-fpga` | FPGA bitstream flashing |
 
 ```bash
 cargo run -p info
-cargo run -p rx_tx
-cargo run -p rx_async
+cargo run -p rx-tx
+cargo run -p rx-async
 ```
 
 ## Supported features

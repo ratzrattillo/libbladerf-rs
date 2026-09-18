@@ -11,7 +11,7 @@ const VERSIONS_URL: &str = "https://nuand.com/versions.json";
 const FIRMWARE_BASE_URL: &str = "https://www.nuand.com/fx3";
 
 #[derive(Parser)]
-#[command(name = "flash_firmware", about = "Flash FX3 firmware to bladeRF1")]
+#[command(name = "flash-firmware", about = "Flash FX3 firmware to bladeRF1")]
 struct Cli {
     /// Flash firmware from a local file instead of downloading the latest
     #[arg(short, long)]

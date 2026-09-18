@@ -1,4 +1,4 @@
-# rx_tx
+# rx-tx
 
 Demonstrates the BladeRF1 streaming API (RX and TX).
 
@@ -8,8 +8,8 @@ All commands run from the **repository root**:
 
 | Action | Command |
 |--------|---------|
-| Build | `cargo build -p rx_tx` |
-| Run | `cargo run -p rx_tx` |
+| Build | `cargo build -p rx-tx` |
+| Run | `cargo run -p rx-tx` |
 
 ## API used
 
