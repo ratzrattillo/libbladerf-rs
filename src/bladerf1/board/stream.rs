@@ -12,8 +12,8 @@
 //! and a pool of reusable `Buffer` instances. No `Drop` impl is provided on
 //! streams; `close()` is the only clean teardown path.
 //!
-//! The state machine lives in [`StreamCore`], generic over a
-//! [`BulkEndpoint`] and a [`StreamHost`], so the lifecycle is tested with
+//! The state machine lives in `StreamCore`, generic over a
+//! `BulkEndpoint` and a `StreamHost`, so the lifecycle is tested with
 //! mocks (see the `tests` module) and only the USB plumbing needs hardware.
 //!
 //! All I/O methods return [`MaybeFuture`]. The blocking path (`.wait()`)
