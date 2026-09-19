@@ -253,7 +253,7 @@ Test helpers (backup/restore) use extension traits defined in each test file sin
 
 - **Rust bitwise operator precedence.** `&` and `|` bind looser than `==`/`!=`. `val & mask != 0` parses as `val & (mask != 0)` — always use `(val & mask) != 0`. Same for `|` with comparisons.
 - **Formatting requires nightly.** `rustfmt.toml` enables `format_code_in_doc_comments=true`, which is nightly-only. Use `rustup run nightly -- cargo fmt`.
-- **`.cargo/config.toml` sets `target-cpu=native`.** Builds are machine-specific. Remove this flag if distributing binaries.
+- **Do not commit `target-cpu=native`.** It made CI flaky: rustflags from the config also apply to build scripts and proc macros, which run inside the compiler process, and an LLVM codegen bug (rust-lang/rust#141099) makes rustc SIGILL on some CPU models in GitHub's runner pool. For local performance work, use `RUSTFLAGS="-C target-cpu=native"` in your shell or a user-level `~/.cargo/config.toml` instead of the repo config.
 - **`bladerf2` feature is a stub.** `src/bladerf2.rs` exists but is not implemented. Don't try to use it.
 - **Integration tests require `--test-threads=1`.** `.cargo/config.toml` sets `test.threads = 1` but explicit `-- --test-threads=1` is still recommended.
 - **`scripts/check.sh` has `cargo clean` commented out.** It does NOT delete `Cargo.lock` or clean the target dir by default.
