@@ -28,6 +28,7 @@ runner) and does **not** run the local-only conventional-commits validation.
 
 ## Local pre-flight
 
+`cargo install git-cliff`
 `scripts/check.sh` is the local pre-flight check. It pins the stable
 toolchain (attempting `rustup update stable` first so new default-warn lints
 are caught locally), checks formatting with nightly rustfmt, and runs clippy on
