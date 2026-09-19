@@ -9,6 +9,9 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # Neutralize the repo's target-cpu=native (see AGENTS.md): cargo appends
+  # this after the config's rustflags and rustc honors the last -C target-cpu.
+  CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: "-C target-cpu=x86-64"
 
 jobs:
   fmt:
