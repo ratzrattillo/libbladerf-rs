@@ -1,8 +1,37 @@
-## [unreleased]
+## [0.5.0] - 2026-09-19
+
+### 🚀 Features
+
+- Add Android support and DC cal table directory parameter
+- [**breaking**] Unify all I/O behind MaybeFuture async interface
+
+### 🐛 Bug Fixes
+
+- Build pipeline
+- Use v tag prefix so cargo-release finds the prior release tag
+- Drop the tag prefix, the default tag template already adds the v
+- Pass --no-confirm so cargo release actually runs in CI
+
+### 💼 Other
+
+- Silence cargo manifest lints
+- Drop target-cpu=native from the committed cargo config
+- Keep target-cpu=native locally, pin baseline CPU in CI
+
+### 📚 Documentation
+
+- Update CHANGELOG.md
+- Use plain code spans for private items in rustdoc
+- Add git-cliff install hint
 
 ### ⚙️ Miscellaneous Tasks
 
 - Update release workflow
+- Fix release pipeline and permissions
+- Make the release pipeline self-sufficient on CI
+- Fix git-cliff install in the release pipeline
+- Run all release checks as parallel gate jobs, drop the pre-release hook
+- Call ci.yml from release.yml via workflow_call instead of duplicating the gates
 ## [0.4.1] - 2026-06-20
 
 ### Changed
