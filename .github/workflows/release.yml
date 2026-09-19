@@ -34,6 +34,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --features bladerf1 --all-targets -- -D warnings
+      - run: cargo clippy --no-default-features --features bladerf1,xb100,xb200,xb300,tokio --all-targets -- -D warnings
 
   audit:
     runs-on: ubuntu-latest
@@ -70,6 +71,47 @@ jobs:
             cargo build --manifest-path "$manifest"
           done
 
+  cross:
+    name: Cross-compile (aarch64, windows-gnu)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-gnu, x86_64-pc-windows-gnu
+      - uses: Swatinem/rust-cache@v2
+      - run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu gcc-mingw-w64-x86-64
+      - run: cargo build --target aarch64-unknown-linux-gnu --features bladerf1 --lib
+      - run: cargo build --target x86_64-pc-windows-gnu --features bladerf1 --lib
+
+  wasm:
+    name: Check wasm32-unknown-unknown
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --target wasm32-unknown-unknown --features bladerf1 --lib
+
+  conventional-commits:
+    name: Conventional Commits
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - run: |
+          tag=$(curl -s https://api.github.com/repos/orhun/git-cliff/releases/latest | jq -r '.tag_name')
+          ver=${tag#v}
+          dest="${CARGO_HOME:-$HOME/.cargo}/bin"
+          mkdir -p "$dest"
+          curl -sL "https://github.com/orhun/git-cliff/releases/download/${tag}/git-cliff-${ver}-x86_64-unknown-linux-gnu.tar.gz" | tar xzO "git-cliff-${ver}/git-cliff" > "$dest/git-cliff"
+          chmod +x "$dest/git-cliff"
+          "$dest/git-cliff" --version
+      - run: git-cliff --unreleased --output /dev/null
+
   test-linux:
     name: Unit Tests Linux
     runs-on: ubuntu-latest
@@ -82,6 +124,7 @@ jobs:
       - run: cargo build --features bladerf1
       - run: cargo test --lib
       - run: cargo test --test unit
+      - run: cargo test --test public_api --features bladerf1
 
   test-macos:
     name: Unit Tests macOS
@@ -95,6 +138,7 @@ jobs:
       - run: cargo build --features bladerf1
       - run: cargo test --lib
       - run: cargo test --test unit
+      - run: cargo test --test public_api --features bladerf1
 
   test-windows:
     name: Unit Tests Windows
@@ -108,26 +152,18 @@ jobs:
       - run: cargo build --features bladerf1
       - run: cargo test --lib
       - run: cargo test --test unit
+      - run: cargo test --test public_api --features bladerf1
 
   bump_and_tag:
-    needs: [fmt, clippy, audit, deny, doc, build-examples, test-linux, test-macos, test-windows]
+    needs: [fmt, clippy, audit, deny, doc, build-examples, cross, wasm, conventional-commits, test-linux, test-macos, test-windows]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
-      - run: rustup toolchain install nightly --profile minimal --component clippy --component rustfmt
-      - run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu gcc-mingw-w64-x86-64
-      - run: |
-          tag=$(curl -s https://api.github.com/repos/orhun/git-cliff/releases/latest | jq -r '.tag_name')
-          ver=${tag#v}
-          dest="${CARGO_HOME:-$HOME/.cargo}/bin"
-          mkdir -p "$dest"
-          curl -sL "https://github.com/orhun/git-cliff/releases/download/${tag}/git-cliff-${ver}-x86_64-unknown-linux-gnu.tar.gz" | tar xzO "git-cliff-${ver}/git-cliff" > "$dest/git-cliff"
-          chmod +x "$dest/git-cliff"
-          "$dest/git-cliff" --version
-      - run: cargo install cargo-release cargo-audit cargo-deny --locked
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo install cargo-release --locked
       - run: git config user.email "11601995+ratzrattillo@users.noreply.github.com"
       - run: git config user.name "ratzrattillo"
       - run: cargo release "${{ inputs.level }}" --execute --no-verify --no-publish
