@@ -5,6 +5,7 @@ on:
     branches: ["main"]
   pull_request:
     branches: ["main"]
+  workflow_call:
   workflow_dispatch:
 
 env:
@@ -88,6 +89,36 @@ jobs:
           for manifest in examples/*/Cargo.toml; do
             cargo build --manifest-path "$manifest"
           done
+
+  cross:
+    name: Cross-compile (aarch64, windows-gnu)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-gnu, x86_64-pc-windows-gnu
+      - uses: Swatinem/rust-cache@v2
+      - run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu gcc-mingw-w64-x86-64
+      - run: cargo build --target aarch64-unknown-linux-gnu --features bladerf1 --lib
+      - run: cargo build --target x86_64-pc-windows-gnu --features bladerf1 --lib
+
+  conventional-commits:
+    name: Conventional Commits
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - run: |
+          tag=$(curl -s https://api.github.com/repos/orhun/git-cliff/releases/latest | jq -r '.tag_name')
+          ver=${tag#v}
+          dest="${CARGO_HOME:-$HOME/.cargo}/bin"
+          mkdir -p "$dest"
+          curl -sL "https://github.com/orhun/git-cliff/releases/download/${tag}/git-cliff-${ver}-x86_64-unknown-linux-gnu.tar.gz" | tar xzO "git-cliff-${ver}/git-cliff" > "$dest/git-cliff"
+          chmod +x "$dest/git-cliff"
+          "$dest/git-cliff" --version
+      - run: git-cliff --unreleased --output /dev/null
 
   test-linux:
     name: Unit Tests Linux
