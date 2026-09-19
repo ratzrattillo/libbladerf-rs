@@ -42,6 +42,16 @@ jobs:
       - run: git config user.email "11601995+ratzrattillo@users.noreply.github.com"
       - run: git config user.name "ratzrattillo"
       - run: cargo release "${{ inputs.level }}" --execute --no-verify --no-publish --no-push --no-confirm
+      - uses: ./.github/actions/git-cliff
+      - run: |
+          tag="$(git describe --tags --abbrev=0)"
+          msg="$(git for-each-ref "refs/tags/$tag" --format='%(contents:subject)')"
+          awk '/^## \[unreleased\]$/{skip=1; next} /^## \[/{skip=0} !skip' CHANGELOG.md > CHANGELOG.tmp
+          mv CHANGELOG.tmp CHANGELOG.md
+          git-cliff --latest --prepend CHANGELOG.md
+          git add CHANGELOG.md
+          git commit -q --amend --no-edit
+          git tag -fa "$tag" -m "$msg"
       - run: git push origin HEAD "$(git describe --tags --abbrev=0)"
 
   github_release:
