@@ -1,4 +1,4 @@
 publish = false
-tag-prefix = "v"
+tag-prefix = ""
 consolidate-commits = true
 dependent-version = "upgrade"
