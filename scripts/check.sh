@@ -10,9 +10,9 @@ cd "$(dirname "$0")/.."
 ###########################################################
 # TOOLCHAINS
 ###########################################################
-# CI uses the latest stable (dtolnay/rust-toolchain@stable). Run everything
-# on stable regardless of the local default toolchain, and try to bring it
-# up to date first so new default-warn lints are caught here, not in CI.
+# Mirrors CI's dtolnay/rust-toolchain@stable: run everything on the latest
+# stable regardless of the local default toolchain, and try to bring it up
+# to date first so new default-warn lints are caught here, not in CI.
 # Explicit `cargo +nightly` invocations below override this variable.
 export RUSTUP_TOOLCHAIN=stable
 if ! rustup update stable; then
@@ -21,25 +21,21 @@ fi
 rustc --version
 cargo +nightly --version
 
-# cargo clean
+# ci.yml env: neutralize the repo's target-cpu=native (see AGENTS.md): cargo
+# appends this after the config's rustflags and rustc honors the last
+# -C target-cpu.
+export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS="-C target-cpu=x86-64"
+# ci.yml test-* jobs env:
+export RUST_BACKTRACE=full
 
 ###########################################################
-# BUILD
+# BUILD (ci.yml: test-linux)
 ###########################################################
 cargo build --features bladerf1
+cargo build --no-default-features --features bladerf1,tokio
 
 ###########################################################
-# CROSS-COMPILE BUILD (verify supported targets)
-###########################################################
-rustup target add x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-pc-windows-gnu wasm32-unknown-unknown
-cargo build --target x86_64-unknown-linux-gnu --features bladerf1 --lib
-cargo build --target aarch64-unknown-linux-gnu --features bladerf1 --lib
-cargo build --target x86_64-pc-windows-gnu --features bladerf1 --lib
-# WebUSB (needs --cfg=web_sys_unstable_apis, supplied by .cargo/config.toml)
-cargo check --target wasm32-unknown-unknown --features bladerf1 --lib
-
-###########################################################
-# TEST
+# TEST (ci.yml: test-linux / test-macos / test-windows)
 ###########################################################
 # Unit tests (no hardware)
 cargo test --lib
@@ -47,8 +43,8 @@ cargo test --lib
 cargo test --test unit
 # Public API contract (no hardware)
 cargo test --test public_api --features bladerf1
-# Hardware integration tests (single-threaded, shared device), default `smol`.
-# Skipped in CI, where no device is attached.
+# Hardware integration tests (single-threaded, shared device), default
+# `smol`. The only addition relative to CI, which runs without a device.
 if [ -z "$CI" ]; then
   cargo test --features bladerf1 --tests -- --test-threads=1
   # Same suite plus the async tests with nusb's tokio integration only
@@ -56,26 +52,39 @@ if [ -z "$CI" ]; then
 fi
 
 ###########################################################
-# CLIPPY
+# CLIPPY (ci.yml: clippy, clippy-nightly)
 ###########################################################
 # Stable is the gate CI enforces.
 cargo clippy --features bladerf1 --all-targets -- -D warnings
 cargo clippy --no-default-features --features bladerf1,xb100,xb200,xb300,tokio --all-targets -- -D warnings
-# Nightly clippy is the early warning: lints that are warn-by-default on
-# nightly today become CI failures on the next stable. Fix them now or
-# `#[allow]` them deliberately.
+# Nightly clippy is the early warning (continue-on-error in CI): lints that
+# are warn-by-default on nightly today become CI failures on the next
+# stable. Fix them now or `#[allow]` them deliberately.
 cargo +nightly clippy --features bladerf1 --all-targets -- -D warnings
 cargo +nightly clippy --no-default-features --features bladerf1,xb100,xb200,xb300,tokio --all-targets -- -D warnings
 
 ###########################################################
-# FMT
+# FMT (ci.yml: fmt)
 ###########################################################
-# rustfmt.toml enables nightly-only options; check with the toolchain that
-# honours them.
-cargo +nightly fmt --all --check
+cargo fmt --all --check
 
 ###########################################################
-# CONVENTIONAL COMMITS
+# WASM (ci.yml: wasm)
+###########################################################
+# WebUSB (needs --cfg=web_sys_unstable_apis, supplied by .cargo/config.toml)
+rustup target add wasm32-unknown-unknown
+cargo check --target wasm32-unknown-unknown --features bladerf1 --lib
+
+###########################################################
+# CROSS-COMPILE (ci.yml: cross)
+###########################################################
+# CI additionally runs: sudo apt-get install -y gcc-aarch64-linux-gnu gcc-mingw-w64-x86-64
+rustup target add aarch64-unknown-linux-gnu x86_64-pc-windows-gnu
+cargo build --target aarch64-unknown-linux-gnu --features bladerf1 --lib
+cargo build --target x86_64-pc-windows-gnu --features bladerf1 --lib
+
+###########################################################
+# CONVENTIONAL COMMITS (ci.yml: conventional-commits)
 ###########################################################
 # Validate that all unreleased commits (since the latest tag) conform to the
 # Conventional Commits spec. cliff.toml sets require_conventional=true, so
@@ -83,32 +92,23 @@ cargo +nightly fmt --all --check
 git-cliff --unreleased --output /dev/null
 
 ###########################################################
-# DOC
+# DOC (ci.yml: doc)
 ###########################################################
 cargo doc --features bladerf1 --no-deps
 
 ###########################################################
-# EXAMPLES
+# EXAMPLES (ci.yml: build-examples)
 ###########################################################
 for manifest in examples/*/Cargo.toml; do
-  pkg=$(grep '^name = ' "$manifest" | head -1 | sed 's/name = "\(.*\)"/\1/')
-  cargo build -p "$pkg" 2>/dev/null || cargo build --manifest-path "$manifest"
+  cargo build --manifest-path "$manifest"
 done
 
 ###########################################################
-# BENCH
-###########################################################
-# cargo bench --features bladerf1 --bench nios_packet_bench --bench sample_format_bench --bench metadata_header_bench
-
-###########################################################
-# DENY
+# DENY (ci.yml: deny)
 ###########################################################
 cargo deny check
 
 ###########################################################
-# AUDIT
+# AUDIT (ci.yml: audit)
 ###########################################################
-# Install cargo-audit
-# cargo install cargo-audit
-# Run security audit
 cargo audit

@@ -435,7 +435,7 @@ pub(crate) trait BulkEndpoint: NonWasmSend {
     fn poll_next_complete(&mut self, cx: &mut Context<'_>) -> Poll<Completion>;
     #[cfg(not(target_arch = "wasm32"))]
     fn wait_next_complete(&mut self, timeout: Duration) -> Option<Completion>;
-    #[cfg(not(target_arch = "wasm32"))]
+    fn can_cancel(&self) -> bool;
     fn cancel_all(&mut self);
     fn clear_halt(&mut self) -> impl MaybeFuture<Output = std::result::Result<(), nusb::Error>>;
 
@@ -467,9 +467,12 @@ impl<Dir: EndpointDirection> BulkEndpoint for Endpoint<Bulk, Dir> {
     fn wait_next_complete(&mut self, timeout: Duration) -> Option<Completion> {
         Endpoint::wait_next_complete(self, timeout)
     }
-    #[cfg(not(target_arch = "wasm32"))]
+    fn can_cancel(&self) -> bool {
+        cfg!(not(target_arch = "wasm32"))
+    }
     fn cancel_all(&mut self) {
-        Endpoint::cancel_all(self)
+        #[cfg(not(target_arch = "wasm32"))]
+        Endpoint::cancel_all(self);
     }
     fn clear_halt(&mut self) -> impl MaybeFuture<Output = std::result::Result<(), nusb::Error>> {
         Endpoint::clear_halt(self)
@@ -478,70 +481,40 @@ impl<Dir: EndpointDirection> BulkEndpoint for Endpoint<Bulk, Dir> {
 
 /// Awaits the next completion on `ep`, bounded by `timeout`.
 ///
-/// On native, timeout cancels and drains the pending transfers so the
-/// endpoint is left idle. WebUSB transfers cannot be cancelled, so on wasm
-/// the in-flight transfer is abandoned and `Error::Timeout` is returned.
+/// On timeout the pending transfers are cancelled and collected where the
+/// endpoint supports cancellation so it is left idle; WebUSB transfers
+/// cannot be cancelled, so there the in-flight transfer is abandoned and
+/// `Error::Timeout` is returned.
 pub(crate) async fn next_complete<E: BulkEndpoint>(
     ep: &mut E,
     timeout: Duration,
 ) -> Result<Completion> {
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        match crate::maybe_future::timeout(timeout, ep.next_complete()).await {
-            Some(completion) => Ok(completion),
-            None => {
-                ep.cancel_all();
-                drop(drain_pending(ep, RELEASE_TIMEOUT).await);
-                Err(Error::Timeout)
-            }
+    let Some(completion) = crate::maybe_future::timeout(timeout, ep.next_complete()).await else {
+        if ep.can_cancel() {
+            ep.cancel_all();
+            drop(drain_pending(ep, RELEASE_TIMEOUT).await);
         }
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
-        match crate::maybe_future::timeout(timeout, ep.next_complete()).await {
-            Some(completion) => Ok(completion),
-            None => Err(Error::Timeout),
-        }
-    }
+        return Err(Error::Timeout);
+    };
+    Ok(completion)
 }
 
 /// Collects all pending completions on `ep` and returns their buffers.
 ///
-/// Callers cancel first where cancellation is available. Each completion
-/// is bounded by `deadline`; on expiry the remaining transfers are
-/// abandoned (they cannot be cancelled on WebUSB) and a warning is logged.
+/// Each completion is bounded by `deadline`; on expiry the remaining
+/// transfers are cancelled where cancellation is available (left pending
+/// on WebUSB) and a warning is logged.
 pub(crate) async fn drain_pending<E: BulkEndpoint>(ep: &mut E, deadline: Duration) -> Vec<Buffer> {
     let mut buffers = Vec::with_capacity(ep.pending());
-    #[cfg(not(target_arch = "wasm32"))]
-    let mut remaining = deadline;
     while ep.pending() > 0 {
-        #[cfg(not(target_arch = "wasm32"))]
-        let completion = {
-            let start = std::time::Instant::now();
-            let Some(completion) =
-                crate::maybe_future::timeout(remaining, ep.next_complete()).await
-            else {
-                log::warn!(
-                    "timeout draining endpoint {:#04x}, {} transfers remain",
-                    ep.address(),
-                    ep.pending()
-                );
-                break;
-            };
-            remaining = remaining.saturating_sub(start.elapsed());
-            completion
-        };
-        #[cfg(target_arch = "wasm32")]
-        let completion = match next_complete(ep, deadline).await {
-            Ok(completion) => completion,
-            Err(_) => {
-                log::warn!(
-                    "timeout draining endpoint {:#04x}, {} transfers remain",
-                    ep.address(),
-                    ep.pending()
-                );
-                break;
-            }
+        let Some(completion) = crate::maybe_future::timeout(deadline, ep.next_complete()).await
+        else {
+            log::warn!(
+                "timeout draining endpoint {:#04x}, {} transfers remain",
+                ep.address(),
+                ep.pending()
+            );
+            break;
         };
         match completion.status {
             Ok(()) | Err(TransferError::Cancelled) => {}
@@ -636,11 +609,8 @@ impl UsbTransport {
     pub fn release_endpoints(&mut self) -> impl MaybeFuture<Output = ()> {
         Op::new(async move {
             if let Some(mut endpoints) = self.nios_endpoints.take() {
-                #[cfg(not(target_arch = "wasm32"))]
-                {
-                    endpoints.ep_out.cancel_all();
-                    endpoints.ep_in.cancel_all();
-                }
+                endpoints.ep_out.cancel_all();
+                endpoints.ep_in.cancel_all();
                 drop(drain_pending(&mut endpoints.ep_out, RELEASE_TIMEOUT).await);
                 drop(drain_pending(&mut endpoints.ep_in, RELEASE_TIMEOUT).await);
             }

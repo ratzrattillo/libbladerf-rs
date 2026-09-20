@@ -159,7 +159,10 @@ impl<E: BulkEndpoint> BufferPool<E> {
         self.available.pop_front()
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
+    fn can_cancel(&self) -> bool {
+        self.endpoint.can_cancel()
+    }
+
     fn cancel_all(&mut self) {
         if self.endpoint.pending() > 0 {
             self.endpoint.cancel_all();
@@ -167,11 +170,10 @@ impl<E: BulkEndpoint> BufferPool<E> {
     }
 
     /// Collects all in-flight transfers and returns their buffers to the
-    /// pool. Waits up to 5 seconds for completions on native targets.
+    /// pool. Each completion is bounded by a 5-second deadline.
     ///
-    /// Callers cancel first where cancellation is available; WebUSB cannot
-    /// cancel transfers, so on wasm this awaits every in-flight transfer to
-    /// finish naturally.
+    /// Where cancellation is not available (WebUSB), callers drain while
+    /// the module is still streaming so the transfers finish naturally.
     async fn drain(&mut self) {
         for buffer in crate::usb::drain_pending(&mut self.endpoint, DRAIN_TIMEOUT).await {
             self.recycle(buffer);
@@ -334,29 +336,25 @@ impl<E: BulkEndpoint> StreamCore<E> {
 
     /// Disables the module and returns the endpoint to an idle state.
     ///
-    /// Native: cancel → disable module → collect cancelled → clear halt →
-    /// deconfigure format bits. WebUSB transfers cannot be cancelled and
-    /// their promises never settle once the device stops streaming, so wasm
-    /// collects the in-flight transfers while the module is still active,
-    /// then disables the module.
+    /// Where cancellation is available, in-flight transfers are cancelled
+    /// before the module is disabled and the cancelled buffers are
+    /// collected afterwards. WebUSB transfers cannot be cancelled and their
+    /// promises never settle once the device stops streaming, so they are
+    /// collected while the module is still active, then the module is
+    /// disabled.
     async fn teardown<H: StreamHost>(
         pool: &mut BufferPool<E>,
         host: &mut H,
         channel: Channel,
     ) -> Result<()> {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
+        if pool.can_cancel() {
             pool.cancel_all();
-            host.enable_module(channel, false).await?;
+        } else {
             pool.drain().await;
-            pool.clear_halt().await?;
         }
-        #[cfg(target_arch = "wasm32")]
-        {
-            pool.drain().await;
-            host.enable_module(channel, false).await?;
-            pool.clear_halt().await?;
-        }
+        host.enable_module(channel, false).await?;
+        pool.drain().await;
+        pool.clear_halt().await?;
         host.perform_format_deconfig().await
     }
 
@@ -1186,6 +1184,7 @@ mod tests {
     struct MockState {
         pending: VecDeque<(Buffer, Option<std::result::Result<(), TransferError>>)>,
         auto_complete: bool,
+        cancellable: bool,
         fill: usize,
         clear_halts: usize,
     }
@@ -1198,9 +1197,16 @@ mod tests {
             Self(Arc::new(Mutex::new(MockState {
                 pending: VecDeque::new(),
                 auto_complete,
+                cancellable: true,
                 fill: MPS,
                 clear_halts: 0,
             })))
+        }
+        fn cancellable(&self) -> bool {
+            self.0.lock().unwrap().cancellable
+        }
+        fn set_cancellable(&self, cancellable: bool) {
+            self.0.lock().unwrap().cancellable = cancellable;
         }
         fn endpoint(&self, log: &Log) -> MockEndpoint {
             MockEndpoint {
@@ -1234,6 +1240,7 @@ mod tests {
                 Some((_, Some(_))) => {
                     let (mut buffer, status) = st.pending.pop_front().unwrap();
                     let status = status.unwrap();
+                    self.log.lock().unwrap().push("complete".into());
                     if status.is_ok() {
                         buffer.clear();
                         buffer.extend_fill(fill.min(buffer.capacity()), 0xAB);
@@ -1285,14 +1292,19 @@ mod tests {
             );
             self.take_ready()
         }
+        fn can_cancel(&self) -> bool {
+            self.state.cancellable()
+        }
         fn cancel_all(&mut self) {
-            let mut st = self.state.0.lock().unwrap();
-            for slot in st.pending.iter_mut() {
-                if slot.1.is_none() {
-                    slot.1 = Some(Err(TransferError::Cancelled));
+            if self.state.cancellable() {
+                let mut st = self.state.0.lock().unwrap();
+                for slot in st.pending.iter_mut() {
+                    if slot.1.is_none() {
+                        slot.1 = Some(Err(TransferError::Cancelled));
+                    }
                 }
+                self.log.lock().unwrap().push("cancel_all".into());
             }
-            self.log.lock().unwrap().push("cancel_all".into());
         }
         fn clear_halt(
             &mut self,
@@ -1715,6 +1727,36 @@ mod tests {
         assert!(pos("enable(Rx,false)") < pos("clear_halt"));
         assert!(pos("clear_halt") < pos("deconfig"));
         assert_eq!(f.ep.pending(), 0, "cancelled transfers were collected");
+    }
+
+    #[test]
+    fn non_cancellable_teardown_drains_before_disable() {
+        let mut f = Fixture::rx();
+        f.ep.set_cancellable(false);
+        f.core.start(&mut f.host).wait().unwrap();
+        f.log.lock().unwrap().clear();
+        f.core.close(&mut f.host).wait().unwrap();
+        let log = f.log();
+        let pos = |s: &str| {
+            log.iter()
+                .position(|l| l == s)
+                .unwrap_or_else(|| panic!("{s} missing in {log:?}"))
+        };
+        assert!(
+            !log.contains(&"cancel_all".to_string()),
+            "a non-cancellable endpoint must not be cancelled"
+        );
+        let last_complete = log
+            .iter()
+            .rposition(|l| l == "complete")
+            .expect("in-flight transfers must have completed");
+        assert!(
+            last_complete < pos("enable(Rx,false)"),
+            "in-flight transfers must complete before the module is disabled: {log:?}"
+        );
+        assert!(pos("enable(Rx,false)") < pos("clear_halt"));
+        assert!(pos("clear_halt") < pos("deconfig"));
+        assert_eq!(f.ep.pending(), 0, "in-flight transfers were collected");
     }
 
     #[derive(Clone, Copy, Debug)]
