@@ -128,7 +128,6 @@ pub(crate) async fn sleep(duration: Duration) {
 ///
 /// The inner future is dropped on timeout. Callers that must not leave a
 /// USB transfer pending cancel it afterwards.
-#[cfg(not(target_arch = "wasm32"))]
 pub(crate) async fn timeout<F: Future>(timeout: Duration, future: F) -> Option<F::Output> {
     use std::pin::pin;
     use std::task::Poll;

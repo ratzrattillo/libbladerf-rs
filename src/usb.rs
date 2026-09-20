@@ -476,10 +476,11 @@ impl<Dir: EndpointDirection> BulkEndpoint for Endpoint<Bulk, Dir> {
     }
 }
 
-/// Awaits the next completion on `ep`, bounded by `timeout` on native.
+/// Awaits the next completion on `ep`, bounded by `timeout`.
 ///
-/// On timeout the pending transfers are cancelled and drained so the
-/// endpoint is left idle, then `Error::Timeout` is returned.
+/// On native, timeout cancels and drains the pending transfers so the
+/// endpoint is left idle. WebUSB transfers cannot be cancelled, so on wasm
+/// the in-flight transfer is abandoned and `Error::Timeout` is returned.
 pub(crate) async fn next_complete<E: BulkEndpoint>(
     ep: &mut E,
     timeout: Duration,
@@ -497,22 +498,22 @@ pub(crate) async fn next_complete<E: BulkEndpoint>(
     }
     #[cfg(target_arch = "wasm32")]
     {
-        let _ = timeout;
-        Ok(ep.next_complete().await)
+        match crate::maybe_future::timeout(timeout, ep.next_complete()).await {
+            Some(completion) => Ok(completion),
+            None => Err(Error::Timeout),
+        }
     }
 }
 
 /// Collects all pending completions on `ep` and returns their buffers.
 ///
-/// Callers cancel first where cancellation is available. Stops early
-/// with a warning if `deadline` elapses (native only; WebUSB transfers
-/// always run to completion).
+/// Callers cancel first where cancellation is available. Each completion
+/// is bounded by `deadline`; on expiry the remaining transfers are
+/// abandoned (they cannot be cancelled on WebUSB) and a warning is logged.
 pub(crate) async fn drain_pending<E: BulkEndpoint>(ep: &mut E, deadline: Duration) -> Vec<Buffer> {
     let mut buffers = Vec::with_capacity(ep.pending());
     #[cfg(not(target_arch = "wasm32"))]
     let mut remaining = deadline;
-    #[cfg(target_arch = "wasm32")]
-    let _ = deadline;
     while ep.pending() > 0 {
         #[cfg(not(target_arch = "wasm32"))]
         let completion = {
@@ -531,7 +532,17 @@ pub(crate) async fn drain_pending<E: BulkEndpoint>(ep: &mut E, deadline: Duratio
             completion
         };
         #[cfg(target_arch = "wasm32")]
-        let completion = ep.next_complete().await;
+        let completion = match next_complete(ep, deadline).await {
+            Ok(completion) => completion,
+            Err(_) => {
+                log::warn!(
+                    "timeout draining endpoint {:#04x}, {} transfers remain",
+                    ep.address(),
+                    ep.pending()
+                );
+                break;
+            }
+        };
         match completion.status {
             Ok(()) | Err(TransferError::Cancelled) => {}
             Err(e) => log::warn!(

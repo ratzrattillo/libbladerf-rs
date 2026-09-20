@@ -335,18 +335,28 @@ impl<E: BulkEndpoint> StreamCore<E> {
     /// Disables the module and returns the endpoint to an idle state.
     ///
     /// Native: cancel → disable module → collect cancelled → clear halt →
-    /// deconfigure format bits. wasm has no cancellation, so the in-flight
-    /// transfers are awaited after the module is disabled.
+    /// deconfigure format bits. WebUSB transfers cannot be cancelled and
+    /// their promises never settle once the device stops streaming, so wasm
+    /// collects the in-flight transfers while the module is still active,
+    /// then disables the module.
     async fn teardown<H: StreamHost>(
         pool: &mut BufferPool<E>,
         host: &mut H,
         channel: Channel,
     ) -> Result<()> {
         #[cfg(not(target_arch = "wasm32"))]
-        pool.cancel_all();
-        host.enable_module(channel, false).await?;
-        pool.drain().await;
-        pool.clear_halt().await?;
+        {
+            pool.cancel_all();
+            host.enable_module(channel, false).await?;
+            pool.drain().await;
+            pool.clear_halt().await?;
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            pool.drain().await;
+            host.enable_module(channel, false).await?;
+            pool.clear_halt().await?;
+        }
         host.perform_format_deconfig().await
     }
 
