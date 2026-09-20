@@ -1,3 +1,14 @@
+## [0.5.1] - 2026-09-20
+
+### 🐛 Bug Fixes
+
+- Update CHANGELOG.md in the release pipeline
+- Attempt to fix webusb on stream termination
+- Docs and wasm support
+
+### 📚 Documentation
+
+- Add changelog entry for 0.5.0
 ## [0.5.0] - 2026-09-19
 
 ### 🚀 Features
