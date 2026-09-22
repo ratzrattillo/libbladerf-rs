@@ -100,6 +100,7 @@ pub const BLADERF1_USB_PID: u16 = 0x5246;
 /// GPIO bit that enables small DMA transfers on Hi-Speed USB.
 pub const BLADERF_GPIO_FEATURE_SMALL_DMA_XFER: u16 = 1 << 7;
 
+#[cfg(not(target_os = "android"))]
 fn is_bladerf1(dev: &DeviceInfo) -> bool {
     dev.vendor_id() == BLADERF1_USB_VID && dev.product_id() == BLADERF1_USB_PID
 }
