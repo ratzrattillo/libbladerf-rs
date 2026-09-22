@@ -79,8 +79,9 @@ cargo check --target wasm32-unknown-unknown --features bladerf1 --lib
 # CROSS-COMPILE (ci.yml: cross)
 ###########################################################
 # CI additionally runs: sudo apt-get install -y gcc-aarch64-linux-gnu gcc-mingw-w64-x86-64
-rustup target add aarch64-unknown-linux-gnu x86_64-pc-windows-gnu
+rustup target add aarch64-unknown-linux-gnu aarch64-linux-android x86_64-pc-windows-gnu
 cargo build --target aarch64-unknown-linux-gnu --features bladerf1 --lib
+cargo build --target aarch64-linux-android --features bladerf1 --lib
 cargo build --target x86_64-pc-windows-gnu --features bladerf1 --lib
 
 ###########################################################
