@@ -1,3 +1,8 @@
+## [0.5.2] - 2026-09-22
+
+### 🐛 Bug Fixes
+
+- *(android)* Feature gate
 ## [0.5.1] - 2026-09-20
 
 ### 🐛 Bug Fixes
