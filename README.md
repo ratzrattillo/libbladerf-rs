@@ -9,6 +9,8 @@ USB transport via [nusb]. Supports Windows, macOS, Linux, Android (via file
 descriptor) and WebUSB (`wasm32-unknown-unknown`). Every I/O method can be
 used synchronously or asynchronously.
 
+Requires Rust 1.98.1 or newer.
+
 [nusb]: https://github.com/kevinmehall/nusb
 [libbladeRF]: https://github.com/Nuand/bladeRF
 

@@ -4,7 +4,7 @@ Pure Rust driver for the Nuand BladeRF1 SDR. No C libbladeRF dependency. Based o
 
 [nusb]: https://github.com/kevinmehall/nusb
 
-Edition 2024, MSRV 1.96.
+Edition 2024, MSRV 1.98.1.
 
 ## Commands
 

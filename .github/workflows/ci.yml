@@ -15,6 +15,16 @@ env:
   CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: "-C target-cpu=x86-64"
 
 jobs:
+  msrv:
+    name: Minimum Rust 1.98.1
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@1.98.1
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --lib
+      - run: cargo check --no-default-features --features bladerf1,xb200,tokio --lib
+
   fmt:
     runs-on: ubuntu-latest
     steps:
