@@ -24,6 +24,8 @@ use crate::usb::UsbAltSetting;
 use crate::usb::UsbTransport;
 use crate::version::SemanticVersion;
 use nusb::MaybeFuture;
+pub(crate) mod streams;
+use streams::StreamClaims;
 
 /// Central NIOS register I/O hub.
 ///
@@ -34,15 +36,14 @@ use nusb::MaybeFuture;
 pub struct NiosCore {
     /// The underlying USB transport for device communication.
     transport: UsbTransport,
-    /// Number of active RX/TX streams. Prevents alt setting changes when > 0.
-    active_streams: u8,
+    pub(crate) streams: StreamClaims,
 }
 impl NiosCore {
     /// Creates a new `NiosCore` wrapping the given USB transport.
     pub fn new(transport: UsbTransport) -> Self {
         Self {
             transport,
-            active_streams: 0,
+            streams: StreamClaims::default(),
         }
     }
     /// Returns a shared reference to the underlying `UsbTransport`.
@@ -66,18 +67,6 @@ impl NiosCore {
         enable: bool,
     ) -> impl MaybeFuture<Output = Result<()>> {
         self.transport.usb_set_firmware_loopback(enable)
-    }
-    /// Returns the current number of active streams.
-    pub(crate) fn active_streams(&self) -> u8 {
-        self.active_streams
-    }
-    /// Increments the active stream counter. Called when a stream is built.
-    pub(crate) fn stream_started(&mut self) {
-        self.active_streams += 1;
-    }
-    /// Decrements the active stream counter. Called when a stream is closed.
-    pub(crate) fn stream_stopped(&mut self) {
-        self.active_streams -= 1;
     }
     /// Issues a generic NIOS register read.
     ///

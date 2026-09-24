@@ -213,6 +213,22 @@ pub enum Error {
     #[error("cannot switch mode while streams are active")]
     StreamsActive,
 
+    /// A stream already owns the endpoint for this direction.
+    #[error("the {0:?} streaming endpoint is already claimed")]
+    StreamClaimed(crate::Channel),
+
+    /// A detached stream was used with another device instance.
+    #[error("stream and session belong to different device instances")]
+    WrongDevice,
+
+    /// Duplex streams requested incompatible global FPGA formats.
+    #[error("stream format conflicts with another direction's format")]
+    IncompatibleStreamFormat,
+
+    /// A stream lifecycle transition must finish before this operation.
+    #[error("stream transition is incomplete; retry start, stop, or close")]
+    StreamTransition,
+
     /// Protocol synchronization was lost; reset and reopen the device before further I/O.
     #[error("device recovery required; reset and reopen the connection")]
     RecoveryRequired,
@@ -256,6 +272,10 @@ impl Error {
             | Self::StreamAlreadyStarted
             | Self::NoTransfersInFlight
             | Self::StreamsActive
+            | Self::StreamClaimed(_)
+            | Self::WrongDevice
+            | Self::IncompatibleStreamFormat
+            | Self::StreamTransition
             | Self::RecoveryRequired
             | Self::TriggerNotArmed
             | Self::TriggerNotMaster => ErrorKind::State,

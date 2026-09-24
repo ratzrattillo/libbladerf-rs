@@ -29,6 +29,7 @@ impl RfLinkSession<'_> {
     /// Returns `Error::NotInitialized` if the board has not been initialized.
     pub fn set_loopback(&mut self, lb: Loopback) -> impl MaybeFuture<Output = Result<()>> {
         Op::new(async move {
+            self.nios.streams.require_idle()?;
             self.require_initialized().await?;
             match lb {
                 Loopback::Firmware => {

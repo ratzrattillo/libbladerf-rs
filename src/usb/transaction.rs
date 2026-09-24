@@ -152,9 +152,6 @@ mod tests {
     }
 
     impl BulkEndpoint for Endpoint {
-        fn address(&self) -> u8 {
-            if self.input { 0x82 } else { 0x02 }
-        }
         fn max_packet_size(&self) -> usize {
             512
         }
@@ -199,7 +196,7 @@ mod tests {
         }
         fn clear_halt(
             &mut self,
-        ) -> impl MaybeFuture<Output = std::result::Result<(), nusb::Error>> {
+        ) -> impl MaybeFuture<Output = std::result::Result<(), nusb::Error>> + 'static {
             Op::new(async { Ok(()) })
         }
     }

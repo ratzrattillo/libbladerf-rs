@@ -434,6 +434,7 @@ impl BladeRf1 {
         Op::new(async move {
             self.nios.usb_change_setting(UsbAltSetting::RfLink).await?;
             Ok(RfLinkSession {
+                device: &self.device,
                 nios: &mut self.nios,
                 dc_rx_table: self.dc_rx_table.as_ref(),
                 dc_tx_table: self.dc_tx_table.as_ref(),
@@ -447,9 +448,7 @@ impl BladeRf1 {
     /// since switching the USB alt setting would disrupt active transfers.
     pub fn flash_session(&mut self) -> impl MaybeFuture<Output = crate::Result<FlashSession<'_>>> {
         Op::new(async move {
-            if self.nios.active_streams() > 0 {
-                return Err(Error::StreamsActive);
-            }
+            self.nios.streams.require_idle()?;
             self.nios
                 .usb_change_setting(UsbAltSetting::SpiFlash)
                 .await?;
@@ -482,9 +481,7 @@ impl BladeRf1 {
         &mut self,
     ) -> impl MaybeFuture<Output = crate::Result<ConfigSession<'_>>> {
         Op::new(async move {
-            if self.nios.active_streams() > 0 {
-                return Err(Error::StreamsActive);
-            }
+            self.nios.streams.require_idle()?;
             self.nios.usb_change_setting(UsbAltSetting::Config).await?;
             Ok(ConfigSession {
                 nios: &mut self.nios,
@@ -563,6 +560,7 @@ impl Drop for BladeRf1 {
 /// stored on [`BladeRf1`] so that [`initialize`](RfLinkSession::initialize)
 /// can apply them after the standard init sequence.
 pub struct RfLinkSession<'a> {
+    device: &'a Device,
     pub(crate) nios: &'a mut NiosCore,
     pub(crate) dc_rx_table: Option<&'a DcCalTable>,
     pub(crate) dc_tx_table: Option<&'a DcCalTable>,
@@ -642,6 +640,8 @@ impl RfLinkSession<'_> {
                 data &= !(BLADERF_GPIO_FEATURE_SMALL_DMA_XFER as u32);
             }
             log::trace!("[config_gpio_write] data after speed check: {data}");
+            let old = self.nios.nios_config_read().await?;
+            self.nios.streams.validate_gpio(old, data)?;
             self.nios.nios_config_write(data).await
         })
     }
@@ -658,8 +658,12 @@ impl RfLinkSession<'_> {
         let small_dma = BLADERF_GPIO_FEATURE_SMALL_DMA_XFER as u32;
         let speed = self.nios.transport().speed();
         let mask = if speed == Speed::High { small_dma } else { 0 };
-        self.nios
-            .nios_config_modify(move |gpio| (f(gpio) & !small_dma) | mask)
+        Op::new(async move {
+            let old = self.nios.nios_config_read().await?;
+            let data = (f(old) & !small_dma) | mask;
+            self.nios.streams.validate_gpio(old, data)?;
+            self.nios.nios_config_write(data).await
+        })
     }
 
     /// Initializes the BladeRF1 for RF operation.
@@ -683,6 +687,7 @@ impl RfLinkSession<'_> {
             }
             let cfg = self.config_gpio_read().await?;
             if force || (cfg & 0x7f) == 0 {
+                self.nios.streams.require_idle()?;
                 log::trace!(
                     "[*] Init - {}initializing device (GPIO={cfg:#04x})",
                     if force { "Force " } else { "" }
@@ -786,6 +791,17 @@ impl RfLinkSession<'_> {
     ///
     /// Requires the device to be initialized (see [`initialize`](RfLinkSession::initialize)).
     pub fn enable_module(
+        &mut self,
+        channel: Channel,
+        enable: bool,
+    ) -> impl MaybeFuture<Output = crate::Result<()>> {
+        Op::new(async move {
+            self.nios.streams.require_unclaimed(channel)?;
+            self.set_stream_module(channel, enable).await
+        })
+    }
+
+    pub(crate) fn set_stream_module(
         &mut self,
         channel: Channel,
         enable: bool,

@@ -25,11 +25,14 @@ use crate::bladerf1::board::RfLinkSession;
 use crate::channel::Channel;
 use crate::error::{Error, Result};
 use crate::maybe_future::{NonWasmSend, Op};
+use crate::nios_client::streams::{FORMAT_MASK, StreamClaims, StreamFormat, StreamLease};
 use crate::usb::BulkEndpoint;
+use crate::usb::{BladeRf1DeviceCommands, pending::Pending};
 use nusb::MaybeFuture;
 use nusb::transfer::{Buffer, Bulk, Completion, In, Out, TransferError};
 use std::collections::VecDeque;
 use std::future::{Future, IntoFuture};
+use std::num::NonZeroUsize;
 use std::pin::Pin;
 use std::task::{Context, Poll, Waker};
 use std::time::Duration;
@@ -42,6 +45,7 @@ const DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
 /// mock so start/stop/close ordering and stream accounting can be verified
 /// without hardware.
 pub(crate) trait StreamHost: NonWasmSend {
+    fn claims(&mut self) -> &mut StreamClaims;
     fn require_initialized(&mut self) -> impl Future<Output = Result<()>> + NonWasmSend;
     fn enable_module(
         &mut self,
@@ -50,14 +54,15 @@ pub(crate) trait StreamHost: NonWasmSend {
     ) -> impl Future<Output = Result<()>> + NonWasmSend;
     fn perform_format_config(
         &mut self,
-        format: SampleFormat,
+        format: StreamFormat,
     ) -> impl Future<Output = Result<()>> + NonWasmSend;
     fn perform_format_deconfig(&mut self) -> impl Future<Output = Result<()>> + NonWasmSend;
-    fn stream_started(&mut self);
-    fn stream_stopped(&mut self);
 }
 
 impl StreamHost for RfLinkSession<'_> {
+    fn claims(&mut self) -> &mut StreamClaims {
+        &mut self.nios.streams
+    }
     fn require_initialized(&mut self) -> impl Future<Output = Result<()>> + NonWasmSend {
         RfLinkSession::require_initialized(self).into_future()
     }
@@ -66,22 +71,46 @@ impl StreamHost for RfLinkSession<'_> {
         channel: Channel,
         enable: bool,
     ) -> impl Future<Output = Result<()>> + NonWasmSend {
-        RfLinkSession::enable_module(self, channel, enable).into_future()
+        self.set_stream_module(channel, enable).into_future()
     }
     fn perform_format_config(
         &mut self,
-        format: SampleFormat,
+        format: StreamFormat,
     ) -> impl Future<Output = Result<()>> + NonWasmSend {
-        RfLinkSession::perform_format_config(self, format).into_future()
+        self.apply_stream_format(Some(format)).into_future()
     }
     fn perform_format_deconfig(&mut self) -> impl Future<Output = Result<()>> + NonWasmSend {
-        RfLinkSession::perform_format_deconfig(self).into_future()
+        self.apply_stream_format(None).into_future()
     }
-    fn stream_started(&mut self) {
-        self.nios.stream_started();
-    }
-    fn stream_stopped(&mut self) {
-        self.nios.stream_stopped();
+}
+
+#[derive(Debug, Clone, Copy)]
+struct StreamConfig {
+    buffer_size: NonZeroUsize,
+    buffer_count: NonZeroUsize,
+}
+
+impl StreamConfig {
+    fn new(size: usize, count: usize, max_packet_size: usize) -> Result<Self> {
+        let invalid = || Error::Argument("invalid stream buffer size or count".into());
+        let buffer_count = NonZeroUsize::new(count).ok_or_else(invalid)?;
+        if size == 0 || max_packet_size == 0 {
+            return Err(invalid());
+        }
+        let size = size
+            .checked_next_multiple_of(max_packet_size)
+            .ok_or_else(invalid)?;
+        if size > i32::MAX as usize
+            || size
+                .checked_mul(count)
+                .is_none_or(|total| total > isize::MAX as usize)
+        {
+            return Err(invalid());
+        }
+        Ok(Self {
+            buffer_size: NonZeroUsize::new(size).ok_or_else(invalid)?,
+            buffer_count,
+        })
     }
 }
 
@@ -94,10 +123,13 @@ pub(crate) struct BufferPool<E: BulkEndpoint> {
     available: VecDeque<Buffer>,
     buffer_count: usize,
     buffer_size: usize,
+    halt: Pending<()>,
 }
 
 impl<E: BulkEndpoint> BufferPool<E> {
-    fn new(endpoint: E, buffer_size: usize, buffer_count: usize) -> Self {
+    fn new(endpoint: E, config: StreamConfig) -> Self {
+        let buffer_size = config.buffer_size.get();
+        let buffer_count = config.buffer_count.get();
         let mut available = VecDeque::with_capacity(buffer_count);
         for _ in 0..buffer_count {
             available.push_back(endpoint.allocate(buffer_size));
@@ -107,6 +139,7 @@ impl<E: BulkEndpoint> BufferPool<E> {
             available,
             buffer_count,
             buffer_size,
+            halt: Pending::default(),
         }
     }
 
@@ -174,14 +207,28 @@ impl<E: BulkEndpoint> BufferPool<E> {
     ///
     /// Where cancellation is not available (WebUSB), callers drain while
     /// the module is still streaming so the transfers finish naturally.
-    async fn drain(&mut self) {
-        for buffer in crate::usb::drain_pending(&mut self.endpoint, DRAIN_TIMEOUT).await {
-            self.recycle(buffer);
+    async fn drain(&mut self) -> Result<()> {
+        while self.pending() > 0 {
+            let completion =
+                crate::maybe_future::timeout(DRAIN_TIMEOUT, self.endpoint.next_complete())
+                    .await
+                    .ok_or(Error::Timeout)?;
+            self.recycle(completion.buffer);
+            match completion.status {
+                Ok(()) | Err(TransferError::Cancelled) => {}
+                Err(error) => return Err(error.into()),
+            }
         }
+        Ok(())
     }
 
     async fn clear_halt(&mut self) -> Result<()> {
-        self.endpoint.clear_halt().await.map_err(Error::from)
+        if !self.halt.is_pending() {
+            let operation = self.endpoint.clear_halt();
+            self.halt
+                .begin(async move { operation.await.map_err(Error::from) });
+        }
+        self.halt.finish(DRAIN_TIMEOUT).await.map(|_| ())
     }
 
     fn pickup_tx_completed(&mut self) -> Result<()> {
@@ -201,9 +248,47 @@ impl<E: BulkEndpoint> BufferPool<E> {
 /// reference for this stream.
 pub(crate) struct StreamCore<E: BulkEndpoint> {
     channel: Channel,
-    format: SampleFormat,
-    pool: Option<BufferPool<E>>,
-    started: bool,
+    format: StreamFormat,
+    lease: StreamLease,
+    state: StreamState<E>,
+}
+
+enum StreamState<E: BulkEndpoint> {
+    Prepared(BufferPool<E>),
+    Starting {
+        pool: BufferPool<E>,
+        phase: StartPhase,
+    },
+    Running(BufferPool<E>),
+    Stopping {
+        pool: BufferPool<E>,
+        phase: StopPhase,
+        goal: StopGoal,
+    },
+    Closed,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum StartPhase {
+    Format,
+    Module,
+    Submit,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum StopPhase {
+    Cancel,
+    DrainBeforeDisable,
+    Module,
+    Drain,
+    ClearHalt,
+    Format,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StopGoal {
+    Prepared,
+    Closed,
 }
 
 impl<E: BulkEndpoint> StreamCore<E> {
@@ -212,45 +297,58 @@ impl<E: BulkEndpoint> StreamCore<E> {
     pub(crate) fn new(
         channel: Channel,
         format: SampleFormat,
+        lease: StreamLease,
         endpoint: E,
         buffer_size: usize,
         buffer_count: usize,
-    ) -> Self {
-        let buffer_size = buffer_size.next_multiple_of(endpoint.max_packet_size());
+    ) -> Result<Self> {
+        let config = StreamConfig::new(buffer_size, buffer_count, endpoint.max_packet_size())?;
         log::trace!(
             "Creating {channel:?} stream: buffer_size={buffer_size}, buffer_count={buffer_count}, format={format:?}"
         );
-        Self {
+        Ok(Self {
             channel,
-            format,
-            pool: Some(BufferPool::new(endpoint, buffer_size, buffer_count)),
-            started: false,
-        }
+            format: StreamFormat::try_from(format)?,
+            lease,
+            state: StreamState::Prepared(BufferPool::new(endpoint, config)),
+        })
     }
 
     /// Second half of `build()`: checks the board state, configures the
     /// format GPIO bits and clears the endpoint halt.
+    #[cfg(test)]
     pub(crate) async fn configure<H: StreamHost>(&mut self, host: &mut H) -> Result<()> {
         host.require_initialized().await?;
-        host.perform_format_config(self.format).await?;
         self.pool_mut()?.clear_halt().await
     }
 
     fn pool_mut(&mut self) -> Result<&mut BufferPool<E>> {
-        self.pool.as_mut().ok_or(Error::StreamClosed)
+        match &mut self.state {
+            StreamState::Prepared(pool)
+            | StreamState::Running(pool)
+            | StreamState::Starting { pool, .. }
+            | StreamState::Stopping { pool, .. } => Ok(pool),
+            StreamState::Closed => Err(Error::StreamClosed),
+        }
     }
 
     fn pool_ref(&self) -> Result<&BufferPool<E>> {
-        self.pool.as_ref().ok_or(Error::StreamClosed)
+        match &self.state {
+            StreamState::Prepared(pool)
+            | StreamState::Running(pool)
+            | StreamState::Starting { pool, .. }
+            | StreamState::Stopping { pool, .. } => Ok(pool),
+            StreamState::Closed => Err(Error::StreamClosed),
+        }
     }
 
     fn started_pool_mut(&mut self) -> Result<&mut BufferPool<E>> {
-        let started = self.started;
-        let pool = self.pool_mut()?;
-        if !started {
-            return Err(Error::StreamNotStarted);
+        match &mut self.state {
+            StreamState::Running(pool) => Ok(pool),
+            StreamState::Prepared(_) => Err(Error::StreamNotStarted),
+            StreamState::Closed => Err(Error::StreamClosed),
+            _ => Err(Error::StreamTransition),
         }
-        Ok(pool)
     }
 
     pub(crate) fn buffer_size(&self) -> Result<usize> {
@@ -262,7 +360,7 @@ impl<E: BulkEndpoint> StreamCore<E> {
     }
 
     pub(crate) fn recycle(&mut self, buf: Buffer) {
-        if let Some(pool) = self.pool.as_mut() {
+        if let Ok(pool) = self.pool_mut() {
             pool.recycle(buf);
         }
     }
@@ -272,18 +370,55 @@ impl<E: BulkEndpoint> StreamCore<E> {
         host: &'a mut H,
     ) -> impl MaybeFuture<Output = Result<()>> + 'a {
         Op::new(async move {
-            if self.started {
-                return Err(Error::StreamAlreadyStarted);
+            if matches!(self.state, StreamState::Closed) {
+                return Err(Error::StreamClosed);
             }
-            self.pool_mut()?;
-            host.enable_module(self.channel, true).await?;
-            host.stream_started();
-            self.started = true;
-            if self.channel.is_rx() {
-                self.pool_mut()?.submit_all_available();
+            host.claims().check(&self.lease)?;
+            match self.state {
+                StreamState::Prepared(_) => {
+                    host.require_initialized().await?;
+                    host.claims().reserve_format(&self.lease, self.format)?;
+                    let StreamState::Prepared(pool) =
+                        std::mem::replace(&mut self.state, StreamState::Closed)
+                    else {
+                        unreachable!()
+                    };
+                    self.state = StreamState::Starting {
+                        pool,
+                        phase: StartPhase::Format,
+                    };
+                }
+                StreamState::Starting { .. } => {}
+                StreamState::Running(_) => return Err(Error::StreamAlreadyStarted),
+                _ => return Err(Error::StreamTransition),
             }
-            log::trace!("{:?} stream started", self.channel);
-            Ok(())
+            loop {
+                let StreamState::Starting { pool, phase } = &mut self.state else {
+                    unreachable!()
+                };
+                match phase {
+                    StartPhase::Format => {
+                        host.perform_format_config(self.format).await?;
+                        *phase = StartPhase::Module;
+                    }
+                    StartPhase::Module => {
+                        host.enable_module(self.channel, true).await?;
+                        *phase = StartPhase::Submit;
+                    }
+                    StartPhase::Submit => {
+                        if self.channel.is_rx() {
+                            pool.submit_all_available();
+                        }
+                        let StreamState::Starting { pool, .. } =
+                            std::mem::replace(&mut self.state, StreamState::Closed)
+                        else {
+                            unreachable!()
+                        };
+                        self.state = StreamState::Running(pool);
+                        return Ok(());
+                    }
+                }
+            }
         })
     }
 
@@ -292,13 +427,8 @@ impl<E: BulkEndpoint> StreamCore<E> {
         host: &'a mut H,
     ) -> impl MaybeFuture<Output = Result<()>> + 'a {
         Op::new(async move {
-            let channel = self.channel;
-            let pool = self.pool.as_mut().ok_or(Error::StreamClosed)?;
-            if !std::mem::take(&mut self.started) {
-                return Err(Error::StreamNotStarted);
-            }
-            host.stream_stopped();
-            Self::teardown(pool, host, channel).await
+            self.begin_teardown(host, StopGoal::Prepared)?;
+            self.teardown(host).await
         })
     }
 
@@ -307,12 +437,46 @@ impl<E: BulkEndpoint> StreamCore<E> {
         host: &'a mut H,
     ) -> impl MaybeFuture<Output = Result<()>> + 'a {
         Op::new(async move {
-            let mut pool = self.pool.take().ok_or(Error::StreamClosed)?;
-            if std::mem::take(&mut self.started) {
-                host.stream_stopped();
+            self.begin_teardown(host, StopGoal::Closed)?;
+            if matches!(self.state, StreamState::Closed) {
+                return Ok(());
             }
-            Self::teardown(&mut pool, host, self.channel).await
+            self.teardown(host).await
         })
+    }
+
+    fn begin_teardown<H: StreamHost>(&mut self, host: &mut H, goal: StopGoal) -> Result<()> {
+        if matches!(self.state, StreamState::Closed) {
+            return Err(Error::StreamClosed);
+        }
+        host.claims().check(&self.lease)?;
+        match &mut self.state {
+            StreamState::Prepared(_) if goal == StopGoal::Closed => {
+                self.state = StreamState::Closed;
+                host.claims().release(&self.lease);
+            }
+            StreamState::Prepared(_) => return Err(Error::StreamNotStarted),
+            StreamState::Stopping { goal: pending, .. } => {
+                if goal == StopGoal::Closed {
+                    *pending = goal;
+                } else if *pending == StopGoal::Closed {
+                    return Err(Error::StreamTransition);
+                }
+            }
+            _ => {
+                let old = std::mem::replace(&mut self.state, StreamState::Closed);
+                let pool = match old {
+                    StreamState::Running(pool) | StreamState::Starting { pool, .. } => pool,
+                    _ => unreachable!(),
+                };
+                self.state = StreamState::Stopping {
+                    pool,
+                    phase: StopPhase::Cancel,
+                    goal,
+                };
+            }
+        }
+        Ok(())
     }
 
     /// Disables the module and returns the endpoint to an idle state.
@@ -323,20 +487,57 @@ impl<E: BulkEndpoint> StreamCore<E> {
     /// promises never settle once the device stops streaming, so they are
     /// collected while the module is still active, then the module is
     /// disabled.
-    async fn teardown<H: StreamHost>(
-        pool: &mut BufferPool<E>,
-        host: &mut H,
-        channel: Channel,
-    ) -> Result<()> {
-        if pool.can_cancel() {
-            pool.cancel_all();
-        } else {
-            pool.drain().await;
+    async fn teardown<H: StreamHost>(&mut self, host: &mut H) -> Result<()> {
+        loop {
+            let StreamState::Stopping { pool, phase, goal } = &mut self.state else {
+                unreachable!()
+            };
+            match phase {
+                StopPhase::Cancel => {
+                    *phase = if pool.can_cancel() {
+                        pool.cancel_all();
+                        StopPhase::Module
+                    } else {
+                        StopPhase::DrainBeforeDisable
+                    };
+                }
+                StopPhase::DrainBeforeDisable => {
+                    pool.drain().await?;
+                    *phase = StopPhase::Module;
+                }
+                StopPhase::Module => {
+                    host.enable_module(self.channel, false).await?;
+                    *phase = StopPhase::Drain;
+                }
+                StopPhase::Drain => {
+                    pool.drain().await?;
+                    *phase = StopPhase::ClearHalt;
+                }
+                StopPhase::ClearHalt => {
+                    pool.clear_halt().await?;
+                    *phase = StopPhase::Format;
+                }
+                StopPhase::Format => {
+                    if host.claims().last_format_user(&self.lease) {
+                        host.perform_format_deconfig().await?;
+                    }
+                    host.claims().release_format(&self.lease);
+                    let goal = *goal;
+                    let StreamState::Stopping { pool, .. } =
+                        std::mem::replace(&mut self.state, StreamState::Closed)
+                    else {
+                        unreachable!()
+                    };
+                    if goal == StopGoal::Prepared {
+                        self.state = StreamState::Prepared(pool);
+                    } else {
+                        drop(pool);
+                        host.claims().release(&self.lease);
+                    }
+                    return Ok(());
+                }
+            }
         }
-        host.enable_module(channel, false).await?;
-        pool.drain().await;
-        pool.clear_halt().await?;
-        host.perform_format_deconfig().await
     }
 
     pub(crate) fn read(&mut self, timeout: Option<Duration>) -> RxRead<'_, E> {
@@ -376,6 +577,10 @@ impl<E: BulkEndpoint> StreamCore<E> {
     }
 
     pub(crate) fn submit(&mut self, buf: Buffer, len: usize) -> Result<()> {
+        if let Err(error) = self.started_pool_mut() {
+            self.recycle(buf);
+            return Err(error);
+        }
         let pool = self.started_pool_mut()?;
         if len > pool.buffer_size {
             pool.recycle(buf);
@@ -806,25 +1011,33 @@ impl SampleFormat {
 }
 
 impl RfLinkSession<'_> {
-    /// Returns `true` if the device supports the given sample format for the specified channel.
-    pub fn supports_format(&self, format: SampleFormat, direction: Channel) -> bool {
-        match direction {
-            Channel::Rx => matches!(
-                format,
-                SampleFormat::Sc8Q7Meta
-                    | SampleFormat::Sc16Q11
-                    | SampleFormat::Sc16Q11Meta
-                    | SampleFormat::Sc16Q11Packed
-                    | SampleFormat::PacketMeta
-            ),
-            Channel::Tx => matches!(
-                format,
-                SampleFormat::Sc16Q11
-                    | SampleFormat::Sc16Q11Meta
-                    | SampleFormat::Sc16Q11Packed
-                    | SampleFormat::PacketMeta
-            ),
-        }
+    /// Checks format support against the loaded FPGA and firmware.
+    ///
+    /// Stock BladeRF1 supports SC16, timestamped SC16, and version-gated packet metadata.
+    /// Both directions share the same format capabilities.
+    ///
+    /// # Errors
+    /// Returns USB/protocol errors when version queries fail.
+    pub fn supports_format(
+        &mut self,
+        format: SampleFormat,
+        _direction: Channel,
+    ) -> impl MaybeFuture<Output = Result<bool>> {
+        Op::new(async move {
+            let Ok(format) = StreamFormat::try_from(format) else {
+                return Ok(false);
+            };
+            if format == StreamFormat::Samples {
+                return Ok(true);
+            }
+            let fpga = self.nios.nios_get_fpga_version().await?;
+            let firmware = if format == StreamFormat::Packets {
+                self.device.fx3_firmware_version().await?.parse()?
+            } else {
+                crate::SemanticVersion::new(0, 0, 0)
+            };
+            Ok(format.supports_versions(fpga, firmware))
+        })
     }
 }
 
@@ -860,15 +1073,29 @@ impl<'a, 'b> RxStreamBuilder<'a, 'b> {
     /// Requires the board to be initialized. Returns `Error` on USB failure.
     pub fn build(self) -> impl MaybeFuture<Output = Result<RxStream>> {
         Op::new(async move {
-            let endpoint = self.dev.nios.transport().acquire_streaming_rx_endpoint()?;
-            let mut core = StreamCore::new(
+            StreamConfig::new(self.buffer_size, self.buffer_count, 1)?;
+            self.dev.nios.streams.require_unclaimed(Channel::Rx)?;
+            self.dev.require_initialized().await?;
+            if !self.dev.supports_format(self.format, Channel::Rx).await? {
+                return Err(Error::Unsupported(
+                    "sample format is not supported by the loaded FPGA and firmware",
+                ));
+            }
+            let endpoint = self
+                .dev
+                .nios
+                .interface()
+                .acquire_streaming_rx_endpoint()
+                .await?;
+            let lease = self.dev.nios.streams.claim(Channel::Rx)?;
+            let core = StreamCore::new(
                 Channel::Rx,
                 self.format,
+                lease,
                 endpoint,
                 self.buffer_size,
                 self.buffer_count,
-            );
-            core.configure(self.dev).await?;
+            )?;
             Ok(RxStream { core })
         })
     }
@@ -979,15 +1206,29 @@ impl<'a, 'b> TxStreamBuilder<'a, 'b> {
     /// Requires the board to be initialized. Returns `Error` on USB failure.
     pub fn build(self) -> impl MaybeFuture<Output = Result<TxStream>> {
         Op::new(async move {
-            let endpoint = self.dev.nios.transport().acquire_streaming_tx_endpoint()?;
-            let mut core = StreamCore::new(
+            StreamConfig::new(self.buffer_size, self.buffer_count, 1)?;
+            self.dev.nios.streams.require_unclaimed(Channel::Tx)?;
+            self.dev.require_initialized().await?;
+            if !self.dev.supports_format(self.format, Channel::Tx).await? {
+                return Err(Error::Unsupported(
+                    "sample format is not supported by the loaded FPGA and firmware",
+                ));
+            }
+            let endpoint = self
+                .dev
+                .nios
+                .interface()
+                .acquire_streaming_tx_endpoint()
+                .await?;
+            let lease = self.dev.nios.streams.claim(Channel::Tx)?;
+            let core = StreamCore::new(
                 Channel::Tx,
                 self.format,
+                lease,
                 endpoint,
                 self.buffer_size,
                 self.buffer_count,
-            );
-            core.configure(self.dev).await?;
+            )?;
             Ok(TxStream { core })
         })
     }
@@ -1106,46 +1347,33 @@ impl RfLinkSession<'_> {
         format: SampleFormat,
     ) -> impl MaybeFuture<Output = Result<()>> {
         Op::new(async move {
+            self.nios.streams.require_idle()?;
             self.require_initialized().await?;
-            let use_timestamps = format.requires_timestamps();
-            self.config_gpio_modify(move |gpio| {
-                let mut g = if format == SampleFormat::PacketMeta {
-                    gpio | BLADERF_GPIO_PACKET
-                } else {
-                    gpio & !BLADERF_GPIO_PACKET
-                };
-                g = if use_timestamps {
-                    g | BLADERF_GPIO_TIMESTAMP | BLADERF_GPIO_TIMESTAMP_DIV2
-                } else {
-                    g & !(BLADERF_GPIO_TIMESTAMP | BLADERF_GPIO_TIMESTAMP_DIV2)
-                };
-                g = if matches!(format, SampleFormat::Sc8Q7 | SampleFormat::Sc8Q7Meta) {
-                    g | BLADERF_GPIO_8BIT_MODE
-                } else {
-                    g & !BLADERF_GPIO_8BIT_MODE
-                };
-                if format == SampleFormat::Sc16Q11Packed {
-                    g | BLADERF_GPIO_HIGHLY_PACKED_MODE
-                } else {
-                    g & !BLADERF_GPIO_HIGHLY_PACKED_MODE
-                }
-            })
-            .await
+            if !self.supports_format(format, Channel::Rx).await? {
+                return Err(Error::Unsupported(
+                    "sample format is not supported by the loaded FPGA and firmware",
+                ));
+            }
+            self.apply_stream_format(Some(StreamFormat::try_from(format)?))
+                .await
         })
     }
 
     /// Clears all global format GPIO bits. Requires the board to be initialized.
     pub fn perform_format_deconfig(&mut self) -> impl MaybeFuture<Output = Result<()>> {
         Op::new(async move {
+            self.nios.streams.require_idle()?;
             self.require_initialized().await?;
-            self.config_gpio_modify(|gpio| {
-                gpio & !(BLADERF_GPIO_PACKET
-                    | BLADERF_GPIO_TIMESTAMP
-                    | BLADERF_GPIO_TIMESTAMP_DIV2
-                    | BLADERF_GPIO_8BIT_MODE
-                    | BLADERF_GPIO_HIGHLY_PACKED_MODE)
-            })
-            .await
+            self.apply_stream_format(None).await
+        })
+    }
+
+    fn apply_stream_format(
+        &mut self,
+        format: Option<StreamFormat>,
+    ) -> impl MaybeFuture<Output = Result<()>> {
+        self.nios.nios_config_modify(move |gpio| {
+            (gpio & !FORMAT_MASK) | format.map_or(0, StreamFormat::bits)
         })
     }
 }
@@ -1169,6 +1397,7 @@ mod tests {
         fill: usize,
         clear_halts: usize,
         sequence: u64,
+        halt_ready: bool,
     }
 
     #[derive(Clone)]
@@ -1183,6 +1412,7 @@ mod tests {
                 fill: MPS,
                 clear_halts: 0,
                 sequence: 0,
+                halt_ready: true,
             })))
         }
         fn cancellable(&self) -> bool {
@@ -1205,7 +1435,11 @@ mod tests {
         }
         fn complete_next(&self, status: std::result::Result<(), TransferError>) {
             let mut st = self.0.lock().unwrap();
-            let slot = st.pending.front_mut().expect("nothing pending");
+            let slot = st
+                .pending
+                .iter_mut()
+                .find(|slot| slot.1.is_none())
+                .expect("nothing pending");
             slot.1 = Some(status);
         }
     }
@@ -1242,9 +1476,6 @@ mod tests {
     }
 
     impl BulkEndpoint for MockEndpoint {
-        fn address(&self) -> u8 {
-            0x81
-        }
         fn max_packet_size(&self) -> usize {
             MPS
         }
@@ -1293,31 +1524,40 @@ mod tests {
         }
         fn clear_halt(
             &mut self,
-        ) -> impl MaybeFuture<Output = std::result::Result<(), nusb::Error>> {
+        ) -> impl MaybeFuture<Output = std::result::Result<(), nusb::Error>> + 'static {
             self.state.0.lock().unwrap().clear_halts += 1;
             self.log.lock().unwrap().push("clear_halt".into());
-            Op::new(async { Ok(()) })
+            let state = self.state.clone();
+            Op::new(std::future::poll_fn(move |_| {
+                if state.0.lock().unwrap().halt_ready {
+                    Poll::Ready(Ok(()))
+                } else {
+                    Poll::Pending
+                }
+            }))
         }
     }
 
     struct MockHost {
         log: Log,
+        claims: StreamClaims,
         initialized: bool,
         module: [bool; 2],
-        format: Option<SampleFormat>,
-        active: i32,
+        format: Option<StreamFormat>,
         fail_enable: bool,
+        pause: Option<&'static str>,
     }
 
     impl MockHost {
         fn new(log: &Log) -> Self {
             Self {
                 log: Arc::clone(log),
+                claims: StreamClaims::default(),
                 initialized: true,
                 module: [false, false],
                 format: None,
-                active: 0,
                 fail_enable: false,
+                pause: None,
             }
         }
         fn module(&self, channel: Channel) -> bool {
@@ -1326,6 +1566,9 @@ mod tests {
     }
 
     impl StreamHost for MockHost {
+        fn claims(&mut self) -> &mut StreamClaims {
+            &mut self.claims
+        }
         async fn require_initialized(&mut self) -> Result<()> {
             if self.initialized {
                 Ok(())
@@ -1338,27 +1581,30 @@ mod tests {
                 .lock()
                 .unwrap()
                 .push(format!("enable({channel:?},{enable})"));
+            if self.pause == Some(if enable { "enable" } else { "disable" }) {
+                std::future::pending::<()>().await;
+            }
             if self.fail_enable && enable {
                 return Err(Error::Timeout);
             }
             self.module[channel as u8 as usize] = enable;
             Ok(())
         }
-        async fn perform_format_config(&mut self, format: SampleFormat) -> Result<()> {
+        async fn perform_format_config(&mut self, format: StreamFormat) -> Result<()> {
             self.log.lock().unwrap().push("config".into());
+            if self.pause == Some("config") {
+                std::future::pending::<()>().await;
+            }
             self.format = Some(format);
             Ok(())
         }
         async fn perform_format_deconfig(&mut self) -> Result<()> {
             self.log.lock().unwrap().push("deconfig".into());
+            if self.pause == Some("deconfig") {
+                std::future::pending::<()>().await;
+            }
             self.format = None;
             Ok(())
-        }
-        fn stream_started(&mut self) {
-            self.active += 1;
-        }
-        fn stream_stopped(&mut self) {
-            self.active -= 1;
         }
     }
 
@@ -1377,10 +1623,12 @@ mod tests {
             let mut core = StreamCore::new(
                 channel,
                 SampleFormat::Sc16Q11,
+                host.claims.claim(channel).unwrap(),
                 ep.endpoint(&log),
                 MPS * 3 + 1,
                 BUFFERS,
-            );
+            )
+            .unwrap();
             block_on(core.configure(&mut host)).unwrap();
             log.lock().unwrap().clear();
             Self {
@@ -1400,11 +1648,11 @@ mod tests {
             self.log.lock().unwrap().clone()
         }
         fn available(&self) -> usize {
-            self.core.pool.as_ref().map_or(0, |p| p.available.len())
+            self.core.pool_ref().map_or(0, |p| p.available.len())
         }
         /// available + in flight + held by the caller == buffer_count.
         fn assert_pool_invariant(&self, held: usize) {
-            if self.core.pool.is_some() {
+            if self.core.pool_ref().is_ok() {
                 assert_eq!(
                     self.available() + self.ep.pending() + held,
                     BUFFERS,
@@ -1421,11 +1669,172 @@ mod tests {
     }
 
     #[test]
+    fn stream_configuration_rejects_invalid_sizes_before_allocating() {
+        for (size, count, mps) in [
+            (0, 4, 512),
+            (512, 0, 512),
+            (512, 4, 0),
+            (usize::MAX, 4, 512),
+            (512, usize::MAX, 512),
+            (i32::MAX as usize, 2, 512),
+        ] {
+            assert!(StreamConfig::new(size, count, mps).is_err());
+        }
+        let config = StreamConfig::new(513, 4, 512).unwrap();
+        assert_eq!(config.buffer_size.get(), 1024);
+    }
+
+    #[test]
+    fn cancelled_start_and_teardown_resume_each_hardware_checkpoint() {
+        for pause in ["config", "enable", "disable", "deconfig", "halt"] {
+            let mut f = Fixture::new(Channel::Rx, false);
+            let starting = matches!(pause, "config" | "enable");
+            if !starting {
+                f.core.start(&mut f.host).wait().unwrap();
+            }
+            f.host.pause = Some(pause);
+            if pause == "halt" {
+                f.ep.0.lock().unwrap().halt_ready = false;
+            }
+            let halts = f.ep.clear_halts();
+            {
+                let mut operation: Pin<Box<dyn Future<Output = Result<()>> + '_>> = if starting {
+                    Box::pin(f.core.start(&mut f.host).into_future())
+                } else {
+                    Box::pin(f.core.close(&mut f.host).into_future())
+                };
+                assert!(
+                    operation
+                        .as_mut()
+                        .poll(&mut Context::from_waker(Waker::noop()))
+                        .is_pending()
+                );
+            }
+            f.assert_pool_invariant(0);
+            assert!(matches!(f.core.try_read(), Err(Error::StreamTransition)));
+            assert!(matches!(
+                f.host.claims.require_idle(),
+                Err(Error::StreamsActive)
+            ));
+            f.host.pause = None;
+            f.ep.0.lock().unwrap().halt_ready = true;
+            if starting {
+                f.core.start(&mut f.host).wait().unwrap();
+            }
+            f.core.close(&mut f.host).wait().unwrap();
+            if pause == "halt" {
+                assert_eq!(f.ep.clear_halts(), halts + 1);
+            }
+            assert!(f.host.claims.require_idle().is_ok());
+        }
+    }
+
+    #[test]
+    fn interrupted_noncancellable_drain_returns_each_collected_buffer_to_the_pool() {
+        let mut f = Fixture::new(Channel::Rx, false);
+        f.ep.set_cancellable(false);
+        f.core.start(&mut f.host).wait().unwrap();
+        f.ep.complete_next(Ok(()));
+        {
+            let mut operation = std::pin::pin!(f.core.stop(&mut f.host).into_future());
+            assert!(
+                operation
+                    .as_mut()
+                    .poll(&mut Context::from_waker(Waker::noop()))
+                    .is_pending()
+            );
+        }
+        f.assert_pool_invariant(0);
+        assert_eq!(f.available(), 1);
+        assert!(f.host.module(Channel::Rx));
+        for _ in 1..BUFFERS {
+            f.ep.complete_next(Ok(()));
+        }
+        f.core.stop(&mut f.host).wait().unwrap();
+        f.assert_pool_invariant(0);
+        assert!(matches!(
+            f.host.claims.require_idle(),
+            Err(Error::StreamsActive)
+        ));
+        f.core.close(&mut f.host).wait().unwrap();
+    }
+
+    #[test]
+    fn duplex_formats_survive_either_close_order_and_reject_incompatible_start() {
+        for close_rx_first in [false, true] {
+            let mut f = Fixture::rx();
+            f.core.format = StreamFormat::Timestamps;
+            let tx_ep = MockHandle::new(true);
+            let mut tx = StreamCore::new(
+                Channel::Tx,
+                SampleFormat::PacketMeta,
+                f.host.claims.claim(Channel::Tx).unwrap(),
+                tx_ep.endpoint(&f.log),
+                MPS,
+                BUFFERS,
+            )
+            .unwrap();
+            f.core.start(&mut f.host).wait().unwrap();
+            assert!(matches!(
+                tx.start(&mut f.host).wait(),
+                Err(Error::IncompatibleStreamFormat)
+            ));
+            tx.format = StreamFormat::Timestamps;
+            tx.start(&mut f.host).wait().unwrap();
+            assert_eq!(f.host.claims.format_users(), 2);
+            if close_rx_first {
+                f.core.close(&mut f.host).wait().unwrap();
+            } else {
+                tx.close(&mut f.host).wait().unwrap();
+            }
+            assert_eq!(f.host.format, Some(StreamFormat::Timestamps));
+            assert_eq!(f.host.claims.format_users(), 1);
+            if close_rx_first {
+                tx.close(&mut f.host).wait().unwrap();
+            } else {
+                let buf = f.core.read(None).wait().unwrap();
+                f.core.recycle(buf);
+                f.core.close(&mut f.host).wait().unwrap();
+            }
+            assert_eq!(f.host.format, None);
+        }
+    }
+
+    #[test]
+    fn wrong_device_is_rejected_before_any_module_or_format_change() {
+        let mut f = Fixture::rx();
+        let mut other = MockHost::new(&f.log);
+        assert!(matches!(
+            f.core.start(&mut other).wait(),
+            Err(Error::WrongDevice)
+        ));
+        assert!(matches!(
+            f.core.close(&mut other).wait(),
+            Err(Error::WrongDevice)
+        ));
+        assert!(f.log().is_empty());
+        f.core.close(&mut f.host).wait().unwrap();
+    }
+
+    #[test]
+    fn stopped_tx_submission_returns_held_buffer_before_error() {
+        let mut f = Fixture::tx();
+        f.core.start(&mut f.host).wait().unwrap();
+        let buffer = f.core.get_buffer(None).wait().unwrap();
+        f.core.stop(&mut f.host).wait().unwrap();
+        assert!(matches!(
+            f.core.submit(buffer, 0),
+            Err(Error::StreamNotStarted)
+        ));
+        f.assert_pool_invariant(0);
+    }
+
+    #[test]
     fn buffer_size_rounds_up_to_max_packet_size() {
         let f = Fixture::rx();
         assert_eq!(f.core.buffer_size().unwrap(), MPS * 4);
         assert_eq!(f.core.buffer_count().unwrap(), BUFFERS);
-        assert_eq!(f.host.format, Some(SampleFormat::Sc16Q11));
+        assert_eq!(f.host.format, None);
         assert_eq!(f.ep.clear_halts(), 1);
     }
 
@@ -1438,10 +1847,12 @@ mod tests {
         let mut core = StreamCore::new(
             Channel::Rx,
             SampleFormat::Sc16Q11,
+            host.claims.claim(Channel::Rx).unwrap(),
             ep.endpoint(&log),
             MPS,
             2,
-        );
+        )
+        .unwrap();
         assert!(matches!(
             block_on(core.configure(&mut host)),
             Err(Error::NotInitialized)
@@ -1454,7 +1865,7 @@ mod tests {
         let mut f = Fixture::rx();
         f.core.start(&mut f.host).wait().unwrap();
         assert!(f.host.module(Channel::Rx));
-        assert_eq!(f.host.active, 1);
+        assert_eq!(f.host.claims.format_users(), 1);
         assert_eq!(f.ep.pending(), BUFFERS, "RX start submits every buffer");
 
         let buf = f.core.read(None).wait().unwrap();
@@ -1465,7 +1876,7 @@ mod tests {
 
         f.core.stop(&mut f.host).wait().unwrap();
         assert!(!f.host.module(Channel::Rx));
-        assert_eq!(f.host.active, 0);
+        assert_eq!(f.host.claims.format_users(), 0);
         assert_eq!(f.ep.pending(), 0);
         f.assert_pool_invariant(0);
 
@@ -1474,7 +1885,8 @@ mod tests {
         f.core.recycle(buf);
         f.core.close(&mut f.host).wait().unwrap();
         assert_eq!(
-            f.host.active, 0,
+            f.host.claims.format_users(),
+            0,
             "stop followed by close must not underflow"
         );
         assert!(matches!(
@@ -1484,12 +1896,13 @@ mod tests {
     }
 
     #[test]
-    fn close_without_start_leaves_counter_alone_but_deconfigures() {
+    fn prepared_close_releases_claim_without_touching_hardware() {
         let mut f = Fixture::rx();
         f.core.close(&mut f.host).wait().unwrap();
-        assert_eq!(f.host.active, 0);
+        assert_eq!(f.host.claims.format_users(), 0);
         assert!(f.host.format.is_none());
-        assert!(f.log().contains(&"deconfig".to_string()));
+        assert!(f.log().is_empty());
+        assert!(f.host.claims.require_idle().is_ok());
     }
 
     #[test]
@@ -1505,7 +1918,8 @@ mod tests {
             Err(Error::StreamAlreadyStarted)
         ));
         assert_eq!(
-            f.host.active, 1,
+            f.host.claims.format_users(),
+            1,
             "rejected start must not touch the counter"
         );
         f.core.stop(&mut f.host).wait().unwrap();
@@ -1513,24 +1927,31 @@ mod tests {
             f.core.stop(&mut f.host).wait(),
             Err(Error::StreamNotStarted)
         ));
-        assert_eq!(f.host.active, 0);
+        assert_eq!(f.host.claims.format_users(), 0);
     }
 
     #[test]
-    fn failed_module_enable_leaves_stream_stopped() {
+    fn failed_module_enable_retains_retryable_transition() {
         let mut f = Fixture::rx();
         f.host.fail_enable = true;
         assert!(matches!(
             f.core.start(&mut f.host).wait(),
             Err(Error::Timeout)
         ));
-        assert!(!f.core.started);
-        assert_eq!(f.host.active, 0);
+        assert!(matches!(f.core.state, StreamState::Starting { .. }));
+        assert_eq!(f.host.claims.format_users(), 1);
+        assert!(matches!(
+            f.core.read(None).wait(),
+            Err(Error::StreamTransition)
+        ));
         assert_eq!(
             f.ep.pending(),
             0,
             "no transfers submitted when enable fails"
         );
+        f.host.fail_enable = false;
+        f.core.start(&mut f.host).wait().unwrap();
+        f.core.close(&mut f.host).wait().unwrap();
     }
 
     #[test]
@@ -1707,7 +2128,7 @@ mod tests {
         block_on(f.core.wait_completion(None).into_future()).unwrap();
         f.assert_pool_invariant(0);
         f.core.close(&mut f.host).wait().unwrap();
-        assert_eq!(f.host.active, 0);
+        assert_eq!(f.host.claims.format_users(), 0);
     }
 
     #[test]
@@ -1865,17 +2286,21 @@ mod tests {
                     expected_ok,
                     "{seq:?} step {i} ({action:?}): got {actual:?}"
                 );
-                assert_eq!(f.host.active, model.active, "{seq:?} step {i}: counter");
+                assert_eq!(
+                    f.host.claims.format_users(),
+                    model.active as usize,
+                    "{seq:?} step {i}: format users"
+                );
                 assert_eq!(
                     f.host.module(Channel::Rx),
                     model.started,
                     "{seq:?} step {i}: module"
                 );
                 assert_eq!(
-                    f.core.started, model.started,
+                    matches!(f.core.state, StreamState::Running(_)),
+                    model.started,
                     "{seq:?} step {i}: started flag"
                 );
-                assert!(f.host.active >= 0, "{seq:?}: counter underflow");
                 f.assert_pool_invariant(held.len());
             }
         }

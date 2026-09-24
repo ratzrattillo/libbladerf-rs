@@ -14,7 +14,7 @@ use crate::error::{Error, Result};
 use crate::maybe_future::{NonWasmSend, Op};
 use nusb::transfer::{
     Buffer, Bulk, Completion, ControlIn, ControlOut, ControlType, EndpointDirection, In, Out,
-    Recipient, TransferError,
+    Recipient,
 };
 use nusb::{Device, Endpoint, Interface, MaybeFuture, Speed};
 use std::future::Future;
@@ -473,7 +473,6 @@ impl BladeRf1UsbInterfaceCommands for UsbTransport {
 /// Implemented for [`nusb::Endpoint`]; the streaming state machine is
 /// generic over it so its lifecycle can be exercised without hardware.
 pub(crate) trait BulkEndpoint: NonWasmSend {
-    fn address(&self) -> u8;
     fn max_packet_size(&self) -> usize;
     fn allocate(&self, len: usize) -> Buffer;
     fn submit(&mut self, buffer: Buffer);
@@ -483,17 +482,16 @@ pub(crate) trait BulkEndpoint: NonWasmSend {
     fn wait_next_complete(&mut self, timeout: Duration) -> Option<Completion>;
     fn can_cancel(&self) -> bool;
     fn cancel_all(&mut self);
-    fn clear_halt(&mut self) -> impl MaybeFuture<Output = std::result::Result<(), nusb::Error>>;
+    fn clear_halt(
+        &mut self,
+    ) -> impl MaybeFuture<Output = std::result::Result<(), nusb::Error>> + 'static;
 
     fn next_complete(&mut self) -> impl Future<Output = Completion> + NonWasmSend + '_ {
         std::future::poll_fn(|cx| self.poll_next_complete(cx))
     }
 }
 
-impl<Dir: EndpointDirection> BulkEndpoint for Endpoint<Bulk, Dir> {
-    fn address(&self) -> u8 {
-        self.endpoint_address()
-    }
+impl<Dir: EndpointDirection + 'static> BulkEndpoint for Endpoint<Bulk, Dir> {
     fn max_packet_size(&self) -> usize {
         Endpoint::max_packet_size(self)
     }
@@ -520,38 +518,11 @@ impl<Dir: EndpointDirection> BulkEndpoint for Endpoint<Bulk, Dir> {
         #[cfg(not(target_arch = "wasm32"))]
         Endpoint::cancel_all(self);
     }
-    fn clear_halt(&mut self) -> impl MaybeFuture<Output = std::result::Result<(), nusb::Error>> {
+    fn clear_halt(
+        &mut self,
+    ) -> impl MaybeFuture<Output = std::result::Result<(), nusb::Error>> + 'static {
         Endpoint::clear_halt(self)
     }
-}
-
-/// Collects all pending completions on `ep` and returns their buffers.
-///
-/// Each completion is bounded by `deadline`; on expiry the remaining
-/// transfers are cancelled where cancellation is available (left pending
-/// on WebUSB) and a warning is logged.
-pub(crate) async fn drain_pending<E: BulkEndpoint>(ep: &mut E, deadline: Duration) -> Vec<Buffer> {
-    let mut buffers = Vec::with_capacity(ep.pending());
-    while ep.pending() > 0 {
-        let Some(completion) = crate::maybe_future::timeout(deadline, ep.next_complete()).await
-        else {
-            log::warn!(
-                "timeout draining endpoint {:#04x}, {} transfers remain",
-                ep.address(),
-                ep.pending()
-            );
-            break;
-        };
-        match completion.status {
-            Ok(()) | Err(TransferError::Cancelled) => {}
-            Err(e) => log::warn!(
-                "transfer error draining endpoint {:#04x}: {e}",
-                ep.address()
-            ),
-        }
-        buffers.push(completion.buffer);
-    }
-    buffers
 }
 
 type NiosEndpoints = NiosExchange<Endpoint<Bulk, Out>, Endpoint<Bulk, In>>;
@@ -573,6 +544,8 @@ enum ControlResult {
     Data(Vec<u8>),
     Done,
     Setting(UsbAltSetting),
+    RxEndpoint(Endpoint<Bulk, In>),
+    TxEndpoint(Endpoint<Bulk, Out>),
 }
 impl UsbTransport {
     /// Creates a new `UsbTransport` from an nusb `Interface`.
@@ -722,19 +695,39 @@ impl UsbTransport {
     ///
     /// Returns an error if the endpoint is already claimed by another
     /// consumer.
-    pub fn acquire_streaming_rx_endpoint(&self) -> Result<Endpoint<Bulk, In>> {
-        self.interface
+    pub async fn acquire_streaming_rx_endpoint(&mut self) -> Result<Endpoint<Bulk, In>> {
+        self.prepare_io().await?;
+        let mut endpoint = self
+            .interface
             .endpoint::<Bulk, In>(STREAM_ENDPOINT_RX)
-            .map_err(Error::EndpointBusy)
+            .map_err(Error::EndpointBusy)?;
+        self.pending.begin(async move {
+            endpoint.clear_halt().await?;
+            Ok(ControlResult::RxEndpoint(endpoint))
+        });
+        match self.finish_pending(TIMEOUT).await? {
+            Some(ControlResult::RxEndpoint(endpoint)) => Ok(endpoint),
+            _ => Err(Error::Internal("missing RX endpoint")),
+        }
     }
     /// Acquires the TX streaming bulk OUT endpoint.
     ///
     /// Returns an error if the endpoint is already claimed by another
     /// consumer.
-    pub fn acquire_streaming_tx_endpoint(&self) -> Result<Endpoint<Bulk, Out>> {
-        self.interface
+    pub async fn acquire_streaming_tx_endpoint(&mut self) -> Result<Endpoint<Bulk, Out>> {
+        self.prepare_io().await?;
+        let mut endpoint = self
+            .interface
             .endpoint::<Bulk, Out>(STREAM_ENDPOINT_TX)
-            .map_err(Error::EndpointBusy)
+            .map_err(Error::EndpointBusy)?;
+        self.pending.begin(async move {
+            endpoint.clear_halt().await?;
+            Ok(ControlResult::TxEndpoint(endpoint))
+        });
+        match self.finish_pending(TIMEOUT).await? {
+            Some(ControlResult::TxEndpoint(endpoint)) => Ok(endpoint),
+            _ => Err(Error::Internal("missing TX endpoint")),
+        }
     }
 }
 
