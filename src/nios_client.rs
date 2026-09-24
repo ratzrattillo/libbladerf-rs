@@ -62,7 +62,20 @@ impl NiosCore {
 
     pub fn device_reset(&mut self) -> impl MaybeFuture<Output = Result<()>> {
         use crate::usb::BladeRf1UsbInterfaceCommands;
-        self.transport.usb_device_reset()
+        Op::new(async move {
+            self.streams.require_no_live_streams()?;
+            self.transport.usb_device_reset().await
+        })
+    }
+
+    pub fn shutdown(&mut self) -> impl MaybeFuture<Output = Result<()>> {
+        Op::new(async move {
+            self.streams.require_idle()?;
+            if self.transport.is_open() {
+                self.recover().await?;
+            }
+            self.transport.shutdown().await
+        })
     }
     /// Switches the USB alternate setting, releasing NIOS endpoints first.
     pub fn usb_change_setting(

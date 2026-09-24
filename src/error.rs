@@ -213,6 +213,18 @@ pub enum Error {
     #[error("cannot switch mode while streams are active")]
     StreamsActive,
 
+    /// A resumable device shutdown must finish before further control I/O.
+    #[error("device shutdown is in progress; retry shutdown")]
+    ShutdownInProgress,
+
+    /// The original reset request is still pending; retry its wait.
+    #[error("device reset is in progress; retry device_reset")]
+    ResetInProgress,
+
+    /// The device was shut down or reset and no longer accepts control I/O.
+    #[error("device connection is closed")]
+    DeviceClosed,
+
     /// A stream already owns the endpoint for this direction.
     #[error("the {0:?} streaming endpoint is already claimed")]
     StreamClaimed(crate::Channel),
@@ -288,6 +300,9 @@ impl Error {
             | Self::StreamAlreadyStarted
             | Self::NoTransfersInFlight
             | Self::StreamsActive
+            | Self::ShutdownInProgress
+            | Self::ResetInProgress
+            | Self::DeviceClosed
             | Self::StreamClaimed(_)
             | Self::WrongDevice
             | Self::IncompatibleStreamFormat

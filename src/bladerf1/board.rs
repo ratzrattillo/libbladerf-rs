@@ -117,7 +117,8 @@ fn is_bladerf1(dev: &DeviceInfo) -> bool {
 ///
 /// Every I/O method returns a [`MaybeFuture`]: call `.wait()` to block the
 /// current thread (native targets only) or `.await` it from async code.
-/// The async path works with any executor; no runtime feature is required.
+/// The async path works with any executor when the default `smol` feature
+/// is enabled. Native builds require `smol` or `tokio`; WebUSB requires neither.
 ///
 /// On construction the device waits for FX3 firmware readiness and
 /// auto-loads DC calibration tables from `<serial>_dc_rx.json` and
@@ -134,7 +135,6 @@ pub struct BladeRf1 {
     nios: NiosCore,
     dc_rx_table: Option<DcCalTable>,
     dc_tx_table: Option<DcCalTable>,
-    closed: bool,
 }
 impl BladeRf1 {
     /// Lists all BladeRF1 devices currently connected to the host.
@@ -181,7 +181,6 @@ impl BladeRf1 {
                 nios,
                 dc_rx_table: None,
                 dc_tx_table: None,
-                closed: false,
             };
             result.wait_until_ready().await?;
             Self::auto_load_tables(&mut result, cal_table_dir).await;
@@ -483,7 +482,17 @@ impl BladeRf1 {
         })
     }
 
-    /// Resets the device, causing it to re-enumerate on the USB bus.
+    /// Resets the device and invalidates this connection after the request completes.
+    ///
+    /// Drop this handle and reopen the re-enumerated device. A cancelled or
+    /// timed-out wait retains the original request; calling this method again
+    /// waits for it. An observed reset is never automatically repeated.
+    ///
+    /// # Errors
+    /// Returns [`Error::StreamsActive`] while any stream handle remains live,
+    /// including prepared/stopped streams. Drop abandoned streams before using
+    /// this recovery boundary. Propagates USB errors; a failing reset may still
+    /// have taken effect, and this connection remains invalidated.
     pub fn device_reset(&mut self) -> impl MaybeFuture<Output = crate::Result<()>> {
         self.nios.device_reset()
     }
@@ -495,60 +504,40 @@ impl BladeRf1 {
 }
 
 impl BladeRf1 {
-    /// Disables the RX and TX modules and releases the device.
+    /// Finishes pending I/O and shuts down the device without consuming its handle.
     ///
-    /// This is the non-blocking counterpart of the `Drop` implementation
-    /// and the only shutdown path on wasm. After `close()` returns, the
-    /// `Drop` implementation performs no further I/O.
+    /// Close every stream first. The shutdown operation remains owned by the
+    /// device across cancellation/timeouts and can be retried. Success disables
+    /// both USB streaming modules and selects the Null alternate setting.
+    /// Later control I/O returns [`Error::DeviceClosed`]. Repeated shutdown is
+    /// harmless. Drop the handle to release the USB interface.
     ///
     /// # Errors
-    /// Returns the first USB error encountered while disabling the modules;
-    /// the device is released regardless.
+    /// Returns [`Error::StreamsActive`] for live endpoint claims, or
+    /// [`Error::RecoveryRequired`] for an abandoned active stream. Propagates
+    /// restoration/USB failures while retaining the handle for recovery.
+    pub fn shutdown(&mut self) -> impl MaybeFuture<Output = crate::Result<()>> {
+        self.nios.shutdown()
+    }
+
+    /// Shuts down the device and releases its handle.
+    ///
+    /// Use [`Self::shutdown`] when the handle must survive an error or cancelled
+    /// wait. This consuming convenience method cannot return a retryable handle;
+    /// cancellation is a connection-release boundary, especially on WebUSB.
+    ///
+    /// # Errors
+    /// Returns the shutdown error. The handle is released regardless.
     pub fn close(mut self) -> impl MaybeFuture<Output = crate::Result<()>> {
-        Op::new(async move {
-            let rx = self
-                .nios
-                .control()
-                .await?
-                .usb_enable_module(Channel::Rx, false)
-                .await;
-            let tx = self
-                .nios
-                .control()
-                .await?
-                .usb_enable_module(Channel::Tx, false)
-                .await;
-            self.closed = true;
-            drop(self);
-            rx.and(tx)
-        })
+        Op::new(async move { self.shutdown().await })
     }
 }
 
 impl Drop for BladeRf1 {
     fn drop(&mut self) {
-        if self.closed {
-            return;
-        }
         #[cfg(not(target_arch = "wasm32"))]
         {
-            log::debug!("BladeRf1::drop — shutting down device");
-            let _ = Op::new(async {
-                self.nios
-                    .control()
-                    .await?
-                    .usb_enable_module(Channel::Rx, false)
-                    .await
-            })
-            .wait();
-            let _ = Op::new(async {
-                self.nios
-                    .control()
-                    .await?
-                    .usb_enable_module(Channel::Tx, false)
-                    .await
-            })
-            .wait();
+            let _ = self.shutdown().wait();
         }
         #[cfg(target_arch = "wasm32")]
         log::warn!("BladeRf1 dropped without close(); RX/TX modules left enabled");

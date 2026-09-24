@@ -122,6 +122,16 @@ fn dual_mode(dev: &mut BladeRf1, rx: &mut RxStream) {
     #[cfg(not(target_arch = "wasm32"))]
     assert_send(&fut);
     drop(fut);
+    let shutdown = dev.shutdown();
+    maybe_future(&shutdown);
+    #[cfg(not(target_arch = "wasm32"))]
+    assert_send(&shutdown);
+    drop(shutdown);
+    let reset = dev.device_reset();
+    maybe_future(&reset);
+    #[cfg(not(target_arch = "wasm32"))]
+    assert_send(&reset);
+    drop(reset);
     let read = rx.read(None);
     maybe_future(&read);
     #[cfg(not(target_arch = "wasm32"))]

@@ -31,6 +31,10 @@ mod tests {
             Err(Error::StreamClaimed(Channel::Rx))
         ));
         assert!(matches!(claims.require_idle(), Err(Error::StreamsActive)));
+        assert!(matches!(
+            claims.require_no_live_streams(),
+            Err(Error::StreamsActive)
+        ));
         claims
             .reserve_format(&lease, StreamFormat::Timestamps)
             .unwrap();
@@ -54,6 +58,7 @@ mod tests {
             claims.require_idle(),
             Err(Error::RecoveryRequired)
         ));
+        assert!(claims.require_no_live_streams().is_ok());
     }
 
     #[test]
@@ -163,6 +168,19 @@ impl StreamClaims {
     pub(crate) fn require_idle(&mut self) -> Result<()> {
         self.refresh()?;
         if self.registrations.iter().any(Option::is_some) {
+            Err(Error::StreamsActive)
+        } else {
+            Ok(())
+        }
+    }
+
+    pub(crate) fn require_no_live_streams(&self) -> Result<()> {
+        if self
+            .registrations
+            .iter()
+            .flatten()
+            .any(|registration| registration.owner.strong_count() != 0)
+        {
             Err(Error::StreamsActive)
         } else {
             Ok(())

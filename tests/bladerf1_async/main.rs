@@ -11,6 +11,8 @@ use libbladerf_rs::bladerf1::{BladeRf1, GainDb, RxStream, TuningMode, TxStream};
 use libbladerf_rs::{Channel, Result};
 use std::time::Duration;
 
+mod connection;
+
 fn logging_init() {
     let _ = env_logger::builder()
         .is_test(true)

@@ -23,7 +23,9 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 
 mod flash;
+mod termination;
 mod transaction;
+use termination::Termination;
 use transaction::NiosExchange;
 pub(crate) mod pending;
 use pending::Pending;
@@ -367,14 +369,27 @@ impl BladeRf1UsbInterfaceCommands for UsbTransport {
             data: &[],
         };
         Op::new(async move {
-            self.pending.finish(TIMEOUT).await?;
-            self.current_alt_setting = None;
+            if matches!(self.termination, Termination::Open) {
+                self.pending.finish(TIMEOUT).await?;
+            }
             let interface = self.interface.clone();
-            self.pending.begin(async move {
-                interface.control_out(pkt, TIMEOUT).await?;
-                Ok(ControlResult::Done)
-            });
-            self.pending.finish(TIMEOUT).await.map(|_| ())
+            let result = self
+                .termination
+                .reset(
+                    async move {
+                        interface
+                            .control_out(pkt, TIMEOUT)
+                            .await
+                            .map_err(Error::from)
+                    },
+                    TIMEOUT,
+                )
+                .await;
+            if matches!(self.termination, Termination::ResetIssued) {
+                self.current_alt_setting = None;
+                self.nios_endpoints = None;
+            }
+            result
         })
     }
     fn usb_is_firmware_ready(&mut self) -> impl MaybeFuture<Output = Result<bool>> {
@@ -489,6 +504,7 @@ pub struct UsbTransport {
     nios_endpoints: Option<NiosEndpoints>,
     current_alt_setting: Option<UsbAltSetting>,
     pending: Pending<ControlResult>,
+    termination: Termination,
     speed: Speed,
 }
 
@@ -510,6 +526,7 @@ impl UsbTransport {
             nios_endpoints: None,
             current_alt_setting: Some(current_alt_setting),
             pending: Pending::default(),
+            termination: Termination::Open,
             speed,
         }
     }
@@ -582,6 +599,7 @@ impl UsbTransport {
         })
     }
     async fn finish_pending(&mut self, timeout: Duration) -> Result<Option<ControlResult>> {
+        self.termination.require_open()?;
         if self.current_alt_setting.is_none() && !self.pending.is_pending() {
             return Err(Error::RecoveryRequired);
         }
@@ -599,6 +617,45 @@ impl UsbTransport {
             endpoints.finish(TIMEOUT).await?;
         }
         Ok(())
+    }
+
+    pub(crate) fn is_open(&self) -> bool {
+        matches!(self.termination, Termination::Open)
+    }
+
+    pub(crate) fn shutdown(&mut self) -> impl MaybeFuture<Output = Result<()>> {
+        Op::new(async move {
+            if self.is_open() {
+                self.prepare_io().await?;
+                self.release_endpoints().await?;
+            }
+            let interface = self.interface.clone();
+            self.termination
+                .shutdown(
+                    async move {
+                        let rx = disable_module(&interface, VendorRequest::RfRx).await;
+                        let tx = disable_module(&interface, VendorRequest::RfTx).await;
+                        match (rx, tx) {
+                            (Err(operation), Err(cleanup)) => {
+                                return Err(Error::OperationAndCleanup {
+                                    operation: Box::new(operation),
+                                    cleanup: Box::new(cleanup),
+                                });
+                            }
+                            (Err(error), _) | (_, Err(error)) => return Err(error),
+                            _ => {}
+                        }
+                        interface
+                            .set_alt_setting(UsbAltSetting::Null as u8)
+                            .await
+                            .map_err(Error::from)
+                    },
+                    TIMEOUT,
+                )
+                .await?;
+            self.current_alt_setting = Some(UsbAltSetting::Null);
+            Ok(())
+        })
     }
     /// Finishes pending NIOS transactions before releasing their endpoints.
     ///
@@ -682,6 +739,24 @@ impl UsbTransport {
             _ => Err(Error::Internal("missing TX endpoint")),
         }
     }
+}
+
+async fn disable_module(interface: &Interface, request: VendorRequest) -> Result<()> {
+    let bytes = interface
+        .control_in(
+            ControlIn {
+                control_type: ControlType::Vendor,
+                recipient: Recipient::Device,
+                request: request as u8,
+                value: 0,
+                index: 0,
+                length: 4,
+            },
+            TIMEOUT,
+        )
+        .await?;
+    require_length(4, bytes.len())?;
+    firmware_status(request, u32::from_le_bytes(bytes.try_into().unwrap()))
 }
 
 #[cfg(test)]
