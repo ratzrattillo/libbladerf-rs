@@ -20,6 +20,7 @@ if ! rustup update stable; then
 fi
 rustc --version
 cargo +nightly --version
+rustup toolchain install 1.98.1 --profile minimal --no-self-update
 
 # ci.yml env: neutralize the repo's target-cpu=native (see AGENTS.md): cargo
 # appends this after the config's rustflags and rustc honors the last
@@ -27,6 +28,9 @@ cargo +nightly --version
 export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS="-C target-cpu=x86-64"
 # ci.yml test-* jobs env:
 export RUST_BACKTRACE=full
+
+cargo +1.98.1 check --lib
+cargo +1.98.1 check --no-default-features --features bladerf1,xb200,tokio --lib
 
 ###########################################################
 # BUILD (ci.yml: test-linux)
@@ -46,6 +50,7 @@ cargo test --lib
 cargo test --test unit
 # Public API contract (no hardware)
 cargo test --test public_api --features bladerf1
+cargo test --no-default-features --features bladerf1,xb200,tokio --lib --test unit --test public_api
 # Hardware integration tests (single-threaded, shared device), default
 # `smol`. The only addition relative to CI, which runs without a device.
 if [ -z "$CI" ]; then
@@ -58,12 +63,12 @@ fi
 # CLIPPY (ci.yml: clippy, clippy-nightly)
 ###########################################################
 # Stable is the gate CI enforces.
-cargo clippy --features bladerf1 --all-targets -- -D warnings
+cargo clippy --workspace --features bladerf1 --all-targets -- -D warnings
 cargo clippy --no-default-features --features bladerf1,xb100,xb200,xb300,tokio --all-targets -- -D warnings
 # Nightly clippy is the early warning (continue-on-error in CI): lints that
 # are warn-by-default on nightly today become CI failures on the next
 # stable. Fix them now or `#[allow]` them deliberately.
-cargo +nightly clippy --features bladerf1 --all-targets -- -D warnings
+cargo +nightly clippy --workspace --features bladerf1 --all-targets -- -D warnings
 cargo +nightly clippy --no-default-features --features bladerf1,xb100,xb200,xb300,tokio --all-targets -- -D warnings
 
 ###########################################################
@@ -87,7 +92,9 @@ rustup target add aarch64-unknown-linux-gnu aarch64-linux-android x86_64-pc-wind
 cargo build --target aarch64-unknown-linux-gnu --features bladerf1 --lib
 cargo build --target aarch64-linux-android --features bladerf1 --lib
 cargo check --target aarch64-linux-android --features bladerf1 --test public_api
+cargo check --target aarch64-linux-android --no-default-features --features bladerf1,xb200,tokio --test public_api
 cargo build --target x86_64-pc-windows-gnu --features bladerf1 --lib
+cargo check --target x86_64-pc-windows-gnu --features bladerf1 --test public_api
 
 ###########################################################
 # CONVENTIONAL COMMITS (ci.yml: conventional-commits)
@@ -100,7 +107,7 @@ git-cliff --unreleased --output /dev/null
 ###########################################################
 # DOC (ci.yml: doc)
 ###########################################################
-cargo doc --features bladerf1 --no-deps
+cargo doc --features bladerf1 --no-deps --lib --bins --examples
 
 ###########################################################
 # EXAMPLES (ci.yml: build-examples)
