@@ -141,6 +141,20 @@ pub(crate) struct StreamClaims {
     registrations: [Option<Registration>; 2],
 }
 
+impl std::fmt::Debug for StreamClaims {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let state = |channel: Channel| {
+            self.registrations[channel as usize]
+                .as_ref()
+                .map(|registration| (registration.owner.strong_count() != 0, registration.format))
+        };
+        f.debug_struct("StreamClaims")
+            .field("rx_live_and_format", &state(Channel::Rx))
+            .field("tx_live_and_format", &state(Channel::Tx))
+            .finish()
+    }
+}
+
 impl Default for StreamClaims {
     fn default() -> Self {
         Self {

@@ -519,14 +519,14 @@ impl<'a> Lms6002d<'a> {
         &mut self,
         channel: Channel,
     ) -> impl MaybeFuture<Output = Result<i16>> {
-        Op::new(async move { self.get_dc_offset(channel, dc_offset_i_addr(channel)).await })
+        self.get_dc_offset(channel, dc_offset_i_addr(channel))
     }
 
     pub(crate) fn get_dc_offset_q(
         &mut self,
         channel: Channel,
     ) -> impl MaybeFuture<Output = Result<i16>> {
-        Op::new(async move { self.get_dc_offset(channel, dc_offset_q_addr(channel)).await })
+        self.get_dc_offset(channel, dc_offset_q_addr(channel))
     }
 
     fn dc_cal_loop(

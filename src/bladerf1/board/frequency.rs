@@ -193,13 +193,8 @@ impl RfLinkSession<'_> {
         frequency: u64,
         quick_tune: Option<QuickTune>,
     ) -> impl MaybeFuture<Output = Result<LmsFreq>> {
-        Op::new(async move {
-            self.require_initialized().await?;
-            let (lms_freq, _) = self
-                .schedule_retune_with_duration(channel, timestamp, frequency, quick_tune)
-                .await?;
-            Ok(lms_freq)
-        })
+        self.schedule_retune_with_duration(channel, timestamp, frequency, quick_tune)
+            .map_ok(|(frequency, _)| frequency)
     }
 
     /// Schedules an FPGA-initiated frequency retune via the NIOS retune queue.

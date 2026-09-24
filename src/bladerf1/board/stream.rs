@@ -306,6 +306,40 @@ pub(crate) struct StreamCore<E: BulkEndpoint> {
     state: StreamState<E>,
 }
 
+impl<E: BulkEndpoint> std::fmt::Debug for StreamCore<E> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut debug = f.debug_struct("StreamCore");
+        debug
+            .field("channel", &self.channel)
+            .field("encoding", &self.encoding);
+        match &self.state {
+            StreamState::Prepared(_) => {
+                debug.field("state", &"prepared");
+            }
+            StreamState::Running(_) => {
+                debug.field("state", &"running");
+            }
+            StreamState::Closed => {
+                debug.field("state", &"closed");
+            }
+            StreamState::Starting { phase, .. } => {
+                debug.field("start_phase", phase);
+            }
+            StreamState::Stopping { phase, goal, .. } => {
+                debug.field("stop_phase", phase).field("goal", goal);
+            }
+        }
+        if let Ok(pool) = self.pool_ref() {
+            debug
+                .field("buffer_size", &pool.buffer_size)
+                .field("buffer_count", &pool.buffer_count)
+                .field("available", &pool.available.len())
+                .field("pending", &pool.pending());
+        }
+        debug.finish()
+    }
+}
+
 enum StreamState<E: BulkEndpoint> {
     Prepared(BufferPool<E>),
     Starting {
@@ -847,6 +881,7 @@ impl<E: BulkEndpoint> MaybeFuture for TxWaitCompletion<'_, E> {
 /// Construct via `RxStream::builder()`. The stream follows the
 /// build → start → read/recycle → close lifecycle. No `Drop`
 /// teardown is performed; call `close()` for clean resource release.
+#[derive(Debug)]
 pub struct RxStream {
     core: StreamCore<nusb::Endpoint<Bulk, In>>,
 }
@@ -856,6 +891,7 @@ pub struct RxStream {
 /// Construct via `TxStream::builder()`. The stream follows the
 /// build → start → get_buffer/submit → close lifecycle. No `Drop`
 /// teardown is performed; call `close()` for clean resource release.
+#[derive(Debug)]
 pub struct TxStream {
     core: StreamCore<nusb::Endpoint<Bulk, Out>>,
 }
@@ -927,6 +963,7 @@ impl RfLinkSession<'_> {
 }
 
 /// Builder for configuring and constructing an `RxStream`.
+#[derive(Debug)]
 pub struct RxStreamBuilder<'a, 'b> {
     dev: &'a mut RfLinkSession<'b>,
     buffer_size: usize,
@@ -1094,6 +1131,7 @@ impl RxStream {
 }
 
 /// Builder for configuring and constructing a `TxStream`.
+#[derive(Debug)]
 pub struct TxStreamBuilder<'a, 'b> {
     dev: &'a mut RfLinkSession<'b>,
     buffer_size: usize,

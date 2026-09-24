@@ -15,6 +15,55 @@ use libbladerf_rs::{Buffer, Channel, Error, ErrorKind, MaybeFuture, Result};
 use std::future::IntoFuture;
 use std::time::Duration;
 
+#[test]
+fn handle_traits_are_public() {
+    fn debug<T: std::fmt::Debug>() {}
+    debug::<BladeRf1>();
+    debug::<RfLinkSession<'_>>();
+    debug::<FlashSession<'_>>();
+    debug::<ConfigSession<'_>>();
+    debug::<RxStream>();
+    debug::<TxStream>();
+    debug::<libbladerf_rs::bladerf1::RxStreamBuilder<'_, '_>>();
+    debug::<libbladerf_rs::bladerf1::TxStreamBuilder<'_, '_>>();
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        fn thread_safe<T: Send + Sync>() {}
+        thread_safe::<BladeRf1>();
+        thread_safe::<RfLinkSession<'_>>();
+        thread_safe::<FlashSession<'_>>();
+        thread_safe::<ConfigSession<'_>>();
+        thread_safe::<RxStream>();
+        thread_safe::<TxStream>();
+    }
+}
+
+#[allow(dead_code)]
+async fn validated_data_and_retunes(rf: &mut RfLinkSession<'_>) -> Result<()> {
+    use libbladerf_rs::bladerf1::hardware::lms6002d::frequency::LmsFreq;
+    use libbladerf_rs::bladerf1::protocol::RetuneTimestamp;
+    use libbladerf_rs::bladerf1::{
+        DcCalEntry, DcCalTable, DcCalValue, DcCals, DcPair, QuickTune, RetuneResult,
+    };
+    let updates = DcCals {
+        lpf_tuning: Some(DcCalValue::try_from(12)?),
+        ..DcCals::default()
+    };
+    rf.set_dc_cals(updates).await?;
+    let table: DcCalTable = DcCalTable::new(
+        updates,
+        vec![DcCalEntry::new(915_000_000, DcPair::new(0, 0))],
+    )?;
+    let _: DcCalEntry = table.lookup(915_000_000)?;
+    let quick: QuickTune = rf.get_quick_tune(Channel::Rx).await?;
+    let _: LmsFreq = quick.try_into()?;
+    let (_, outcome): (LmsFreq, RetuneResult) = rf
+        .schedule_retune_with_duration(Channel::Rx, RetuneTimestamp::Now, 915_000_000, None)
+        .await?;
+    let _ = outcome;
+    Ok(())
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 fn assert_send<T: Send>(_: &T) {}
 

@@ -70,19 +70,19 @@ impl NiosCore {
 impl NiosCore {
     /// Returns `true` if the XB-200 board is currently enabled (RF_ON bit set).
     pub(crate) fn xb200_is_enabled(&mut self) -> impl MaybeFuture<Output = Result<bool>> {
-        Op::new(async move { self.detect_xb_board(xb200::BLADERF_XB_RF_ON).await })
+        self.detect_xb_board(xb200::BLADERF_XB_RF_ON)
     }
 }
 
 impl RfLinkSession<'_> {
     /// Reads the full expansion GPIO value.
     pub fn expansion_gpio_read(&mut self) -> impl MaybeFuture<Output = Result<u32>> {
-        Op::new(async move { self.nios.nios_expansion_gpio_read().await })
+        self.nios.nios_expansion_gpio_read()
     }
 
     /// Writes the full expansion GPIO value (all bits).
     pub fn expansion_gpio_write(&mut self, val: u32) -> impl MaybeFuture<Output = Result<()>> {
-        Op::new(async move { self.nios.nios_expansion_gpio_write(0xffffffff, val).await })
+        self.nios.nios_expansion_gpio_write(0xffffffff, val)
     }
 
     /// Writes the expansion GPIO value with a mask — only bits set in `mask` are updated.
@@ -91,12 +91,12 @@ impl RfLinkSession<'_> {
         mask: u32,
         val: u32,
     ) -> impl MaybeFuture<Output = Result<()>> {
-        Op::new(async move { self.nios.nios_expansion_gpio_write(mask, val).await })
+        self.nios.nios_expansion_gpio_write(mask, val)
     }
 
     /// Reads the expansion GPIO direction register.
     pub fn expansion_gpio_dir_read(&mut self) -> impl MaybeFuture<Output = Result<u32>> {
-        Op::new(async move { self.nios.nios_expansion_gpio_dir_read().await })
+        self.nios.nios_expansion_gpio_dir_read()
     }
 
     /// Writes the full expansion GPIO direction register.
@@ -110,7 +110,7 @@ impl RfLinkSession<'_> {
         mask: u32,
         val: u32,
     ) -> impl MaybeFuture<Output = Result<()>> {
-        Op::new(async move { self.nios.nios_expansion_gpio_dir_write(mask, val).await })
+        self.nios.nios_expansion_gpio_dir_write(mask, val)
     }
 
     /// Detects and returns the currently attached expansion board.

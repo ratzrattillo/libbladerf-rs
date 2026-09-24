@@ -19,6 +19,7 @@ mod bandwidth;
 mod calibration;
 pub(crate) mod corrections;
 mod dac_trim;
+mod debug;
 pub(crate) mod firmware;
 mod flash;
 pub(crate) mod fpga;
@@ -541,8 +542,6 @@ impl Drop for BladeRf1 {
         {
             let _ = self.shutdown().wait();
         }
-        #[cfg(target_arch = "wasm32")]
-        log::warn!("BladeRf1 dropped without close(); RX/TX modules left enabled");
     }
 }
 
@@ -596,8 +595,8 @@ impl RfLinkSession<'_> {
     /// meaning [`initialize`](RfLinkSession::initialize) has not yet been
     /// called (or the FPGA was just reloaded, resetting NIOS).
     fn require_initialized(&mut self) -> impl MaybeFuture<Output = crate::Result<()>> {
-        Op::new(async move {
-            let cfg = self.config_gpio_read().await?;
+        self.config_gpio_read().map(|result| {
+            let cfg = result?;
             if (cfg & 0x7f) == 0 {
                 return Err(Error::NotInitialized);
             }
@@ -607,15 +606,14 @@ impl RfLinkSession<'_> {
 
     /// Returns the FPGA version as a string.
     pub fn fpga_version(&mut self) -> impl MaybeFuture<Output = crate::Result<String>> {
-        Op::new(async move {
-            let version = self.nios.nios_get_fpga_version().await?;
-            Ok(format!("{version}"))
-        })
+        self.nios
+            .nios_get_fpga_version()
+            .map_ok(|version| version.to_string())
     }
 
     /// Reads the full 32-bit config GPIO register.
     pub fn config_gpio_read(&mut self) -> impl MaybeFuture<Output = crate::Result<u32>> {
-        Op::new(async move { self.nios.nios_config_read().await })
+        self.nios.nios_config_read()
     }
 
     /// Writes the config GPIO register, automatically setting the small DMA

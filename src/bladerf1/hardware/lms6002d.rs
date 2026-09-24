@@ -207,6 +207,6 @@ impl<'a> Lms6002d<'a> {
     }
 
     pub(crate) fn read_expansion_gpio(&mut self) -> impl MaybeFuture<Output = Result<u32>> {
-        Op::new(async move { self.nios.nios_expansion_gpio_read().await })
+        self.nios.nios_expansion_gpio_read()
     }
 }

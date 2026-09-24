@@ -59,7 +59,7 @@
 //!
 //! [nusb]: https://github.com/kevinmehall/nusb
 
-#![deny(missing_docs)]
+#![deny(missing_docs, missing_debug_implementations)]
 
 #[cfg(all(
     not(target_arch = "wasm32"),

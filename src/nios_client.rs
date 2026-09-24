@@ -41,6 +41,18 @@ pub struct NiosCore {
     pub(crate) streams: StreamClaims,
     restoration: Option<Restoration>,
 }
+
+impl std::fmt::Debug for NiosCore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NiosCore")
+            .field("speed", &self.transport.speed())
+            .field("alternate_setting", &self.transport.current_alt_setting())
+            .field("open", &self.transport.is_open())
+            .field("streams", &self.streams)
+            .field("restoration_pending", &self.restoration.is_some())
+            .finish_non_exhaustive()
+    }
+}
 impl NiosCore {
     /// Creates a new `NiosCore` wrapping the given USB transport.
     pub fn new(transport: UsbTransport) -> Self {
