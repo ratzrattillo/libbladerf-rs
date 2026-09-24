@@ -11,6 +11,9 @@ used synchronously or asynchronously.
 
 Requires Rust 1.98.1 or newer.
 
+The current development API targets the coordinated 0.6 migration; package
+metadata remains 0.5.2 until release. See [MIGRATION.md](MIGRATION.md).
+
 [nusb]: https://github.com/kevinmehall/nusb
 [libbladeRF]: https://github.com/Nuand/bladeRF
 
@@ -47,7 +50,9 @@ at compile time.
 | `FlashSession` | SpiFlash (0x02) | SPI flash erase/write/verify, calibration region access |
 | `ConfigSession` | Config (0x03) | FPGA loading, device configuration |
 
-`FlashSession` and `ConfigSession` return `Error::StreamsActive` if any stream is running.
+`FlashSession` and `ConfigSession` return `Error::StreamsActive` while any stream
+owns an endpoint, including prepared and stopped streams. Close streams before
+switching modes. An abandoned active stream requires connection recovery.
 
 ### Sync or async
 
@@ -64,12 +69,13 @@ use libbladerf_rs::Channel;
 let mut dev = BladeRf1::from_first().wait()?;
 let mut rf = dev.rf_link_session().wait()?;
 rf.initialize(false).wait()?;
-rf.set_frequency(Channel::Rx, 100_000_000, TuningMode::Fpga).wait()?;
+rf.set_frequency(Channel::Rx, 915_000_000, TuningMode::Fpga).wait()?;
 let mut rx = RxStream::builder(&mut rf).build().wait()?;
 rx.start(&mut rf).wait()?;
 let buffer = rx.read(Some(std::time::Duration::from_secs(1))).wait()?;
 rx.recycle(buffer);
 rx.close(&mut rf).wait()?;
+dev.close().wait()?;
 
 // Async — identical calls, `.await` instead of `.wait()`
 let mut dev = BladeRf1::from_first().await?;
@@ -93,9 +99,40 @@ enters a private runtime context for callers outside tokio).
 
 Streaming timeouts (`RxStream::read`, `TxStream::get_buffer`,
 `TxStream::wait_completion`) apply to the blocking path only. The awaited
-futures ignore the timeout argument, consume at most one USB completion per
-await and are cancel-safe, so wrap them in your executor's timeout
+futures ignore the timeout argument and retain pending transfers when cancelled,
+so wrap them in your executor's timeout
 (`tokio::time::timeout`, `gloo_timers`, ...) if you need a deadline.
+RX reads deliver every completion in order; TX completion waits drain the queued
+transfers. No ordinary RX read discards completed buffers.
+
+### Stream lifecycle and recovery
+
+- `build()` validates/claims an endpoint, clears halt, and allocates the pool.
+- `start()` configures the shared format and enables the module; RX submits buffers.
+- `stop()` drains and disables the direction, retaining the endpoint and pool.
+- `close()` releases the endpoint after confirmed teardown. Compatible duplex
+  peers keep their shared format until the last user stops.
+
+Keep streams after an interrupted start/stop/close and retry the operation with a
+session from the same device. A timeout is not evidence of USB completion.
+`shutdown(&mut self)` provides the same retryable ownership for device shutdown;
+`close(self)` is a consuming convenience. See the migration guide for recovery
+boundaries, strict flash inputs, and typed calibration/retune results.
+
+### Metadata
+
+Use `rx.metadata_layout()?.messages(&buffer)?` to visit each timestamped SC16
+message. Every message has its own 16-byte little-endian header and sample
+payload; a USB buffer usually contains several messages.
+
+| Matched firmware / FPGA | High-Speed message | Super/SuperPlus message |
+|---|---:|---:|
+| firmware ≥ 2.5, FPGA ≥ 0.16 | 4,096 bytes | 8,192 bytes |
+| firmware < 2.5, FPGA < 0.16 | 1,024 bytes | 2,048 bytes |
+
+Mixed generations are rejected for timestamp streaming. `MetadataPacket` uses
+the packet header's 32-bit-word payload count and exposes transport padding
+separately. `MetadataHeader::to_bytes()` serializes fields portably.
 
 ### WebUSB
 
@@ -111,6 +148,19 @@ Obtain a device with `nusb::request_device` (from a user gesture) or
 `nusb::list_devices`, then open it with `BladeRf1::from_device(device).await`.
 There is no `.wait()` on wasm, `Drop` performs no I/O, and transfers cannot be
 cancelled, so always `close()` streams and the device explicitly.
+RX teardown must keep its data source available until existing transfers finish.
+For firmware loopback, send enough TX data; for triggered RX, release the trigger.
+`Error::StreamDrainIncomplete { pending }` retains the stream for retry after a
+five-second completion deadline. `pending_transfers()` reports uncollected
+transfers. Dropping a stream does not prove that browser requests have stopped.
+
+### Android and calibration storage
+
+Open with `BladeRf1::from_fd(OwnedFd)` or `from_device`; Android has no enumeration
+constructors. Duplicate the Java connection's FD before transferring ownership.
+Choose an application directory explicitly with `load_dc_cal_tables_from_dir`.
+For WebUSB, deserialize validated `DcCalTable` values and install them with
+`set_dc_cal_table`; filesystem helpers require an available native filesystem.
 
 ## Examples
 
@@ -119,7 +169,7 @@ Git-tracked examples (build and run from the repository root):
 | Package | Purpose |
 |---------|---------|
 | `info` | Basic device info and FPGA version |
-| `rx-tx` | Streaming RX/TX with metadata headers |
+| `rx-tx` | Plain SC16 RX and a TX helper with explicit lifecycle |
 | `rx-async` | RX streaming with the awaited API on tokio (`--features tokio`) |
 | `calibrate` | DC calibration on LMS6002D |
 | `dc-cal-table` | DC calibration table management |
@@ -137,10 +187,11 @@ cargo run -p rx-async
 - **RF control**: frequency (host/FPGA tuning, quick-tune), gain (per-stage apportioning,
   gain modes, gain stage control), sample rate (integer and rational), bandwidth, LPF mode,
   RF port selection
-- **Streaming**: zero-copy DMA via BufferPool (RX/TX), metadata headers, multiple sample
-  formats (Sc16Q11, Sc8Q7, Sc16Q11Packed, *Meta variants), pack/unpack helpers
-- **DC calibration**: on-demand LMS6002D calibration, flash-stored JSON calibration tables
-  with auto-load on open and frequency-specific apply
+- **Streaming**: zero-copy buffers (RX/TX), SC16 and timestamped SC16, version-gated
+  `PacketMeta`, and pure packed-SC16 conversion helpers. Stock FPGA streaming
+  rejects SC8 and packed SC16.
+- **DC calibration**: on-demand LMS6002D calibration, validated host JSON tables
+  with optional filesystem auto-load and frequency-specific apply
 - **Flash**: erase/write/verify, calibration region (DAC trim, FPGA size)
 - **FPGA**: host-based loading, flash autoload, source query, firmware log reading
 - **Expansion boards**: XB-100 (GPIO/LED), XB-200 (filter bank, upconverter, auto filter),
@@ -165,7 +216,7 @@ cargo run -p rx-async
 ## Developers
 
 Contributions are welcome. The architecture is documented in [`AGENTS.md`](AGENTS.md).
-The release and maintenance workflow is documented in [`docs/MAINTAINERS.md`](MAINTAINERS.md).
+The release and maintenance workflow is documented in [`MAINTAINERS.md`](MAINTAINERS.md).
 
 ### Commit messages
 

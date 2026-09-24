@@ -130,9 +130,10 @@ fn is_bladerf1(dev: &DeviceInfo) -> bool {
 /// to load from an explicit path, which is required on platforms without a
 /// meaningful working directory such as Android.
 ///
-/// On native targets, dropping the handle disables the RX and TX modules
-/// (best-effort, blocking). Use [`close`](BladeRf1::close) for an explicit,
-/// non-blocking shutdown; on wasm it is the only shutdown path.
+/// On native targets, dropping the handle attempts blocking shutdown, subject
+/// to live-stream and recovery checks. [`shutdown`](BladeRf1::shutdown) is
+/// awaitable and retryable; [`close`](BladeRf1::close) consumes the handle.
+/// WebUSB requires explicit shutdown because its destructor performs no I/O.
 pub struct BladeRf1 {
     device: Device,
     nios: NiosCore,
@@ -334,6 +335,8 @@ impl BladeRf1 {
     /// from the current directory. On Android, use
     /// [`load_dc_cal_tables_from_dir`](BladeRf1::load_dc_cal_tables_from_dir)
     /// to specify an explicit directory.
+    /// Duplicate the descriptor first if Java retains ownership of the connection.
+    /// The driver takes ownership of the supplied [`std::os::fd::OwnedFd`].
     ///
     /// # Errors
     /// Returns an error if the descriptor does not refer to a usable BladeRF1
@@ -446,8 +449,10 @@ impl BladeRf1 {
 
     /// Creates a [`FlashSession`] for SPI flash access.
     ///
-    /// Returns [`Error::StreamsActive`] if any stream is currently running,
-    /// since switching the USB alt setting would disrupt active transfers.
+    /// # Errors
+    /// Returns [`Error::StreamsActive`] for any live stream claim, including
+    /// prepared/stopped streams, or [`Error::RecoveryRequired`] for abandoned
+    /// transfers. Propagates USB errors and unsupported flash geometry.
     pub fn flash_session(&mut self) -> impl MaybeFuture<Output = crate::Result<FlashSession<'_>>> {
         Op::new(async move {
             self.nios.streams.require_idle()?;
@@ -472,7 +477,10 @@ impl BladeRf1 {
 
     /// Creates a [`ConfigSession`] for FPGA loading and device configuration.
     ///
-    /// Returns [`Error::StreamsActive`] if any stream is currently running.
+    /// # Errors
+    /// Returns [`Error::StreamsActive`] for any live stream claim, including
+    /// prepared/stopped streams, or [`Error::RecoveryRequired`] for abandoned
+    /// transfers. Propagates USB errors.
     pub fn config_session(
         &mut self,
     ) -> impl MaybeFuture<Output = crate::Result<ConfigSession<'_>>> {
@@ -561,7 +569,7 @@ pub struct RfLinkSession<'a> {
 /// Session for SPI flash read/write/erase operations.
 ///
 /// Owns flash metadata queried from the device at session creation.
-/// Returns [`Error::StreamsActive`] if any stream is running when
+/// Returns [`Error::StreamsActive`] if any stream holds an endpoint claim when
 /// [`BladeRf1::flash_session`] is called.
 pub struct FlashSession<'a> {
     pub(crate) nios: &'a mut NiosCore,
@@ -570,7 +578,7 @@ pub struct FlashSession<'a> {
 
 /// Session for FPGA loading and device configuration.
 ///
-/// Returns [`Error::StreamsActive`] if any stream is running when
+/// Returns [`Error::StreamsActive`] if any stream holds an endpoint claim when
 /// [`BladeRf1::config_session`] is called.
 pub struct ConfigSession<'a> {
     pub(crate) nios: &'a mut NiosCore,
@@ -591,7 +599,7 @@ impl RfLinkSession<'_> {
 
     /// Checks that the device has been initialized by reading the config GPIO.
     ///
-    /// Returns [`Error::BoardState`] if the lower 7 bits of GPIO are zero,
+    /// Returns [`Error::NotInitialized`] if the lower 7 bits of GPIO are zero,
     /// meaning [`initialize`](RfLinkSession::initialize) has not yet been
     /// called (or the FPGA was just reloaded, resetting NIOS).
     fn require_initialized(&mut self) -> impl MaybeFuture<Output = crate::Result<()>> {

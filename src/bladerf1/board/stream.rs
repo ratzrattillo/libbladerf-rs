@@ -1,12 +1,13 @@
 //! BufferPool-based zero-copy streaming over nusb Bulk endpoints.
 //!
 //! The stream lifecycle has three phases:
-//! 1. `build()` — allocates the USB endpoint and configures format GPIO bits.
-//! 2. `start()` — enables the RFFE and USB streaming module, then submits
+//! 1. `build()` — validates configuration, claims the endpoint, and allocates buffers.
+//! 2. `start()` — reserves/configures the shared format, enables the module, then submits
 //!    buffers (RX) or begins the send/receive loop.
 //! 3. `stop()` or `close()` — tears down the stream: cancels pending
 //!    transfers, disables the module, drains cancelled buffers, clears
-//!    halt, and deconfigures format GPIO bits.
+//!    halt, and releases this direction's format usage. `stop()` retains the endpoint
+//!    claim and pool; `close()` releases them. WebUSB drains before module disable.
 //!
 //! `RxStream` and `TxStream` own a `BufferPool` wrapping an nusb `Endpoint`
 //! and a pool of reusable `Buffer` instances. No `Drop` impl is provided on
@@ -17,9 +18,10 @@
 //! mocks (see the `tests` module) and only the USB plumbing needs hardware.
 //!
 //! All I/O methods return [`MaybeFuture`]. The blocking path (`.wait()`)
-//! honors the `timeout` arguments; the awaited path ignores them and
-//! consumes at most one USB completion per await, leaving deadline handling
-//! to the caller's executor. Awaited reads are cancel-safe.
+//! honors data-path `timeout` arguments; the awaited path ignores them, leaving
+//! deadline handling to the caller's executor. Reads deliver one completion;
+//! TX completion waits collect all pending TX transfers. Cancelled waiters retain
+//! the underlying transfers. Start/stop/close retain unfinished transition work.
 
 use crate::bladerf1::board::RfLinkSession;
 use crate::channel::Channel;
@@ -296,9 +298,8 @@ impl<E: BulkEndpoint> BufferPool<E> {
 /// Direction-agnostic stream state machine shared by [`RxStream`] and
 /// [`TxStream`].
 ///
-/// `pool` is `None` once the stream is closed; `started` tracks whether
-/// the RF module is enabled and the host's active-stream counter holds a
-/// reference for this stream.
+/// Each lifecycle variant owns the pool and its remaining transition work.
+/// The immutable lease associates this endpoint with its originating device.
 pub(crate) struct StreamCore<E: BulkEndpoint> {
     channel: Channel,
     encoding: StreamEncoding,
@@ -405,8 +406,7 @@ impl<E: BulkEndpoint> StreamCore<E> {
         })
     }
 
-    /// Second half of `build()`: checks the board state, configures the
-    /// format GPIO bits and clears the endpoint halt.
+    /// Prepares a mock endpoint using the production builder's validation order.
     #[cfg(test)]
     pub(crate) async fn configure<H: StreamHost>(&mut self, host: &mut H) -> Result<()> {
         host.require_initialized().await?;
@@ -972,7 +972,9 @@ pub struct RxStreamBuilder<'a, 'b> {
 }
 
 impl<'a, 'b> RxStreamBuilder<'a, 'b> {
-    /// Sets the buffer size in bytes. Aligned up to the endpoint's max packet size.
+    /// Sets the requested buffer size in bytes.
+    ///
+    /// Rounded up to complete USB packets, or complete FPGA messages for metadata.
     pub fn buffer_size(mut self, size: usize) -> Self {
         self.buffer_size = size;
         self
@@ -990,9 +992,14 @@ impl<'a, 'b> RxStreamBuilder<'a, 'b> {
         self
     }
 
-    /// Builds the `RxStream`. Acquires the RX streaming endpoint, configures
-    /// format GPIO bits, and allocates the buffer pool.
-    /// Requires the board to be initialized. Returns `Error` on USB failure.
+    /// Validates configuration, claims RX, clears halt, and allocates its buffer pool.
+    ///
+    /// Format configuration and module enable happen in [`RxStream::start`].
+    /// The endpoint claim survives stop until [`RxStream::close`] succeeds.
+    ///
+    /// # Errors
+    /// Rejects invalid sizes, unsupported formats, and an already claimed RX
+    /// direction. Requires initialization and propagates USB/recovery failures.
     pub fn build(self) -> impl MaybeFuture<Output = Result<RxStream>> {
         Op::new(async move {
             StreamConfig::new(self.buffer_size, self.buffer_count, 1)?;
@@ -1073,9 +1080,13 @@ impl RxStream {
         self.core.close(dev)
     }
 
-    /// Enables the RX streaming module and submits all buffers for incoming data.
-    /// Returns `Error` if the stream is closed, already started, or the module
-    /// fails to enable.
+    /// Establishes the shared format, enables RX, and submits available buffers.
+    ///
+    /// An interrupted start can be retried or torn down with stop/close.
+    ///
+    /// # Errors
+    /// Rejects a wrong-device session, incompatible peer format, closed/running
+    /// stream, or teardown in progress. Propagates USB/recovery failures.
     pub fn start<'a>(
         &'a mut self,
         dev: &'a mut RfLinkSession<'_>,
@@ -1140,7 +1151,9 @@ pub struct TxStreamBuilder<'a, 'b> {
 }
 
 impl<'a, 'b> TxStreamBuilder<'a, 'b> {
-    /// Sets the buffer size in bytes. Aligned up to the endpoint's max packet size.
+    /// Sets the requested buffer size in bytes.
+    ///
+    /// Rounded up to complete USB packets, or complete FPGA messages for metadata.
     pub fn buffer_size(mut self, size: usize) -> Self {
         self.buffer_size = size;
         self
@@ -1158,9 +1171,13 @@ impl<'a, 'b> TxStreamBuilder<'a, 'b> {
         self
     }
 
-    /// Builds the `TxStream`. Acquires the TX streaming endpoint, configures
-    /// format GPIO bits, and allocates the buffer pool.
-    /// Requires the board to be initialized. Returns `Error` on USB failure.
+    /// Validates configuration, claims TX, clears halt, and allocates its buffer pool.
+    ///
+    /// Format configuration and module enable happen in [`TxStream::start`].
+    ///
+    /// # Errors
+    /// Rejects invalid sizes, unsupported formats, and an already claimed TX
+    /// direction. Requires initialization and propagates USB/recovery failures.
     pub fn build(self) -> impl MaybeFuture<Output = Result<TxStream>> {
         Op::new(async move {
             StreamConfig::new(self.buffer_size, self.buffer_count, 1)?;
@@ -1218,9 +1235,17 @@ impl TxStream {
         }
     }
 
-    /// Performs full stream teardown: disables the TX module, cancels pending
-    /// transfers, drains them, clears halt, and deconfigures format GPIO bits.
-    /// Consumes the stream pool; subsequent calls return `Error::StreamClosed`.
+    /// Closes TX and releases its endpoint after all transfers have been collected.
+    ///
+    /// Native backends cancel before disabling; WebUSB drains before disabling.
+    /// A failed/cancelled close retains its pool and remaining cleanup work.
+    /// Shared format bits remain set while a compatible peer uses them.
+    ///
+    /// # Errors
+    /// Returns [`Error::StreamDrainIncomplete`] if a completion takes over five
+    /// seconds. Keep the stream and retry after restoring its completion source.
+    /// Propagates USB errors and rejects wrong-device sessions. After success,
+    /// subsequent calls return [`Error::StreamClosed`].
     pub fn close<'a>(
         &'a mut self,
         dev: &'a mut RfLinkSession<'_>,
@@ -1228,9 +1253,13 @@ impl TxStream {
         self.core.close(dev)
     }
 
-    /// Enables the TX streaming module. Unlike RX, no automatic buffer submission occurs.
-    /// Returns `Error` if the stream is closed, already started, or the module
-    /// fails to enable.
+    /// Establishes the shared format and enables TX without submitting buffers.
+    ///
+    /// An interrupted start can be retried or torn down with stop/close.
+    ///
+    /// # Errors
+    /// Rejects a wrong-device session, incompatible peer format, closed/running
+    /// stream, or teardown in progress. Propagates USB/recovery failures.
     pub fn start<'a>(
         &'a mut self,
         dev: &'a mut RfLinkSession<'_>,
@@ -1238,8 +1267,14 @@ impl TxStream {
         self.core.start(dev)
     }
 
-    /// Stops the TX stream: disables the module and tears down transfers,
-    /// but retains the buffer pool so the stream can be restarted.
+    /// Stops TX, retaining its endpoint claim and buffer pool for restart.
+    ///
+    /// Uses the same resumable teardown as [`Self::close`]. Flash/Config sessions
+    /// remain unavailable until the stream is closed.
+    ///
+    /// # Errors
+    /// Returns [`Error::StreamDrainIncomplete`] for an unfinished drain and
+    /// propagates teardown errors. Keep the stream and retry after recovery.
     pub fn stop<'a>(
         &'a mut self,
         dev: &'a mut RfLinkSession<'_>,
@@ -1272,6 +1307,9 @@ impl TxStream {
     /// Exactly `buf.len()` bytes are sent, so `len` must equal the number of
     /// bytes written into `buf` and must not exceed the buffer size. Returns
     /// `Error::Argument` otherwise and returns the buffer to the pool.
+    /// Plain SC16 requires complete four-byte samples; timestamped SC16 requires
+    /// complete FPGA messages with valid headers. Packet metadata requires one
+    /// complete packet with no trailing bytes beyond its declared payload.
     pub fn submit(&mut self, buf: Buffer, len: usize) -> Result<()> {
         self.core.submit(buf, len)
     }

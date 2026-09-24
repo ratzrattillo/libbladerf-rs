@@ -1,7 +1,10 @@
 # Async interface plan for libbladerf-rs
 
-Status: implemented on branch `async-interface` (Phases 0–4); seify backend (§4) pending.
-Target release: 0.5.0 (breaking).
+Status: historical design for the implemented 0.5 async interface. Seify now has
+independent sync and async BladeRF1 adapters. Current correctness, cancellation,
+endpoint ownership, and 0.6 migration contracts are in `AGENTS.md` and
+`MIGRATION.md`; they supersede the original lifecycle assumptions below.
+Original target release: 0.5.0 (breaking).
 
 This document is the working plan for adding an async interface to
 libbladerf-rs so that seify can offer a bladeRF1 backend in both its sync
@@ -12,7 +15,7 @@ Related repositories:
 | Repo | Path | Role |
 |------|------|------|
 | libbladerf-rs | `/home/jl/sdr/libbladerf-rs` | bladeRF1 driver on nusb (this repo) |
-| seify | `/home/jl/sdr/seify` | SDR HAL; `src/impls/bladerf1.rs` wraps this crate (sync only today) |
+| seify | `/home/jl/sdr/seify` | SDR HAL; `src/impls/bladerf1/` contains sync and async adapters |
 | FutureSDR | `/home/jl/sdr/FutureSDR` | consumes seify; `bladerf1 = ["seify/bladerf1"]` already wired |
 
 A BladeRF1 is connected to the development machine; every phase is verified

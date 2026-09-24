@@ -33,8 +33,8 @@ use restoration::{Restoration, RestorationLease};
 ///
 /// Wraps a `UsbTransport` and provides typed methods for all NIOS
 /// register access, including config GPIO, expansion GPIO, IQ/AGC
-/// corrections, FPGA version queries, and retune commands. Tracks
-/// the active stream count to guard USB alt setting transitions.
+/// corrections, FPGA version queries, and retune commands. Owns stream claims
+/// and temporary-register restoration obligations across interrupted calls.
 pub struct NiosCore {
     /// The underlying USB transport for device communication.
     transport: UsbTransport,
@@ -304,15 +304,14 @@ impl NiosCore {
     }
     /// Returns the current USB alternate setting.
     ///
-    /// Maps the raw integer to a `UsbAltSetting` variant; falls back
-    /// to `Null` with a warning log if the value is unrecognized.
+    /// Returns `None` while the setting has not been confirmed.
     pub fn get_alt_setting(&self) -> Option<UsbAltSetting> {
         self.transport.current_alt_setting()
     }
     /// Issues an LMS6002D retune command.
     ///
     /// Encodes and submits a retune packet with the given synthesizer
-    /// parameters. Returns the retune duration on success. Returns
+    /// parameters. Returns a measured result or queue acknowledgement. Returns
     /// `Error::TuningFailed` for immediate retune failures or
     /// `Error::RetuneQueueFull` for scheduled retune queue overflow.
     #[allow(clippy::too_many_arguments)]
