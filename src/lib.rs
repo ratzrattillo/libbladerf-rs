@@ -78,10 +78,13 @@ pub mod bladerf2;
 pub mod channel;
 pub mod error;
 pub mod flash;
+#[cfg(feature = "bladerf1")]
 pub(crate) mod maybe_future;
+#[cfg(feature = "bladerf1")]
 pub(crate) mod nios_client;
 pub mod protocol;
 pub mod range;
+#[cfg(feature = "bladerf1")]
 pub(crate) mod usb;
 /// Semantic version triple reported by firmware and FPGA.
 pub mod version;
@@ -91,9 +94,11 @@ pub use nusb;
 pub use nusb::MaybeFuture;
 pub use nusb::transfer::Buffer;
 pub use version::SemanticVersion;
+#[cfg(feature = "bladerf1")]
 pub(crate) const fn khz(value: u32) -> u32 {
     value * 1_000
 }
+#[cfg(feature = "bladerf1")]
 pub(crate) const fn mhz(value: u32) -> u32 {
     value * 1_000_000
 }

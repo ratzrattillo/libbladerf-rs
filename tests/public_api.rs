@@ -15,32 +15,40 @@ use libbladerf_rs::{Buffer, Channel, Error, ErrorKind, MaybeFuture, Result};
 use std::future::IntoFuture;
 use std::time::Duration;
 
+#[cfg(not(target_arch = "wasm32"))]
 fn assert_send<T: Send>(_: &T) {}
 
 fn maybe_future<T>(_: &impl MaybeFuture<Output = T>) {}
 
 #[allow(dead_code)]
-async fn open_paths() -> Result<()> {
-    let by_first: BladeRf1 = BladeRf1::from_first().await?;
-    let by_serial: BladeRf1 = BladeRf1::from_serial("serial").await?;
-    let by_device =
-        BladeRf1::from_device(nusb::list_devices().await?.next().unwrap().open().await?);
+async fn open_paths(device: nusb::Device) -> Result<()> {
+    #[cfg(not(target_os = "android"))]
+    {
+        let by_first: BladeRf1 = BladeRf1::from_first().await?;
+        let by_serial: BladeRf1 = BladeRf1::from_serial("serial").await?;
+        by_first.close().await?;
+        by_serial.close().await?;
+    }
+    let by_device = BladeRf1::from_device(device);
     maybe_future(&by_device);
+    let by_device: BladeRf1 = by_device.await?;
     #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
     {
         let by_bus: BladeRf1 = BladeRf1::from_bus_addr("1", 2).await?;
         by_bus.close().await?;
     }
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    {
-        let fd: std::os::fd::OwnedFd = unsafe { std::os::fd::FromRawFd::from_raw_fd(3) };
-        let by_fd: BladeRf1 = BladeRf1::from_fd(fd).await?;
-        by_fd.close().await?;
-    }
-    let _serial: String = by_first.serial().await?;
-    let _speed: nusb::Speed = by_first.speed();
-    by_serial.close().await?;
-    by_first.close().await
+    let _serial: String = by_device.serial().await?;
+    let _speed: nusb::Speed = by_device.speed();
+    by_device.close().await
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+#[allow(dead_code)]
+async fn open_fd(fd: std::os::fd::OwnedFd) -> Result<()> {
+    let open = BladeRf1::from_fd(fd);
+    maybe_future(&open);
+    assert_send(&open);
+    open.await?.close().await
 }
 
 #[allow(dead_code)]
@@ -101,24 +109,25 @@ async fn streams(rf: &mut RfLinkSession<'_>) -> Result<()> {
 fn dual_mode(dev: &mut BladeRf1, rx: &mut RxStream) {
     let session = dev.rf_link_session();
     maybe_future(&session);
+    let fut = session.into_future();
+    #[cfg(not(target_arch = "wasm32"))]
+    assert_send(&fut);
+    drop(fut);
+    let read = rx.read(None);
+    maybe_future(&read);
+    #[cfg(not(target_arch = "wasm32"))]
+    assert_send(&read);
+    drop(read);
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let fut = session.into_future();
-        assert_send(&fut);
-        drop(fut);
         let _: Result<RxStream> = RxStream::builder(&mut dev.rf_link_session().wait().unwrap())
             .build()
             .wait();
-        let read = rx.read(None);
-        maybe_future(&read);
-        assert_send(&read.into_future());
+    }
+    #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
+    {
         let open = BladeRf1::from_first();
         assert_send(&open.into_future());
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
-        let _ = rx;
-        let _ = session;
     }
 }
 

@@ -11,7 +11,7 @@ use nusb::MaybeFuture;
 use nusb::Speed;
 
 /// Size of a single flash page in bytes.
-pub const BLADERF_FLASH_PAGE_SIZE: usize = 256;
+pub use crate::flash::BLADERF_FLASH_PAGE_SIZE;
 /// Size of a flash erase block in bytes (64 KB).
 pub const BLADERF_FLASH_ERASE_BLOCK_SIZE: usize = 64 * 1_024;
 /// Flash address of the firmware region.

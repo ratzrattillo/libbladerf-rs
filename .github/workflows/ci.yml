@@ -29,8 +29,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rustfmt
       - run: cargo fmt --all --check
+
+  feature-contract:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        features: [smol, tokio, "bladerf1,smol", "bladerf1,tokio", "xb100,smol", "xb200,smol", "xb300,smol", "bladerf1,smol,tokio"]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --no-default-features --features '${{ matrix.features }}' --lib
 
   clippy:
     runs-on: ubuntu-latest
@@ -88,6 +101,7 @@ jobs:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --target wasm32-unknown-unknown --features bladerf1 --lib
+      - run: cargo check --target wasm32-unknown-unknown --no-default-features --features bladerf1,xb200 --test public_api
 
   build-examples:
     runs-on: ubuntu-latest
@@ -112,6 +126,7 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu gcc-mingw-w64-x86-64
       - run: cargo build --target aarch64-unknown-linux-gnu --features bladerf1 --lib
       - run: cargo build --target aarch64-linux-android --features bladerf1 --lib
+      - run: cargo check --target aarch64-linux-android --features bladerf1 --test public_api
       - run: cargo build --target x86_64-pc-windows-gnu --features bladerf1 --lib
 
   conventional-commits:

@@ -33,6 +33,9 @@ export RUST_BACKTRACE=full
 ###########################################################
 cargo build --features bladerf1
 cargo build --no-default-features --features bladerf1,tokio
+for features in smol tokio bladerf1,smol bladerf1,tokio xb100,smol xb200,smol xb300,smol bladerf1,smol,tokio; do
+  cargo check --no-default-features --features "$features" --lib
+done
 
 ###########################################################
 # TEST (ci.yml: test-linux / test-macos / test-windows)
@@ -66,7 +69,7 @@ cargo +nightly clippy --no-default-features --features bladerf1,xb100,xb200,xb30
 ###########################################################
 # FMT (ci.yml: fmt)
 ###########################################################
-cargo fmt --all --check
+cargo +nightly fmt --all --check
 
 ###########################################################
 # WASM (ci.yml: wasm)
@@ -74,6 +77,7 @@ cargo fmt --all --check
 # WebUSB (needs --cfg=web_sys_unstable_apis, supplied by .cargo/config.toml)
 rustup target add wasm32-unknown-unknown
 cargo check --target wasm32-unknown-unknown --features bladerf1 --lib
+cargo check --target wasm32-unknown-unknown --no-default-features --features bladerf1,xb200 --test public_api
 
 ###########################################################
 # CROSS-COMPILE (ci.yml: cross)
@@ -82,6 +86,7 @@ cargo check --target wasm32-unknown-unknown --features bladerf1 --lib
 rustup target add aarch64-unknown-linux-gnu aarch64-linux-android x86_64-pc-windows-gnu
 cargo build --target aarch64-unknown-linux-gnu --features bladerf1 --lib
 cargo build --target aarch64-linux-android --features bladerf1 --lib
+cargo check --target aarch64-linux-android --features bladerf1 --test public_api
 cargo build --target x86_64-pc-windows-gnu --features bladerf1 --lib
 
 ###########################################################

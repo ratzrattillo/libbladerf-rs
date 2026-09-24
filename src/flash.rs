@@ -8,17 +8,22 @@
 use crate::error::{Error, Result};
 
 /// Minimum firmware image size for BladeRF flash.
+#[cfg(feature = "bladerf1")]
 pub use crate::bladerf1::board::firmware::BLADERF_FLASH_MIN_FW_SIZE;
 /// FPGA bitstream size constants and validation for BladeRF flash.
+#[cfg(feature = "bladerf1")]
 pub use crate::bladerf1::board::fpga::{
     BLADERF_FLASH_FPGA_SIZE_40KLE, BLADERF_FLASH_FPGA_SIZE_115KLE, is_valid_fpga_size,
 };
 /// SPI flash address and size constants.
+#[cfg(feature = "bladerf1")]
 pub use crate::bladerf1::hardware::spi_flash::{
     BLADERF_FLASH_ADDR_CAL, BLADERF_FLASH_ADDR_FIRMWARE, BLADERF_FLASH_ADDR_FPGA,
     BLADERF_FLASH_BYTE_LEN_CAL, BLADERF_FLASH_BYTE_LEN_FIRMWARE, BLADERF_FLASH_ERASE_BLOCK_SIZE,
-    BLADERF_FLASH_PAGE_SIZE,
 };
+
+/// Size of a flash page in bytes.
+pub const BLADERF_FLASH_PAGE_SIZE: usize = 256;
 
 /// FPGA size variants stored in calibration flash.
 /// KLE40/KLE115 are bladeRF1, A4/A5/A9 are bladeRF2.
