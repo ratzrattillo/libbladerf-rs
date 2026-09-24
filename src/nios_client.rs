@@ -350,6 +350,7 @@ impl NiosCore {
         })
     }
     /// Writes a value to the ADF4351 synthesizer (XB-200 expansion board).
+    #[cfg(feature = "xb200")]
     pub fn nios_xb200_synth_write(&mut self, value: u32) -> impl MaybeFuture<Output = Result<()>> {
         self.nios_write::<u8, u32>(NiosPkt8x32Target::Adf4_351, 0, value)
     }
