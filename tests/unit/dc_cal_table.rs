@@ -4,7 +4,12 @@ use libbladerf_rs::bladerf1::hardware::lms6002d::dc_calibration::DcCals;
 
 fn test_table() -> DcCalTable {
     DcCalTable::new(
-        DcCals::new(20, 10, 15, 25, 30, 5, 12, 18, 8, 22),
+        DcCals {
+            lpf_tuning: Some(20.try_into().unwrap()),
+            tx_lpf_i: Some(10.try_into().unwrap()),
+            rxvga2b_q: Some(22.try_into().unwrap()),
+            ..DcCals::default()
+        },
         vec![
             DcCalEntry::new(100_000_000, DcPair::new(100, 200)).with_agc(
                 DcPair::new(1000, 2000),
@@ -31,9 +36,9 @@ fn roundtrip() {
     let table = test_table();
     let json = serde_json::to_string(&table).unwrap();
     let parsed: DcCalTable = serde_json::from_str(&json).unwrap();
-    assert_eq!(parsed.reg_vals().lpf_tuning(), 20);
-    assert_eq!(parsed.reg_vals().tx_lpf_i(), 10);
-    assert_eq!(parsed.reg_vals().rxvga2b_q(), 22);
+    assert_eq!(parsed.reg_vals().lpf_tuning.unwrap().get(), 20);
+    assert_eq!(parsed.reg_vals().tx_lpf_i.unwrap().get(), 10);
+    assert_eq!(parsed.reg_vals().rxvga2b_q.unwrap().get(), 22);
     assert_eq!(parsed.entries().len(), 3);
     for (orig, got) in table.entries().iter().zip(parsed.entries().iter()) {
         assert_eq!(orig, got);
@@ -99,8 +104,7 @@ fn lookup_above_range() {
 
 #[test]
 fn empty_table() {
-    let table =
-        DcCalTable::new(DcCals::new(-1, -1, -1, -1, -1, -1, -1, -1, -1, -1), vec![]).unwrap();
+    let table = DcCalTable::new(DcCals::default(), vec![]).unwrap();
     let entry = table.lookup(100_000_000).unwrap();
     assert_eq!(entry.freq, 100_000_000);
     assert_eq!(entry.dc.i, 0);
@@ -110,7 +114,7 @@ fn empty_table() {
 #[test]
 fn single_entry() {
     let table = DcCalTable::new(
-        DcCals::new(-1, -1, -1, -1, -1, -1, -1, -1, -1, -1),
+        DcCals::default(),
         vec![DcCalEntry::new(200_000_000, DcPair::new(42, 84))],
     )
     .unwrap();

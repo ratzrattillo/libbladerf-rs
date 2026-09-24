@@ -62,101 +62,124 @@ fn interp(x0: u32, y0: i16, x1: u32, y1: i16, x: u32) -> i16 {
     let den = x1 as i64 - x0 as i64;
     (y0 as i64 + num / den) as i16
 }
-/// All DC calibration register values with accessor methods.
-#[derive(Debug, PartialEq, Clone, Copy, serde::Serialize, serde::Deserialize)]
-pub struct DcCals {
-    pub(crate) lpf_tuning: i16,
-    pub(crate) tx_lpf_i: i16,
-    pub(crate) tx_lpf_q: i16,
-    pub(crate) rx_lpf_i: i16,
-    pub(crate) rx_lpf_q: i16,
-    pub(crate) dc_ref: i16,
-    pub(crate) rxvga2a_i: i16,
-    pub(crate) rxvga2a_q: i16,
-    pub(crate) rxvga2b_i: i16,
-    pub(crate) rxvga2b_q: i16,
-}
-impl DcCals {
-    #[allow(clippy::too_many_arguments)]
-    /// Creates a new `DcCals` from individual register values.
-    pub fn new(
-        lpf_tuning: i16,
-        tx_lpf_i: i16,
-        tx_lpf_q: i16,
-        rx_lpf_i: i16,
-        rx_lpf_q: i16,
-        dc_ref: i16,
-        rxvga2a_i: i16,
-        rxvga2a_q: i16,
-        rxvga2b_i: i16,
-        rxvga2b_q: i16,
-    ) -> Self {
-        Self {
-            lpf_tuning,
-            tx_lpf_i,
-            tx_lpf_q,
-            rx_lpf_i,
-            rx_lpf_q,
-            dc_ref,
-            rxvga2a_i,
-            rxvga2a_q,
-            rxvga2b_i,
-            rxvga2b_q,
+/// A validated six-bit LMS6002D DC calibration register value.
+#[derive(
+    Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, serde::Serialize, serde::Deserialize,
+)]
+#[serde(try_from = "u8", into = "u8")]
+pub struct DcCalValue(u8);
+
+impl DcCalValue {
+    /// Validates a register value in the inclusive range `0..=63`.
+    ///
+    /// # Errors
+    /// Returns an argument error for values above 63.
+    pub fn new(value: u8) -> Result<Self> {
+        if value > 63 {
+            return Err(Error::Argument(
+                "DC calibration value exceeds six bits".into(),
+            ));
         }
+        Ok(Self(value))
     }
-    /// Returns the LPF tuning module DC calibration value.
-    pub fn lpf_tuning(&self) -> i16 {
-        self.lpf_tuning
+
+    /// Returns the six-bit register value.
+    pub fn get(self) -> u8 {
+        self.0
     }
-    /// Returns the TX LPF I channel DC calibration value.
-    pub fn tx_lpf_i(&self) -> i16 {
-        self.tx_lpf_i
+}
+
+impl TryFrom<u8> for DcCalValue {
+    type Error = Error;
+    fn try_from(value: u8) -> Result<Self> {
+        Self::new(value)
     }
-    /// Returns the TX LPF Q channel DC calibration value.
-    pub fn tx_lpf_q(&self) -> i16 {
-        self.tx_lpf_q
+}
+
+impl From<DcCalValue> for u8 {
+    fn from(value: DcCalValue) -> Self {
+        value.0
     }
-    /// Returns the RX LPF I channel DC calibration value.
-    pub fn rx_lpf_i(&self) -> i16 {
-        self.rx_lpf_i
+}
+
+impl Display for DcCalValue {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
     }
-    /// Returns the RX LPF Q channel DC calibration value.
-    pub fn rx_lpf_q(&self) -> i16 {
-        self.rx_lpf_q
-    }
-    /// Returns the RX VGA2 DC reference value.
-    pub fn dc_ref(&self) -> i16 {
-        self.dc_ref
-    }
-    /// Returns the RX VGA2 stage 1 I channel DC calibration value.
-    pub fn rxvga2a_i(&self) -> i16 {
-        self.rxvga2a_i
-    }
-    /// Returns the RX VGA2 stage 1 Q channel DC calibration value.
-    pub fn rxvga2a_q(&self) -> i16 {
-        self.rxvga2a_q
-    }
-    /// Returns the RX VGA2 stage 2 I channel DC calibration value.
-    pub fn rxvga2b_i(&self) -> i16 {
-        self.rxvga2b_i
-    }
-    /// Returns the RX VGA2 stage 2 Q channel DC calibration value.
-    pub fn rxvga2b_q(&self) -> i16 {
-        self.rxvga2b_q
+}
+
+/// Named DC calibration updates; absent fields leave their registers unchanged.
+///
+/// `Default` changes nothing. Readback fills every field. JSON accepts null or
+/// omitted fields for unchanged registers and integers in `0..=63` for updates.
+#[derive(Debug, Default, PartialEq, Eq, Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct DcCals {
+    /// LPF tuning module.
+    pub lpf_tuning: Option<DcCalValue>,
+    /// TX LPF I filter.
+    pub tx_lpf_i: Option<DcCalValue>,
+    /// TX LPF Q filter.
+    pub tx_lpf_q: Option<DcCalValue>,
+    /// RX LPF I filter.
+    pub rx_lpf_i: Option<DcCalValue>,
+    /// RX LPF Q filter.
+    pub rx_lpf_q: Option<DcCalValue>,
+    /// RX VGA2 DC reference.
+    pub dc_ref: Option<DcCalValue>,
+    /// RX VGA2 stage A, I channel.
+    pub rxvga2a_i: Option<DcCalValue>,
+    /// RX VGA2 stage A, Q channel.
+    pub rxvga2a_q: Option<DcCalValue>,
+    /// RX VGA2 stage B, I channel.
+    pub rxvga2b_i: Option<DcCalValue>,
+    /// RX VGA2 stage B, Q channel.
+    pub rxvga2b_q: Option<DcCalValue>,
+}
+
+impl DcCals {
+    fn modules(self) -> [(DcCalModule, [Option<DcCalValue>; 5]); 4] {
+        [
+            (
+                DcCalModule::LpfTuning,
+                [self.lpf_tuning, None, None, None, None],
+            ),
+            (
+                DcCalModule::TxLpf,
+                [self.tx_lpf_i, self.tx_lpf_q, None, None, None],
+            ),
+            (
+                DcCalModule::RxLpf,
+                [self.rx_lpf_i, self.rx_lpf_q, None, None, None],
+            ),
+            (
+                DcCalModule::RxVga2,
+                [
+                    self.dc_ref,
+                    self.rxvga2a_i,
+                    self.rxvga2a_q,
+                    self.rxvga2b_i,
+                    self.rxvga2b_q,
+                ],
+            ),
+        ]
     }
 }
 impl Display for DcCals {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "LPF tuning module: {}", self.lpf_tuning)?;
-        writeln!(f, "TX LPF I filter: {}", self.tx_lpf_i)?;
-        writeln!(f, "TX LPF Q filter: {}", self.tx_lpf_q)?;
-        writeln!(f, "RX LPF I filter: {}", self.rx_lpf_i)?;
-        writeln!(f, "RX LPF Q filter: {}", self.rx_lpf_q)?;
-        writeln!(f, "RX VGA2 DC reference module: {}", self.dc_ref)?;
-        writeln!(f, "RX VGA2 stage 1, I channel: {}", self.rxvga2a_i)?;
-        writeln!(f, "RX VGA2 stage 1, Q channel: {}", self.rxvga2a_q)?;
-        writeln!(f, "RX VGA2 stage 2, I channel: {}", self.rxvga2b_i)?;
-        writeln!(f, "RX VGA2 stage 2, Q channel: {}", self.rxvga2b_q)
+        for (module, values) in self.modules() {
+            for (index, value) in values
+                .into_iter()
+                .take(module.num_submodules().into())
+                .enumerate()
+            {
+                match value {
+                    Some(value) => writeln!(f, "{module:?}[{index}]: {value}")?,
+                    None => writeln!(f, "{module:?}[{index}]: unchanged")?,
+                }
+            }
+        }
+        Ok(())
     }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -417,6 +440,9 @@ impl<'a> Lms6002d<'a> {
 
     pub(crate) fn set_dc_cals(&mut self, dc_cals: DcCals) -> impl MaybeFuture<Output = Result<()>> {
         Op::new(async move {
+            if dc_cals == DcCals::default() {
+                return Ok(());
+            }
             let restoration = self
                 .nios
                 .save_lms_registers(&[0x02, 0x03, 0x32, 0x33, 0x52, 0x53, 0x62, 0x63, 0x09])
@@ -428,65 +454,18 @@ impl<'a> Lms6002d<'a> {
 
     fn write_dc_cals(&mut self, dc_cals: DcCals) -> impl MaybeFuture<Output = Result<()>> {
         Op::new(async move {
-            let cal_tx_lpf: bool = (dc_cals.tx_lpf_i >= 0) || (dc_cals.tx_lpf_q >= 0);
-            let cal_rx_lpf: bool = (dc_cals.rx_lpf_i >= 0) || (dc_cals.rx_lpf_q >= 0);
-            let cal_rxvga2: bool = (dc_cals.dc_ref >= 0)
-                || (dc_cals.rxvga2a_i >= 0)
-                || (dc_cals.rxvga2a_q >= 0)
-                || (dc_cals.rxvga2b_i >= 0)
-                || (dc_cals.rxvga2b_q >= 0);
-            if dc_cals.lpf_tuning >= 0 {
-                self.enable_lpf_cal_clock(true).await?;
-                self.set_dc_cal_value(0x00, 0, dc_cals.lpf_tuning as u8)
-                    .await?;
-                self.enable_lpf_cal_clock(false).await?;
-            }
-            if cal_tx_lpf {
-                self.enable_txlpf_dccal_clock(true).await?;
-                if dc_cals.tx_lpf_i >= 0 {
-                    self.set_dc_cal_value(0x30, 0, dc_cals.tx_lpf_i as u8)
-                        .await?;
+            for (module, values) in dc_cals.modules() {
+                if values.iter().all(Option::is_none) {
+                    continue;
                 }
-                if dc_cals.tx_lpf_q >= 0 {
-                    self.set_dc_cal_value(0x30, 1, dc_cals.tx_lpf_q as u8)
-                        .await?;
+                self.set(0x09, module.cal_clock_mask()).await?;
+                for (index, value) in values.into_iter().enumerate() {
+                    if let Some(value) = value {
+                        self.set_dc_cal_value(module.base_addr(), index as u8, value.get())
+                            .await?;
+                    }
                 }
-                self.enable_txlpf_dccal_clock(false).await?;
-            }
-            if cal_rx_lpf {
-                self.enable_rxlpf_dccal_clock(true).await?;
-                if dc_cals.rx_lpf_i >= 0 {
-                    self.set_dc_cal_value(0x50, 0, dc_cals.rx_lpf_i as u8)
-                        .await?;
-                }
-                if dc_cals.rx_lpf_q >= 0 {
-                    self.set_dc_cal_value(0x50, 1, dc_cals.rx_lpf_q as u8)
-                        .await?;
-                }
-                self.enable_rxlpf_dccal_clock(false).await?;
-            }
-            if cal_rxvga2 {
-                self.enable_rxvga2_dccal_clock(true).await?;
-                if dc_cals.dc_ref >= 0 {
-                    self.set_dc_cal_value(0x60, 0, dc_cals.dc_ref as u8).await?;
-                }
-                if dc_cals.rxvga2a_i >= 0 {
-                    self.set_dc_cal_value(0x60, 1, dc_cals.rxvga2a_i as u8)
-                        .await?;
-                }
-                if dc_cals.rxvga2a_q >= 0 {
-                    self.set_dc_cal_value(0x60, 2, dc_cals.rxvga2a_q as u8)
-                        .await?;
-                }
-                if dc_cals.rxvga2b_i >= 0 {
-                    self.set_dc_cal_value(0x60, 3, dc_cals.rxvga2b_i as u8)
-                        .await?;
-                }
-                if dc_cals.rxvga2b_q >= 0 {
-                    self.set_dc_cal_value(0x60, 4, dc_cals.rxvga2b_q as u8)
-                        .await?;
-                }
-                self.enable_rxvga2_dccal_clock(false).await?;
+                self.clear(0x09, module.cal_clock_mask()).await?;
             }
             Ok(())
         })
@@ -506,16 +485,16 @@ impl<'a> Lms6002d<'a> {
     fn read_dc_cals(&mut self) -> impl MaybeFuture<Output = Result<DcCals>> {
         Op::new(async move {
             Ok(DcCals {
-                lpf_tuning: self.get_dc_cal_value(0x00, 0).await? as i16,
-                tx_lpf_i: self.get_dc_cal_value(0x30, 0).await? as i16,
-                tx_lpf_q: self.get_dc_cal_value(0x30, 1).await? as i16,
-                rx_lpf_i: self.get_dc_cal_value(0x50, 0).await? as i16,
-                rx_lpf_q: self.get_dc_cal_value(0x50, 1).await? as i16,
-                dc_ref: self.get_dc_cal_value(0x60, 0).await? as i16,
-                rxvga2a_i: self.get_dc_cal_value(0x60, 1).await? as i16,
-                rxvga2a_q: self.get_dc_cal_value(0x60, 2).await? as i16,
-                rxvga2b_i: self.get_dc_cal_value(0x60, 3).await? as i16,
-                rxvga2b_q: self.get_dc_cal_value(0x60, 4).await? as i16,
+                lpf_tuning: Some(self.get_dc_cal_value(0x00, 0).await?),
+                tx_lpf_i: Some(self.get_dc_cal_value(0x30, 0).await?),
+                tx_lpf_q: Some(self.get_dc_cal_value(0x30, 1).await?),
+                rx_lpf_i: Some(self.get_dc_cal_value(0x50, 0).await?),
+                rx_lpf_q: Some(self.get_dc_cal_value(0x50, 1).await?),
+                dc_ref: Some(self.get_dc_cal_value(0x60, 0).await?),
+                rxvga2a_i: Some(self.get_dc_cal_value(0x60, 1).await?),
+                rxvga2a_q: Some(self.get_dc_cal_value(0x60, 2).await?),
+                rxvga2b_i: Some(self.get_dc_cal_value(0x60, 3).await?),
+                rxvga2b_q: Some(self.get_dc_cal_value(0x60, 4).await?),
             })
         })
     }
@@ -766,32 +745,6 @@ impl<'a> Lms6002d<'a> {
         })
     }
 
-    fn set_cal_clock(&mut self, enable: bool, mask: u8) -> impl MaybeFuture<Output = Result<()>> {
-        Op::new(async move {
-            if enable {
-                self.set(0x09, mask).await
-            } else {
-                self.clear(0x09, mask).await
-            }
-        })
-    }
-
-    fn enable_lpf_cal_clock(&mut self, enable: bool) -> impl MaybeFuture<Output = Result<()>> {
-        Op::new(async move { self.set_cal_clock(enable, 1 << 5).await })
-    }
-
-    fn enable_rxvga2_dccal_clock(&mut self, enable: bool) -> impl MaybeFuture<Output = Result<()>> {
-        Op::new(async move { self.set_cal_clock(enable, 1 << 4).await })
-    }
-
-    fn enable_rxlpf_dccal_clock(&mut self, enable: bool) -> impl MaybeFuture<Output = Result<()>> {
-        Op::new(async move { self.set_cal_clock(enable, 1 << 3).await })
-    }
-
-    fn enable_txlpf_dccal_clock(&mut self, enable: bool) -> impl MaybeFuture<Output = Result<()>> {
-        Op::new(async move { self.set_cal_clock(enable, 1 << 1).await })
-    }
-
     fn set_dc_cal_value(
         &mut self,
         base: u8,
@@ -810,10 +763,14 @@ impl<'a> Lms6002d<'a> {
         })
     }
 
-    fn get_dc_cal_value(&mut self, base: u8, dc_addr: u8) -> impl MaybeFuture<Output = Result<u8>> {
+    fn get_dc_cal_value(
+        &mut self,
+        base: u8,
+        dc_addr: u8,
+    ) -> impl MaybeFuture<Output = Result<DcCalValue>> {
         Op::new(async move {
             self.write(base + 3, 0x08 | dc_addr).await?;
-            self.read(base).await
+            Ok(DcCalValue(self.read(base).await? & 0x3f))
         })
     }
 
@@ -850,6 +807,33 @@ impl<'a> Lms6002d<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn named_updates_distinguish_zero_from_absent_and_reject_invalid_values() {
+        let update: DcCals = serde_json::from_str(r#"{"tx_lpf_i":0,"rx_lpf_i":63}"#).unwrap();
+        assert_eq!(update.tx_lpf_i.unwrap().get(), 0);
+        assert_eq!(update.rx_lpf_i.unwrap().get(), 63);
+        assert_eq!(update.tx_lpf_q, None);
+        assert_eq!(
+            serde_json::from_str::<DcCals>("{}").unwrap(),
+            DcCals::default()
+        );
+        assert_eq!(
+            serde_json::from_str::<DcCals>(&serde_json::to_string(&update).unwrap()).unwrap(),
+            update
+        );
+        for value in 64..=255 {
+            assert!(DcCalValue::new(value).is_err());
+        }
+        for json in [
+            r#"{"tx_lpf_i":-1}"#,
+            r#"{"dc_ref":64}"#,
+            r#"{"dc_ref":256}"#,
+            r#"{"typo":0}"#,
+        ] {
+            assert!(serde_json::from_str::<DcCals>(json).is_err());
+        }
+    }
 
     #[test]
     fn faq_4_7_retries_code_31_from_zero_and_accepts_changed_codes() {

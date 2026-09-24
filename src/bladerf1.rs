@@ -20,7 +20,9 @@ pub use board::{
     SampleFormat, TuningMode, TxStreamBuilder,
 };
 pub use calibration::{DcCalEntry, DcCalTable};
-pub use hardware::lms6002d::dc_calibration::{AgcDcCorrection, DcPair};
+pub use hardware::lms6002d::dc_calibration::{
+    AgcDcCorrection, DcCalModule, DcCalValue, DcCals, DcPair,
+};
 pub use hardware::lms6002d::gain::GainDb;
 pub use hardware::lms6002d::{Band, LpfMode, Tune};
 pub use hardware::si5338::{RationalRate, SmbMode};

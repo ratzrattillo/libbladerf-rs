@@ -11,7 +11,7 @@ fn load_and_lookup() -> libbladerf_rs::Result<()> {
     logging_init("bladerf1_dc_cal_table");
 
     let table = DcCalTable::new(
-        DcCals::new(-1, -1, -1, -1, -1, -1, -1, -1, -1, -1),
+        DcCals::default(),
         vec![
             DcCalEntry::new(1_000_000_000, DcPair::new(100, 200)),
             DcCalEntry::new(2_000_000_000, DcPair::new(200, 400)),

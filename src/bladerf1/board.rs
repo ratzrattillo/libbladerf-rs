@@ -743,7 +743,7 @@ impl RfLinkSession<'_> {
             let rx = self.dc_rx_table.map(|t| t.reg_vals());
             let tx = self.dc_tx_table.map(|t| t.reg_vals());
 
-            let mut cals = DcCals::new(-1, -1, -1, -1, -1, -1, -1, -1, -1, -1);
+            let mut cals = DcCals::default();
 
             if let Some(rx) = rx {
                 cals.lpf_tuning = rx.lpf_tuning;

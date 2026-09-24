@@ -22,16 +22,27 @@ fn dc_cals_roundtrip() -> libbladerf_rs::Result<()> {
     let mut rf = sdr.rf_link_session().wait()?;
     let backup = rf.get_dc_cals().wait()?;
 
-    let test_cals = DcCals::new(20, 10, 15, 25, 30, 5, 12, 18, 8, 22);
+    let test_cals = DcCals {
+        lpf_tuning: Some(20.try_into()?),
+        tx_lpf_i: Some(10.try_into()?),
+        tx_lpf_q: Some(15.try_into()?),
+        rx_lpf_i: Some(25.try_into()?),
+        rx_lpf_q: Some(30.try_into()?),
+        dc_ref: Some(5.try_into()?),
+        rxvga2a_i: Some(12.try_into()?),
+        rxvga2a_q: Some(18.try_into()?),
+        rxvga2b_i: Some(8.try_into()?),
+        rxvga2b_q: Some(22.try_into()?),
+    };
 
     rf.set_dc_cals(test_cals).wait()?;
-    let readback = rf.get_dc_cals().wait()?;
+    let readback = rf.get_dc_cals().wait();
+    rf.set_dc_cals(backup).wait()?;
+    let readback = readback?;
 
     log::trace!("DC cals (SET):\t\t{test_cals:?}");
     log::trace!("DC cals (READBACK):\t{readback:?}");
     assert_eq!(readback, test_cals, "DC cals roundtrip mismatch");
-
-    rf.set_dc_cals(backup).wait()?;
 
     Ok(())
 }

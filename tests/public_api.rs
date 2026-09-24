@@ -55,6 +55,15 @@ async fn open_fd(fd: std::os::fd::OwnedFd) -> Result<()> {
 async fn sessions(dev: &mut BladeRf1) -> Result<()> {
     {
         let mut rf: RfLinkSession<'_> = dev.rf_link_session().await?;
+        let cals = libbladerf_rs::bladerf1::DcCals {
+            tx_lpf_i: Some(libbladerf_rs::bladerf1::DcCalValue::new(0)?),
+            ..Default::default()
+        };
+        rf.set_dc_cals(cals).await?;
+        let _cals: libbladerf_rs::bladerf1::DcCals = rf.get_dc_cals().await?;
+        let _supported: bool = rf
+            .supports_format(SampleFormat::Sc16Q11Meta, Channel::Rx)
+            .await?;
         rf.initialize(false).await?;
         rf.set_frequency(Channel::Rx, 915_000_000, TuningMode::Fpga)
             .await?;
