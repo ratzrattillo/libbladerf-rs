@@ -8,23 +8,61 @@
 mod packet_retune;
 use crate::bladerf1::hardware::lms6002d::{Band, Tune};
 use crate::channel::Channel;
-use crate::error::Result;
+use crate::error::{Error, Result};
+use crate::protocol::nios::NiosPacketError;
 pub use packet_retune::{NiosPktRetuneRequest, NiosPktRetuneResponse};
 
-/// Result of a retune operation.
+/// Duration measured in FPGA timestamp ticks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct TimestampTicks(pub u64);
+
+/// Confirmed outcome of an immediate, scheduled, or queue-clear retune request.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RetuneResult {
-    duration: u64,
+pub enum RetuneResult {
+    /// An immediate tune completed with valid measurement fields.
+    Immediate {
+        /// Measured duration in timestamp ticks, possibly zero if timestamps are stopped.
+        duration: TimestampTicks,
+        /// VCO capacitor code selected by the FPGA.
+        vcocap: u8,
+    },
+    /// A future retune was accepted into the queue.
+    Scheduled,
+    /// Pending retunes were cleared.
+    QueueCleared,
 }
 impl RetuneResult {
-    /// Wraps the duration reported by the FPGA.
-    pub fn new(duration: u64) -> Self {
-        Self { duration }
+    /// Validates a response against the kind of retune requested.
+    ///
+    /// # Errors
+    /// Returns a protocol error for malformed responses, `TuningFailed` for immediate
+    /// tune failures, or `RetuneQueueFull` when a scheduled request fails.
+    pub fn decode(request: RetuneTimestamp, bytes: &[u8]) -> Result<Self> {
+        let response = nios_decode_retune(bytes)?;
+        if !response.is_success() {
+            return Err(match request {
+                RetuneTimestamp::Scheduled(_) => Error::RetuneQueueFull,
+                RetuneTimestamp::Now | RetuneTimestamp::ClearQueue => Error::TuningFailed,
+            });
+        }
+        match request {
+            RetuneTimestamp::Now if response.vcocap_valid() => Ok(Self::Immediate {
+                duration: TimestampTicks(response.duration()),
+                vcocap: response.vcocap(),
+            }),
+            RetuneTimestamp::Now => Err(NiosPacketError::ResponseMismatch.into()),
+            RetuneTimestamp::Scheduled(_) => Ok(Self::Scheduled),
+            RetuneTimestamp::ClearQueue => Ok(Self::QueueCleared),
+        }
     }
 
-    /// Time the retune took, in FPGA timestamp ticks.
-    pub fn duration(&self) -> u64 {
-        self.duration
+    /// Returns the duration only for a measured immediate retune.
+    pub fn duration(self) -> Option<TimestampTicks> {
+        match self {
+            Self::Immediate { duration, .. } => Some(duration),
+            Self::Scheduled | Self::QueueCleared => None,
+        }
     }
 }
 
@@ -33,7 +71,7 @@ impl RetuneResult {
 pub enum RetuneTimestamp {
     /// Execute the retune immediately.
     Now,
-    /// Clear any pending retune queue entries before executing.
+    /// Clear pending retunes without applying another frequency change.
     ClearQueue,
     /// Schedule the retune to execute at the given hardware timestamp.
     Scheduled(u64),
@@ -75,6 +113,11 @@ pub fn nios_encode_retune(
     tune: Tune,
     xb_gpio: u8,
 ) -> Result<()> {
+    if matches!(timestamp, RetuneTimestamp::Scheduled(0 | u64::MAX)) {
+        return Err(Error::Argument(
+            "reserved scheduled-retune timestamp".into(),
+        ));
+    }
     NiosPktRetuneRequest::new(buf)?.prepare(
         channel,
         timestamp.into(),

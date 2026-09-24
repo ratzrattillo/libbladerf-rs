@@ -77,6 +77,9 @@ impl<'a> NiosPktRetuneRequest<'a> {
         tune: Tune,
         xb_gpio: u8,
     ) -> Result<()> {
+        if nint > 0x1ff {
+            return Err(NiosPacketError::NintOverflow(nint).into());
+        }
         self.set_magic();
         self.set_timestamp(timestamp);
         self.set_nint(nint);
@@ -208,10 +211,17 @@ impl<'a> NiosPktRetuneResponse<'a> {
     const FLAG_SUCCESS: u8 = 0x2;
     /// Creates a new retune response decoder from a buffer.
     ///
-    /// Requires `buf` to be at least 16 bytes.
+    /// Requires exactly 16 bytes and the retune packet magic.
     pub fn new(buf: &'a [u8]) -> Result<Self> {
-        if buf.len() < Self::NIOS_PKT_SIZE {
+        if buf.len() != Self::NIOS_PKT_SIZE {
             return Err(NiosPacketError::InvalidSize(buf.len()).into());
+        }
+        if buf[0] != NIOS_PKT_RETUNE_MAGIC {
+            return Err(NiosPacketError::MagicMismatch {
+                expected: NIOS_PKT_RETUNE_MAGIC,
+                actual: buf[0],
+            }
+            .into());
         }
         Ok(Self {
             buf: &buf[..Self::NIOS_PKT_SIZE],

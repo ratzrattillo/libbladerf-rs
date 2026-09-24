@@ -206,7 +206,8 @@ impl RfLinkSession<'_> {
     ///
     /// Converts the frequency to LMS6002D register values and sends the retune
     /// command through the FPGA's NIOS retune interface. Returns the computed
-    /// `LmsFreq` register values along with the retune duration in nanoseconds.
+    /// `LmsFreq` register values along with the validated retune outcome.
+    /// Duration is available only for immediate retunes, in FPGA timestamp ticks.
     ///
     /// If `quick_tune` is provided, it is converted directly to register values,
     /// bypassing the frequency-to-register conversion (useful for rapid hopping).
@@ -218,7 +219,7 @@ impl RfLinkSession<'_> {
         timestamp: RetuneTimestamp,
         frequency: u64,
         quick_tune: Option<QuickTune>,
-    ) -> impl MaybeFuture<Output = Result<(LmsFreq, u64)>> {
+    ) -> impl MaybeFuture<Output = Result<(LmsFreq, crate::bladerf1::RetuneResult)>> {
         Op::new(async move {
             self.require_initialized().await?;
             let f: LmsFreq = if let Some(qt) = quick_tune {
@@ -257,7 +258,7 @@ impl RfLinkSession<'_> {
                     f.xb_gpio,
                 )
                 .await?;
-            Ok((f, result.duration()))
+            Ok((f, result))
         })
     }
 

@@ -24,4 +24,4 @@ pub use hardware::lms6002d::dc_calibration::{AgcDcCorrection, DcPair};
 pub use hardware::lms6002d::gain::GainDb;
 pub use hardware::lms6002d::{Band, LpfMode, Tune};
 pub use hardware::si5338::{RationalRate, SmbMode};
-pub use protocol::RetuneResult;
+pub use protocol::{RetuneResult, TimestampTicks};

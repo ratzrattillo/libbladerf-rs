@@ -18,6 +18,9 @@ pub use targets::{
 /// Error conditions produced during NIOS packet encode/decode operations.
 #[derive(thiserror::Error, Debug)]
 pub enum NiosPacketError {
+    /// The integer PLL divider exceeds its nine-bit wire representation.
+    #[error("nint value {0} exceeds maximum 0x1ff")]
+    NintOverflow(u16),
     /// The nfrac value exceeds the maximum representable value of 0x7FFFFF.
     #[error("nfrac value {0} exceeds maximum 0x7FFFFF")]
     NfracOverflow(u32),

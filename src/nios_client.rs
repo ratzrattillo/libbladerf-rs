@@ -9,9 +9,9 @@
 //! (native only) or `.await` from async code.
 
 use crate::bladerf1::hardware::lms6002d::{Band, Tune};
-use crate::bladerf1::protocol::{nios_decode_retune, nios_encode_retune};
+use crate::bladerf1::protocol::{RetuneResult, nios_encode_retune};
 use crate::channel::Channel;
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::maybe_future::Op;
 use crate::protocol::nios::packet_generic::NiosNum;
 use crate::protocol::nios::targets::NiosPkt8x16AddrAgcCorr;
@@ -272,19 +272,7 @@ impl NiosCore {
                 out_buf, channel, timestamp, nint, nfrac, freqsel, vcocap, band, tune, xb_gpio,
             )?;
             let response = self.transport.submit(None).await?;
-            let response_pkt = nios_decode_retune(response)?;
-            if !response_pkt.is_success() {
-                let is_immediate = response_pkt.duration()
-                    == u64::from(crate::bladerf1::protocol::RetuneTimestamp::Now);
-                return if is_immediate {
-                    Err(Error::TuningFailed)
-                } else {
-                    Err(Error::RetuneQueueFull)
-                };
-            }
-            Ok(crate::bladerf1::protocol::RetuneResult::new(
-                response_pkt.duration(),
-            ))
+            RetuneResult::decode(timestamp, response)
         })
     }
     /// Writes a value to the ADF4351 synthesizer (XB-200 expansion board).
