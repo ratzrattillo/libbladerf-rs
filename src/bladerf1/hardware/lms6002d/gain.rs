@@ -11,9 +11,9 @@ use crate::range::{Range, RangeItem};
 use nusb::MaybeFuture;
 
 /// RX gain offset applied when converting between dB FS and dBm.
-pub const BLADERF1_RX_GAIN_OFFSET: f32 = -6.0;
+pub const BLADERF1_RX_GAIN_OFFSET: i8 = -6;
 /// TX gain offset applied when converting between dB FS and dBm.
-pub const BLADERF1_TX_GAIN_OFFSET: f32 = 52.0;
+pub const BLADERF1_TX_GAIN_OFFSET: i8 = 52;
 
 /// LMS6002D power amplifier selection.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -85,6 +85,13 @@ pub struct GainSpec {
 impl GainSpec {
     pub(crate) const fn new(min: i8, max: i8, step: i8) -> Self {
         Self { min, max, step }
+    }
+
+    pub(crate) fn apportion(self, stage: i8, remaining: i16) -> (i8, i16) {
+        let headroom = i16::from(self.max) - i16::from(stage);
+        let allotment = remaining.min(headroom).max(0);
+        let allotment = allotment - allotment % i16::from(self.step);
+        ((i16::from(stage) + allotment) as i8, remaining - allotment)
     }
 }
 
@@ -212,9 +219,12 @@ impl From<u8> for Rxvga2GainCode {
 }
 impl From<Rxvga2GainCode> for GainDb {
     fn from(value: Rxvga2GainCode) -> Self {
-        let gain_db = (value.code * GAIN_SPEC_RXVGA2.step as u8) as i8;
+        let gain_db = i16::from(value.code) * i16::from(GAIN_SPEC_RXVGA2.step);
         GainDb {
-            db: gain_db.clamp(GAIN_SPEC_RXVGA2.min, GAIN_SPEC_RXVGA2.max),
+            db: gain_db.clamp(
+                i16::from(GAIN_SPEC_RXVGA2.min),
+                i16::from(GAIN_SPEC_RXVGA2.max),
+            ) as i8,
         }
     }
 }
@@ -222,7 +232,7 @@ impl From<GainDb> for Rxvga2GainCode {
     fn from(value: GainDb) -> Self {
         let gain_db = value.db().clamp(GAIN_SPEC_RXVGA2.min, GAIN_SPEC_RXVGA2.max);
         Rxvga2GainCode {
-            code: (gain_db as f32 / GAIN_SPEC_RXVGA2.step as f32).round() as u8,
+            code: ((gain_db + GAIN_SPEC_RXVGA2.step / 2) / GAIN_SPEC_RXVGA2.step) as u8,
         }
     }
 }
