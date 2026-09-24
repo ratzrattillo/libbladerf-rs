@@ -153,11 +153,15 @@ impl BladeRf1 {
         cal_table_dir: Option<&Path>,
     ) -> impl MaybeFuture<Output = crate::Result<Self>> {
         Op::new(async move {
-            log::debug!("Manufacturer: {}", device.manufacturer().await?);
-            log::debug!("Product: {}", device.product().await?);
-            log::debug!("Serial: {}", device.serial().await?);
+            let manufacturer = device.manufacturer().await;
+            let product = device.product().await;
+            let serial = device.serial().await;
+            let languages = device.get_supported_languages().await;
+            log::debug!("Manufacturer: {manufacturer:?}");
+            log::debug!("Product: {product:?}");
+            log::debug!("Serial: {serial:?}");
             log::debug!("Speed: {:?}", device.speed());
-            log::debug!("Languages: {:x?}", device.get_supported_languages().await?);
+            log::debug!("Languages: {languages:x?}");
             let interface = device.detach_and_claim_interface(0).await?;
             let speed = match device.speed() {
                 Some(speed) => speed,

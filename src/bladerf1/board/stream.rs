@@ -652,10 +652,13 @@ impl MetadataHeader {
     /// Parses a `MetadataHeader` from a byte slice.
     /// Returns `None` if the slice is shorter than `METADATA_HEADER_SIZE`.
     pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
-        if bytes.len() < METADATA_HEADER_SIZE {
-            return None;
-        }
-        Some(unsafe { std::ptr::read_unaligned(bytes.as_ptr() as *const Self) })
+        let bytes = bytes.get(..METADATA_HEADER_SIZE)?;
+        Some(Self {
+            reserved_or_length: u16::from_le_bytes(bytes[..2].try_into().ok()?),
+            flags_or_core: u16::from_le_bytes(bytes[2..4].try_into().ok()?),
+            timestamp: u64::from_le_bytes(bytes[4..12].try_into().ok()?),
+            meta_flags: u32::from_le_bytes(bytes[12..16].try_into().ok()?),
+        })
     }
 
     /// Returns the 40-bit hardware timestamp from the header.
