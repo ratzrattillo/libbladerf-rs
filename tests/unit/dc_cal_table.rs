@@ -23,6 +23,7 @@ fn test_table() -> DcCalTable {
             ),
         ],
     )
+    .unwrap()
 }
 
 #[test]
@@ -57,7 +58,7 @@ fn save_and_load() {
 #[test]
 fn lookup_exact_match() {
     let table = test_table();
-    let entry = table.lookup(200_000_000);
+    let entry = table.lookup(200_000_000).unwrap();
     assert_eq!(entry.freq, 200_000_000);
     assert_eq!(entry.dc.i, 200);
     assert_eq!(entry.dc.q, 400);
@@ -68,7 +69,7 @@ fn lookup_exact_match() {
 #[test]
 fn lookup_interpolation() {
     let table = test_table();
-    let entry = table.lookup(150_000_000);
+    let entry = table.lookup(150_000_000).unwrap();
     assert_eq!(entry.freq, 150_000_000);
     assert_eq!(entry.dc.i, 150);
     assert_eq!(entry.dc.q, 300);
@@ -83,7 +84,7 @@ fn lookup_interpolation() {
 #[test]
 fn lookup_below_range() {
     let table = test_table();
-    let entry = table.lookup(50_000_000);
+    let entry = table.lookup(50_000_000).unwrap();
     assert_eq!(entry.dc.i, 100);
     assert_eq!(entry.dc.q, 200);
 }
@@ -91,15 +92,16 @@ fn lookup_below_range() {
 #[test]
 fn lookup_above_range() {
     let table = test_table();
-    let entry = table.lookup(400_000_000);
+    let entry = table.lookup(400_000_000).unwrap();
     assert_eq!(entry.dc.i, 300);
     assert_eq!(entry.dc.q, 600);
 }
 
 #[test]
 fn empty_table() {
-    let table = DcCalTable::new(DcCals::new(-1, -1, -1, -1, -1, -1, -1, -1, -1, -1), vec![]);
-    let entry = table.lookup(100_000_000);
+    let table =
+        DcCalTable::new(DcCals::new(-1, -1, -1, -1, -1, -1, -1, -1, -1, -1), vec![]).unwrap();
+    let entry = table.lookup(100_000_000).unwrap();
     assert_eq!(entry.freq, 100_000_000);
     assert_eq!(entry.dc.i, 0);
     assert_eq!(entry.dc.q, 0);
@@ -110,13 +112,33 @@ fn single_entry() {
     let table = DcCalTable::new(
         DcCals::new(-1, -1, -1, -1, -1, -1, -1, -1, -1, -1),
         vec![DcCalEntry::new(200_000_000, DcPair::new(42, 84))],
-    );
-    let entry = table.lookup(1);
+    )
+    .unwrap();
+    let entry = table.lookup(1).unwrap();
     assert_eq!(entry.dc.i, 42);
     assert_eq!(entry.dc.q, 84);
-    let entry2 = table.lookup(999_000_000_000);
+    let entry2 = table.lookup(u32::MAX as u64).unwrap();
     assert_eq!(entry2.dc.i, 42);
     assert_eq!(entry2.dc.q, 84);
+    assert!(table.lookup(u32::MAX as u64 + 1).is_err());
+}
+
+#[test]
+fn constructors_and_deserialization_share_ordering_validation() {
+    let table = test_table();
+    let mut entries = table.entries().to_vec();
+    entries.reverse();
+    let sorted = DcCalTable::new(*table.reg_vals(), entries).unwrap();
+    assert_eq!(sorted.entries(), table.entries());
+    let duplicate = vec![table.entries()[0]; 2];
+    assert!(DcCalTable::new(*table.reg_vals(), duplicate).is_err());
+
+    let mut value = serde_json::to_value(&table).unwrap();
+    value["entries"].as_array_mut().unwrap().reverse();
+    let decoded: DcCalTable = serde_json::from_value(value.clone()).unwrap();
+    assert_eq!(decoded.entries(), table.entries());
+    value["entries"][1] = value["entries"][0].clone();
+    assert!(serde_json::from_value::<DcCalTable>(value).is_err());
 }
 
 #[test]

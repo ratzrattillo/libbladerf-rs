@@ -699,7 +699,7 @@ fn calibrate_and_save_table(
         }
         entries.push(e);
     }
-    let table = DcCalTable::new(dc_cals, entries);
+    let table = DcCalTable::new(dc_cals, entries)?;
 
     let serial = bladerf.serial().wait()?;
     let filename = if channel == Channel::Rx {

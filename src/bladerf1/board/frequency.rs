@@ -103,7 +103,7 @@ impl RfLinkSession<'_> {
                 Channel::Tx => self.dc_tx_table,
             };
             if let Some(table) = table {
-                let entry = table.lookup(frequency);
+                let entry = table.lookup(frequency)?;
                 self.lms().set_dc_offset_i(channel, entry.dc.i).await?;
                 self.lms().set_dc_offset_q(channel, entry.dc.q).await?;
                 if channel == Channel::Rx {

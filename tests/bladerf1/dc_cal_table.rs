@@ -16,7 +16,7 @@ fn load_and_lookup() -> libbladerf_rs::Result<()> {
             DcCalEntry::new(1_000_000_000, DcPair::new(100, 200)),
             DcCalEntry::new(2_000_000_000, DcPair::new(200, 400)),
         ],
-    );
+    )?;
 
     let dir = std::env::temp_dir().join("libbladerf_rs_dc_cal_table_test");
     std::fs::create_dir_all(&dir).unwrap();

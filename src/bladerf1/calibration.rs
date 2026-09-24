@@ -4,7 +4,7 @@
 
 use crate::bladerf1::hardware::lms6002d::dc_calibration::DcCals;
 use crate::bladerf1::hardware::lms6002d::dc_calibration::{AgcDcCorrection, DcPair};
-use crate::error::Result;
+use crate::error::{Error, Result};
 use std::path::Path;
 
 /// Single calibration entry with frequency, DC offset I/Q pair, and AGC sub-ranges.
@@ -56,15 +56,39 @@ impl From<&DcCalEntry> for AgcDcCorrection {
 
 /// Collection of calibration entries and associated register values.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(try_from = "RawDcCalTable")]
 pub struct DcCalTable {
     reg_vals: DcCals,
     entries: Vec<DcCalEntry>,
 }
 
+#[derive(serde::Deserialize)]
+struct RawDcCalTable {
+    reg_vals: DcCals,
+    entries: Vec<DcCalEntry>,
+}
+
+impl TryFrom<RawDcCalTable> for DcCalTable {
+    type Error = Error;
+
+    fn try_from(raw: RawDcCalTable) -> Result<Self> {
+        Self::new(raw.reg_vals, raw.entries)
+    }
+}
+
 impl DcCalTable {
-    /// Construct a new calibration table from register values and entries.
-    pub fn new(reg_vals: DcCals, entries: Vec<DcCalEntry>) -> Self {
-        Self { reg_vals, entries }
+    /// Constructs a calibration table with entries sorted by frequency.
+    ///
+    /// Empty tables return zero corrections. Deserialization uses the same validation.
+    ///
+    /// # Errors
+    /// Returns an argument error if two entries have the same frequency.
+    pub fn new(reg_vals: DcCals, mut entries: Vec<DcCalEntry>) -> Result<Self> {
+        entries.sort_unstable_by_key(|entry| entry.freq);
+        if entries.windows(2).any(|pair| pair[0].freq == pair[1].freq) {
+            return Err(Error::Argument("duplicate calibration frequency".into()));
+        }
+        Ok(Self { reg_vals, entries })
     }
 
     /// Returns a reference to the register values.
@@ -100,26 +124,30 @@ impl DcCalTable {
 
     /// Look up DC offset corrections for a frequency.  Returns an exact match, clamps
     /// at the nearest table boundary, or linearly interpolates between bracketing entries.
-    pub fn lookup(&self, freq: u64) -> DcCalEntry {
+    ///
+    /// # Errors
+    /// Returns an argument error if `freq` exceeds the table's `u32` frequency range.
+    pub fn lookup(&self, freq: u64) -> Result<DcCalEntry> {
+        let f = u32::try_from(freq)
+            .map_err(|_| Error::Argument("calibration frequency exceeds u32 range".into()))?;
         if self.entries.is_empty() {
-            return DcCalEntry {
-                freq: freq as u32,
+            return Ok(DcCalEntry {
+                freq: f,
                 dc: DcPair::default(),
                 max_dc: DcPair::default(),
                 mid_dc: DcPair::default(),
                 min_dc: DcPair::default(),
-            };
+            });
         }
-        let f = freq as u32;
         let idx = self.lookup_index(f);
         if self.entries[idx].freq == f {
-            return self.entries[idx];
+            return Ok(self.entries[idx]);
         }
         if idx == 0 && f < self.entries[0].freq {
-            return self.entries[0];
+            return Ok(self.entries[0]);
         }
         if idx == self.entries.len() - 1 && f > self.entries[idx].freq {
-            return self.entries[idx];
+            return Ok(self.entries[idx]);
         }
         let (idx_low, idx_high) = if idx == self.entries.len() - 1 {
             (idx - 1, idx)
@@ -128,7 +156,7 @@ impl DcCalTable {
         };
         let f_low = self.entries[idx_low].freq;
         let f_high = self.entries[idx_high].freq;
-        DcCalEntry {
+        Ok(DcCalEntry {
             freq: f,
             dc: DcPair::interp(
                 f_low,
@@ -158,6 +186,6 @@ impl DcCalTable {
                 self.entries[idx_high].min_dc,
                 f,
             ),
-        }
+        })
     }
 }
