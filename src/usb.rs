@@ -268,8 +268,7 @@ impl UsbInterfaceCommands for Interface {
             let length = u16::try_from(buf.len())
                 .map_err(|_| Error::Argument("buffer length exceeds u16 maximum".into()))?;
             let vec = vendor_cmd_in(self, cmd, 0, w_index, length).await?;
-            let copy_len = buf.len().min(vec.len());
-            buf[..copy_len].copy_from_slice(&vec[..copy_len]);
+            buf.copy_from_slice(&vec);
             Ok(())
         })
     }
@@ -292,14 +291,32 @@ fn vendor_cmd_in(
     };
     iface.control_in(pkt, TIMEOUT).map(move |response| {
         let vec = response?;
-        if length as usize >= 4 && vec.len() < 4 {
-            return Err(Error::UsbControlResponseTooShort {
-                expected: 4,
-                actual: vec.len(),
-            });
-        }
+        require_length(length as usize, vec.len())?;
         Ok(vec)
     })
+}
+
+pub(crate) fn require_length(expected: usize, actual: usize) -> Result<()> {
+    if expected == actual {
+        Ok(())
+    } else {
+        Err(Error::UsbTransferLength { expected, actual })
+    }
+}
+
+pub(crate) fn firmware_status(request: VendorRequest, status: u32) -> Result<()> {
+    firmware_ack(request, 0, status)
+}
+
+fn firmware_ack(request: VendorRequest, expected: u32, status: u32) -> Result<()> {
+    if status == expected {
+        Ok(())
+    } else {
+        Err(Error::FirmwareStatus {
+            request: request as u8,
+            status,
+        })
+    }
 }
 
 fn vendor_cmd_in_u32(
@@ -357,13 +374,7 @@ impl BladeRf1UsbInterfaceCommands for Interface {
             VendorRequest::RfTx
         };
         self.usb_vendor_cmd_int_w_value(cmd, enable as u16)
-            .map_ok(move |fx3_ret| {
-                if fx3_ret != 0 {
-                    log::warn!(
-                        "usb_enable_module({channel:?}, {enable}): firmware returned {fx3_ret:#x}"
-                    );
-                }
-            })
+            .map(move |result| firmware_status(cmd, result?))
     }
     fn usb_get_firmware_loopback(&self) -> impl MaybeFuture<Output = Result<bool>> {
         self.usb_vendor_cmd_int(VendorRequest::GetLoopback)
@@ -394,13 +405,7 @@ impl BladeRf1UsbInterfaceCommands for Interface {
     }
     fn usb_begin_fpga_prog(&self) -> impl MaybeFuture<Output = Result<()>> {
         self.usb_vendor_cmd_int(VendorRequest::BeginProg)
-            .map(|result| {
-                if result? != 0 {
-                    Err(Error::BoardState("BEGIN_PROG returned non-zero status"))
-                } else {
-                    Ok(())
-                }
-            })
+            .map(|result| firmware_status(VendorRequest::BeginProg, result?))
     }
     fn usb_bulk_out(
         &self,
@@ -417,7 +422,7 @@ impl BladeRf1UsbInterfaceCommands for Interface {
             ep.submit(buf);
             let completion = next_complete(&mut ep, timeout).await?;
             completion.status?;
-            Ok(())
+            require_length(data.len(), completion.actual_len)
         })
     }
 }
@@ -594,9 +599,7 @@ impl UsbTransport {
                 .interface
                 .usb_vendor_cmd_int_w_value(VendorRequest::SetLoopback, enable as u16)
                 .await?;
-            if fx3_ret != 0 {
-                log::warn!("usb_set_firmware_loopback({enable}): firmware returned {fx3_ret:#x}");
-            }
+            firmware_ack(VendorRequest::SetLoopback, u32::from(enable), fx3_ret)?;
             self.usb_change_setting(UsbAltSetting::Null).await?;
             self.usb_change_setting(UsbAltSetting::RfLink).await?;
             Ok(())
@@ -682,7 +685,7 @@ impl UsbTransport {
                 .and_then(|e| e.buf_in.as_ref())
                 .ok_or(Error::EndpointNotAvailable)?;
             let in_len = in_buf.len();
-            if in_len < Self::NIOS_PKT_SIZE {
+            if in_len != Self::NIOS_PKT_SIZE {
                 return Err(NiosPacketError::InvalidSize(in_len).into());
             }
             Ok(&in_buf[..Self::NIOS_PKT_SIZE])
@@ -696,8 +699,10 @@ impl UsbTransport {
         log::trace!("submit: OUT buffer len = {}", buf_out.len());
         endpoints.ep_out.submit(buf_out);
         let response = next_complete(&mut endpoints.ep_out, timeout).await?;
+        let actual_len = response.actual_len;
         endpoints.buf_out = Some(response.buffer);
         response.status?;
+        require_length(Self::NIOS_PKT_SIZE, actual_len)?;
         let mut buf_in = endpoints.buf_in.take().ok_or(Error::EndpointNotAvailable)?;
         buf_in.set_requested_len(endpoints.ep_in.max_packet_size());
         endpoints.ep_in.submit(buf_in);
@@ -723,5 +728,37 @@ impl UsbTransport {
         self.interface
             .endpoint::<Bulk, Out>(STREAM_ENDPOINT_TX)
             .map_err(Error::EndpointBusy)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fixed_transfers_require_exact_lengths() {
+        for expected in [4, 16, 64, 256] {
+            assert!(require_length(expected, expected).is_ok());
+            for actual in [0, expected - 1, expected + 1] {
+                assert!(matches!(
+                    require_length(expected, actual),
+                    Err(Error::UsbTransferLength { .. })
+                ));
+            }
+        }
+    }
+
+    #[test]
+    fn firmware_status_and_echo_have_distinct_success_values() {
+        assert!(firmware_status(VendorRequest::RfRx, 0).is_ok());
+        assert!(matches!(
+            firmware_status(VendorRequest::RfTx, 1),
+            Err(Error::FirmwareStatus {
+                request: 5,
+                status: 1
+            })
+        ));
+        assert!(firmware_ack(VendorRequest::SetLoopback, 1, 1).is_ok());
+        assert!(firmware_ack(VendorRequest::SetLoopback, 1, 0).is_err());
     }
 }

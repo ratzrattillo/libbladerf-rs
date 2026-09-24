@@ -36,6 +36,20 @@ pub enum NiosPacketError {
     /// The NIOS write command did not return a success status.
     #[error("NIOS write command failed")]
     WriteFailed,
+    /// The NIOS read command did not return a success status.
+    #[error("NIOS read command failed")]
+    ReadFailed,
+    /// The response belongs to another packet family.
+    #[error("unexpected NIOS magic: expected {expected:#04x}, got {actual:#04x}")]
+    MagicMismatch {
+        /// Required packet-family magic byte.
+        expected: u8,
+        /// Received magic byte.
+        actual: u8,
+    },
+    /// The response does not match the requested target, address, or direction.
+    #[error("NIOS response does not match the request")]
+    ResponseMismatch,
 }
 
 /// Encodes a NIOS read request into `buf`.
@@ -70,6 +84,7 @@ pub fn nios_encode_write<A: NiosNum, D: NiosNum>(
 /// Extracts the response data from the packet at the offset determined
 /// by the address-type width `A` and data-type width `D`.
 pub fn nios_decode_read<A: NiosNum, D: NiosNum>(response: &[u8]) -> Result<D, Error> {
+    NiosPkt::<A, D>::validate_response(response, NiosPktFlags::Read)?;
     NiosPktDecoder::decode_data::<A, D>(response)
 }
 
@@ -77,15 +92,34 @@ pub fn nios_decode_read<A: NiosNum, D: NiosNum>(response: &[u8]) -> Result<D, Er
 ///
 /// Returns `Ok(())` if the success flag is set, or `WriteFailed` otherwise.
 pub fn nios_decode_write<A: NiosNum, D: NiosNum>(response: &[u8]) -> Result<(), Error> {
-    if response.len() < 16 {
-        return Err(Error::NiosPacket(NiosPacketError::InvalidSize(
-            response.len(),
-        )));
+    NiosPkt::<A, D>::validate_response(response, NiosPktFlags::Write)
+}
+
+#[cfg(feature = "bladerf1")]
+pub(crate) fn validate_response_address<A: NiosNum>(
+    response: &[u8],
+    target: u8,
+    address: A,
+) -> Result<(), Error> {
+    if response.len() != 16 {
+        return Err(NiosPacketError::InvalidSize(response.len()).into());
     }
-    const IDX_FLAGS: usize = 2;
-    if (response[IDX_FLAGS] & (NiosPktStatus::Success as u8)) != 0 {
-        Ok(())
-    } else {
-        Err(Error::NiosPacket(NiosPacketError::WriteFailed))
+    if response[1] != target || response[4..4 + A::SIZE] != *address.to_le_bytes().as_ref() {
+        return Err(NiosPacketError::ResponseMismatch.into());
+    }
+    Ok(())
+}
+
+#[cfg(all(test, feature = "bladerf1"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn response_identity_includes_target_and_full_address() {
+        let mut response = [0; 16];
+        nios_encode_read::<u32, u32>(&mut response, 2, 0x1234_5678).unwrap();
+        assert!(validate_response_address(&response, 2, 0x1234_5678u32).is_ok());
+        assert!(validate_response_address(&response, 3, 0x1234_5678u32).is_err());
+        assert!(validate_response_address(&response, 2, 0x1334_5678u32).is_err());
     }
 }

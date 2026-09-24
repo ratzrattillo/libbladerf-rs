@@ -149,6 +149,24 @@ pub enum Error {
         actual: usize,
     },
 
+    /// A fixed-size USB transfer completed with an unexpected length.
+    #[error("USB transfer length mismatch: expected {expected} bytes, got {actual}")]
+    UsbTransferLength {
+        /// Required number of bytes.
+        expected: usize,
+        /// Completed number of bytes.
+        actual: usize,
+    },
+
+    /// A firmware operation returned a failing status or unexpected acknowledgement.
+    #[error("firmware request {request:#04x} returned {status:#010x}")]
+    FirmwareStatus {
+        /// USB vendor request number.
+        request: u8,
+        /// Raw firmware response.
+        status: u32,
+    },
+
     /// The requested sample rate is invalid for the current configuration.
     #[error("invalid sample rate: {0}")]
     InvalidSampleRate(&'static str),
@@ -220,6 +238,7 @@ impl Error {
             | Self::EndpointBusy(_)
             | Self::EndpointNotAvailable
             | Self::UnsupportedSpeed
+            | Self::UsbTransferLength { .. }
             | Self::UsbControlResponseTooShort { .. } => ErrorKind::Usb,
             Self::NiosPacket(_) => ErrorKind::Protocol,
             Self::Timeout => ErrorKind::Timeout,
@@ -235,7 +254,10 @@ impl Error {
             | Self::StreamsActive
             | Self::TriggerNotArmed
             | Self::TriggerNotMaster => ErrorKind::State,
-            Self::BoardState(_) | Self::TuningFailed | Self::RetuneQueueFull => ErrorKind::Hardware,
+            Self::BoardState(_)
+            | Self::TuningFailed
+            | Self::RetuneQueueFull
+            | Self::FirmwareStatus { .. } => ErrorKind::Hardware,
             Self::CalibrationFailed(_) => ErrorKind::Calibration,
             Self::FlashVerificationFailed { .. } | Self::FlashData(_) => ErrorKind::Flash,
             Self::Internal(_) => ErrorKind::Internal,

@@ -18,7 +18,7 @@ use crate::protocol::nios::targets::NiosPkt8x16AddrAgcCorr;
 use crate::protocol::nios::{
     NiosPkt8x16AddrIqCorr, NiosPkt8x16Target, NiosPkt8x32Target, NiosPkt8x64Target,
     NiosPkt8x64TimestampAddr, NiosPkt32x32Target, nios_decode_read, nios_decode_write,
-    nios_encode_read, nios_encode_write,
+    nios_encode_read, nios_encode_write, validate_response_address,
 };
 use crate::usb::UsbAltSetting;
 use crate::usb::UsbTransport;
@@ -89,11 +89,13 @@ impl NiosCore {
         addr: A,
     ) -> impl MaybeFuture<Output = Result<D>> {
         Op::new(async move {
+            let id = id.into();
             let out_buf = self.transport.out_buffer()?;
             log::trace!("nios_read: DMA buffer len = {} bytes", out_buf.len());
-            nios_encode_read::<A, D>(out_buf, id.into(), addr)?;
+            nios_encode_read::<A, D>(out_buf, id, addr)?;
             let response = self.transport.submit(None).await?;
             log::trace!("nios_read: response len = {} bytes", response.len());
+            validate_response_address(response, id, addr)?;
             nios_decode_read::<A, D>(response)
         })
     }
@@ -108,9 +110,11 @@ impl NiosCore {
         data: D,
     ) -> impl MaybeFuture<Output = Result<()>> {
         Op::new(async move {
+            let id = id.into();
             let out_buf = self.transport.out_buffer()?;
-            nios_encode_write::<A, D>(out_buf, id.into(), addr, data)?;
+            nios_encode_write::<A, D>(out_buf, id, addr, data)?;
             let response = self.transport.submit(None).await?;
+            validate_response_address(response, id, addr)?;
             nios_decode_write::<A, D>(response)
         })
     }

@@ -1,4 +1,48 @@
+use libbladerf_rs::Error;
+use libbladerf_rs::protocol::nios::{NiosPacketError, nios_decode_read, nios_decode_write};
 use libbladerf_rs::protocol::nios::{NiosPkt, NiosPktFlags};
+
+#[test]
+fn response_requires_matching_family_direction_and_success() {
+    let response = [
+        0x43, 1, 2, 0, 0x12, 0x78, 0x56, 0x34, 0x12, 0, 0, 0, 0, 0, 0, 0,
+    ];
+    assert_eq!(nios_decode_read::<u8, u32>(&response).unwrap(), 0x1234_5678);
+    assert!(matches!(
+        nios_decode_read::<u8, u16>(&response),
+        Err(Error::NiosPacket(NiosPacketError::MagicMismatch { .. }))
+    ));
+    assert!(matches!(
+        nios_decode_write::<u8, u32>(&response),
+        Err(Error::NiosPacket(NiosPacketError::ResponseMismatch))
+    ));
+    let mut failed = response;
+    failed[2] = 0;
+    assert!(matches!(
+        nios_decode_read::<u8, u32>(&failed),
+        Err(Error::NiosPacket(NiosPacketError::ReadFailed))
+    ));
+    failed[2] = 1;
+    assert!(matches!(
+        nios_decode_write::<u8, u32>(&failed),
+        Err(Error::NiosPacket(NiosPacketError::WriteFailed))
+    ));
+    failed[2] = 3;
+    assert!(nios_decode_write::<u8, u32>(&failed).is_ok());
+    for len in 0..16 {
+        assert!(nios_decode_read::<u8, u32>(&response[..len]).is_err());
+    }
+    assert!(nios_decode_read::<u8, u32>(&[0; 17]).is_err());
+}
+
+#[test]
+fn preparing_a_request_clears_stale_data_and_reserved_fields() {
+    let mut bytes = [0xFF; 16];
+    NiosPkt::<u8, u8>::new(&mut bytes)
+        .unwrap()
+        .prepare_read(1, 2);
+    assert_eq!(bytes, [0x41, 1, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+}
 
 const EXPECTED_MAGIC_8X8: u8 = 0x41;
 

@@ -41,7 +41,8 @@ pub enum NiosPktStatus {
 ///
 /// Each implementation specifies `SIZE` (the byte width) and the
 /// corresponding byte array type for little-endian conversion.
-pub trait NiosNum: Sized + Copy + Debug + Default + Send {
+/// This trait is sealed and implemented for `u8`, `u16`, `u32`, and `u64`.
+pub trait NiosNum: sealed::Sealed + Sized + Copy + Debug + Default + Send {
     /// Number of bytes this type occupies in a NIOS packet.
     const SIZE: usize;
     /// Little-endian byte representation.
@@ -50,6 +51,10 @@ pub trait NiosNum: Sized + Copy + Debug + Default + Send {
     fn to_le_bytes(self) -> Self::Bytes;
     /// Converts little-endian bytes to the value.
     fn from_le_bytes(bytes: Self::Bytes) -> Self;
+}
+
+mod sealed {
+    pub trait Sealed {}
 }
 
 /// Byte-level access to a NIOS packet buffer.
@@ -85,6 +90,7 @@ pub trait NiosPacket {
 
 macro_rules! impl_nios_num {
     ($t:ty, $n:literal) => {
+        impl sealed::Sealed for $t {}
         impl NiosNum for $t {
             const SIZE: usize = $n;
             type Bytes = [u8; $n];
@@ -154,6 +160,7 @@ impl<'a, A: NiosNum, D: NiosNum> NiosPkt<'a, A, D> {
     ///
     /// Sets the magic byte, target, read flag, and address field.
     pub fn prepare_read(&mut self, target: u8, addr: A) {
+        self.buf.fill(0);
         self.set_magic();
         self.set_target(target);
         self.set_flags(NiosPktFlags::Read);
@@ -163,6 +170,7 @@ impl<'a, A: NiosNum, D: NiosNum> NiosPkt<'a, A, D> {
     ///
     /// Sets the magic byte, target, write flag, address, and data fields.
     pub fn prepare_write(&mut self, target: u8, addr: A, data: D) {
+        self.buf.fill(0);
         self.set_magic();
         self.set_target(target);
         self.set_flags(NiosPktFlags::Write);
@@ -215,6 +223,31 @@ impl<'a, A: NiosNum, D: NiosNum> NiosPkt<'a, A, D> {
     pub fn is_success(&self) -> bool {
         (self.buf[Self::IDX_FLAGS] & (NiosPktStatus::Success as u8)) != 0
     }
+
+    pub(crate) fn validate_response(buf: &[u8], flags: NiosPktFlags) -> Result<()> {
+        if buf.len() != Self::NIOS_PKT_SIZE {
+            return Err(NiosPacketError::InvalidSize(buf.len()).into());
+        }
+        let expected = Self::magic().ok_or(NiosPacketError::InvalidTypeCombination)?;
+        if buf[Self::IDX_MAGIC] != expected {
+            return Err(NiosPacketError::MagicMismatch {
+                expected,
+                actual: buf[Self::IDX_MAGIC],
+            }
+            .into());
+        }
+        if NiosPktFlags::from(buf[Self::IDX_FLAGS]) != flags {
+            return Err(NiosPacketError::ResponseMismatch.into());
+        }
+        if (buf[Self::IDX_FLAGS] & NiosPktStatus::Success as u8) == 0 {
+            return Err(match flags {
+                NiosPktFlags::Read => NiosPacketError::ReadFailed,
+                NiosPktFlags::Write => NiosPacketError::WriteFailed,
+            }
+            .into());
+        }
+        Ok(())
+    }
 }
 impl<'a, A: NiosNum, D: NiosNum> NiosPacket for NiosPkt<'a, A, D> {
     fn as_slice(&self) -> &[u8] {
@@ -239,9 +272,10 @@ impl NiosPktDecoder {
     pub fn decode_data<A: NiosNum, D: NiosNum>(buf: &[u8]) -> Result<D> {
         const IDX_ADDR: usize = 4;
         let data_offset = IDX_ADDR + A::SIZE;
-        if buf.len() < data_offset + D::SIZE {
+        if buf.len() != 16 {
             return Err(NiosPacketError::InvalidSize(buf.len()).into());
         }
+        NiosPkt::<A, D>::magic().ok_or(NiosPacketError::InvalidTypeCombination)?;
         let mut bytes: D::Bytes = Default::default();
         bytes
             .as_mut()
