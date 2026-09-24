@@ -7,96 +7,177 @@
 //! verification fails.
 
 use crate::bladerf1::board::FlashSession;
-use crate::bladerf1::hardware::spi_flash::{
-    BLADERF_FLASH_ERASE_BLOCK_SIZE, BLADERF_FLASH_PAGE_SIZE,
-};
+use crate::bladerf1::hardware::spi_flash::BLADERF_FLASH_ERASE_BLOCK_SIZE;
+use crate::bladerf1::hardware::spi_flash::layout::{PAGES_PER_SECTOR, Page, SectorIndex, pages};
 use crate::error::{Error, Result};
-use crate::maybe_future::Op;
+use crate::maybe_future::{NonWasmSend, Op};
 use nusb::MaybeFuture;
+use std::future::Future;
 
 const MAX_RETRIES: u8 = 3;
 
 impl FlashSession<'_> {
-    /// Erases, writes, and verifies data to the SPI flash starting at the given page.
+    /// Erases, writes, and verifies whole pages starting at a sector boundary.
     ///
-    /// Validates that the page range and sector range are within flash bounds.
-    /// For each sector required by the data: erases the sector, writes all
-    /// constituent pages, then reads back and verifies. On verification
-    /// failure retries the sector up to three times. Returns a detailed
-    /// `Error::FlashVerificationFailed` if all retries are exhausted.
+    /// Each affected 64-KiB sector is erased in full, including any unwritten
+    /// tail in the final sector. Preserve neighboring data by supplying a
+    /// complete replacement sector. Empty data is a validated no-op.
     ///
-    /// Returns `Error::Argument` if the page or sector range exceeds flash
-    /// capacity. Returns `Error::FlashVerificationFailed` if retries are
-    /// exhausted.
+    /// A sector gets one initial attempt and at most three verification
+    /// retries. Only a byte mismatch triggers erase/rewrite; communication
+    /// failures are returned immediately. Cancellation keeps completed side
+    /// effects and retains any pending page transaction. Calling this method
+    /// again deliberately restarts the whole requested sector range.
+    ///
+    /// # Errors
+    /// Rejects partial pages, misaligned starts, and invalid complete ranges
+    /// before I/O. Returns the actual final verification or USB/firmware error.
+    /// Verification offsets are relative to the supplied `page_start`.
     pub fn erase_write_verify(
         &mut self,
         page_start: u32,
         data: &[u8],
     ) -> impl MaybeFuture<Output = Result<()>> {
         Op::new(async move {
-            let total_pages = self.total_pages();
-            let total_sectors = self.total_sectors();
-            let pages_per_sector =
-                (BLADERF_FLASH_ERASE_BLOCK_SIZE / BLADERF_FLASH_PAGE_SIZE) as u32;
-
-            if page_start >= total_pages {
-                return Err(Error::Argument(format!(
-                    "flash page {page_start} out of range (0..{total_pages})"
-                )));
-            }
-            let page_count = data.len() / BLADERF_FLASH_PAGE_SIZE;
-            if page_start + page_count as u32 > total_pages {
-                return Err(Error::Argument(format!(
-                    "flash page range {page_start}..{} out of range (0..{total_pages})",
-                    page_start + page_count as u32,
-                )));
-            }
-            let sector_start = page_start / pages_per_sector;
-            let sector_count = (page_count as u32).div_ceil(pages_per_sector);
-            if sector_start + sector_count > total_sectors {
-                return Err(Error::Argument(format!(
-                    "flash sector range {sector_start}..{} out of range (0..{total_sectors})",
-                    sector_start + sector_count,
-                )));
-            }
-
-            for (sec_idx, sector_data) in data.chunks(BLADERF_FLASH_ERASE_BLOCK_SIZE).enumerate() {
-                let sector = sector_start + sec_idx as u32;
-
-                for attempt in 0..=MAX_RETRIES {
-                    self.erase_sector(sector).await?;
-
-                    let start_page = sector * pages_per_sector;
-                    for (page_idx, page_data) in sector_data
-                        .as_chunks::<BLADERF_FLASH_PAGE_SIZE>()
-                        .0
-                        .iter()
-                        .enumerate()
-                    {
-                        self.write_page(start_page + page_idx as u32, page_data)
-                            .await?;
-                    }
-
-                    match self.verify_pages(start_page, sector_data).await {
-                        Ok(()) => break,
-                        Err(e) if attempt < MAX_RETRIES => {
-                            log::warn!(
-                                "Verification failed at sector {sector}, retry {}/{}: {e:#}",
-                                attempt + 1,
-                                MAX_RETRIES,
-                            );
-                        }
-                        Err(_) => {
-                            return Err(Error::FlashVerificationFailed {
-                                byte_offset: sec_idx * BLADERF_FLASH_ERASE_BLOCK_SIZE,
-                                expected: 0x00,
-                                actual: 0xFF,
-                            });
-                        }
-                    }
-                }
+            let pages = pages(data)?;
+            let sectors = self.flash_meta.program_sectors(page_start, pages)?;
+            for (index, (sector, data)) in sectors
+                .zip(pages.chunks(PAGES_PER_SECTOR as usize))
+                .enumerate()
+            {
+                self.program_sector(sector, data).await.map_err(|error| {
+                    verification_offset(error, index * BLADERF_FLASH_ERASE_BLOCK_SIZE)
+                })?;
             }
             Ok(())
         })
+    }
+}
+
+trait SectorIo: NonWasmSend {
+    fn rewrite(
+        &mut self,
+        sector: SectorIndex,
+        pages: &[Page],
+    ) -> impl Future<Output = Result<()>> + NonWasmSend;
+    fn verify(
+        &mut self,
+        sector: SectorIndex,
+        pages: &[Page],
+    ) -> impl Future<Output = Result<()>> + NonWasmSend;
+
+    async fn program_sector(&mut self, sector: SectorIndex, pages: &[Page]) -> Result<()> {
+        for attempt in 0..=MAX_RETRIES {
+            self.rewrite(sector, pages).await?;
+            match self.verify(sector, pages).await {
+                Err(Error::FlashVerificationFailed { .. }) if attempt < MAX_RETRIES => {}
+                result => return result,
+            }
+        }
+        unreachable!()
+    }
+}
+
+impl SectorIo for FlashSession<'_> {
+    async fn rewrite(&mut self, sector: SectorIndex, pages: &[Page]) -> Result<()> {
+        self.erase_sector_index(sector).await?;
+        self.write_pages(
+            u32::from(sector.first_page().get()),
+            pages.len(),
+            pages.as_flattened(),
+        )
+        .await
+    }
+
+    async fn verify(&mut self, sector: SectorIndex, pages: &[Page]) -> Result<()> {
+        self.verify_pages(u32::from(sector.first_page().get()), pages.as_flattened())
+            .await
+    }
+}
+
+fn verification_offset(error: Error, base: usize) -> Error {
+    match error {
+        Error::FlashVerificationFailed {
+            byte_offset,
+            expected,
+            actual,
+        } => Error::FlashVerificationFailed {
+            byte_offset: base + byte_offset,
+            expected,
+            actual,
+        },
+        error => error,
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests {
+    use super::*;
+    use crate::bladerf1::hardware::spi_flash::BLADERF_FLASH_PAGE_SIZE;
+    use crate::bladerf1::hardware::spi_flash::layout::FlashMeta;
+    use crate::maybe_future::block_on;
+    use std::collections::VecDeque;
+
+    struct Io {
+        outcomes: VecDeque<Result<()>>,
+        writes: usize,
+    }
+
+    impl SectorIo for Io {
+        async fn rewrite(&mut self, _: SectorIndex, _: &[Page]) -> Result<()> {
+            self.writes += 1;
+            Ok(())
+        }
+        async fn verify(&mut self, _: SectorIndex, _: &[Page]) -> Result<()> {
+            self.outcomes.pop_front().unwrap()
+        }
+    }
+
+    fn mismatch(offset: usize) -> Error {
+        Error::FlashVerificationFailed {
+            byte_offset: offset,
+            expected: 0xab,
+            actual: 0xcd,
+        }
+    }
+
+    #[test]
+    fn verification_retries_only_mismatches_and_preserves_the_final_error() {
+        let sector = FlashMeta::new(4 << 20).unwrap().sector(7).unwrap();
+        let mut io = Io {
+            outcomes: (0..4).map(|offset| Err(mismatch(512 + offset))).collect(),
+            writes: 0,
+        };
+        let error =
+            block_on(io.program_sector(sector, &[[0; BLADERF_FLASH_PAGE_SIZE]])).unwrap_err();
+        assert_eq!(io.writes, 4);
+        assert!(matches!(
+            verification_offset(error, 65_536),
+            Error::FlashVerificationFailed {
+                byte_offset: 66_051,
+                expected: 0xab,
+                actual: 0xcd
+            }
+        ));
+        let mut io = Io {
+            outcomes: VecDeque::from([Err(mismatch(3)), Ok(())]),
+            writes: 0,
+        };
+        block_on(io.program_sector(sector, &[[0; BLADERF_FLASH_PAGE_SIZE]])).unwrap();
+        assert_eq!(io.writes, 2);
+        for error in [
+            Error::Timeout,
+            Error::FirmwareStatus {
+                request: 100,
+                status: 5,
+            },
+        ] {
+            let mut io = Io {
+                outcomes: VecDeque::from([Err(error)]),
+                writes: 0,
+            };
+            assert!(block_on(io.program_sector(sector, &[[0; BLADERF_FLASH_PAGE_SIZE]])).is_err());
+            assert_eq!(io.writes, 1);
+        }
     }
 }

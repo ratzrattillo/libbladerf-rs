@@ -22,6 +22,7 @@ use std::num::NonZero;
 use std::task::{Context, Poll};
 use std::time::Duration;
 
+mod flash;
 mod transaction;
 use transaction::NiosExchange;
 pub(crate) mod pending;
@@ -211,20 +212,6 @@ pub trait UsbInterfaceCommands {
         cmd: VendorRequest,
         w_index: u16,
     ) -> impl MaybeFuture<Output = Result<u32>>;
-    /// Issues a vendor OUT command with a `wIndex` parameter and data payload.
-    fn usb_vendor_cmd_out_w_index(
-        &mut self,
-        cmd: VendorRequest,
-        w_index: u16,
-        data: &[u8],
-    ) -> impl MaybeFuture<Output = Result<()>>;
-    /// Issues a vendor IN command with a `wIndex` parameter and fills `buf` with the response data.
-    fn usb_vendor_cmd_in_w_index_data(
-        &mut self,
-        cmd: VendorRequest,
-        w_index: u16,
-        buf: &mut [u8],
-    ) -> impl MaybeFuture<Output = Result<()>>;
 }
 impl UsbInterfaceCommands for UsbTransport {
     fn usb_vendor_cmd_int(&mut self, cmd: VendorRequest) -> impl MaybeFuture<Output = Result<u32>> {
@@ -243,51 +230,6 @@ impl UsbInterfaceCommands for UsbTransport {
         w_index: u16,
     ) -> impl MaybeFuture<Output = Result<u32>> {
         vendor_cmd_in_u32(self, cmd, 0, w_index)
-    }
-    fn usb_vendor_cmd_out_w_index(
-        &mut self,
-        cmd: VendorRequest,
-        w_index: u16,
-        data: &[u8],
-    ) -> impl MaybeFuture<Output = Result<()>> {
-        Op::new(async move {
-            u16::try_from(data.len())
-                .map_err(|_| Error::Argument("control payload exceeds u16 maximum".into()))?;
-            self.prepare_io().await?;
-            let interface = self.interface.clone();
-            let data = data.to_vec();
-            self.pending.begin(async move {
-                interface
-                    .control_out(
-                        ControlOut {
-                            control_type: ControlType::Vendor,
-                            recipient: Recipient::Device,
-                            request: cmd as u8,
-                            value: 0,
-                            index: w_index,
-                            data: &data,
-                        },
-                        TIMEOUT,
-                    )
-                    .await?;
-                Ok(ControlResult::Done)
-            });
-            self.finish_pending(TIMEOUT).await.map(|_| ())
-        })
-    }
-    fn usb_vendor_cmd_in_w_index_data(
-        &mut self,
-        cmd: VendorRequest,
-        w_index: u16,
-        buf: &mut [u8],
-    ) -> impl MaybeFuture<Output = Result<()>> {
-        Op::new(async move {
-            let length = u16::try_from(buf.len())
-                .map_err(|_| Error::Argument("buffer length exceeds u16 maximum".into()))?;
-            let vec = vendor_cmd_in(self, cmd, 0, w_index, length).await?;
-            buf.copy_from_slice(&vec);
-            Ok(())
-        })
     }
 }
 
@@ -312,6 +254,16 @@ fn vendor_cmd_in(
         transport.pending.begin(async move {
             let vec = interface.control_in(pkt, TIMEOUT).await?;
             require_length(length as usize, vec.len())?;
+            if matches!(
+                cmd,
+                VendorRequest::RfRx
+                    | VendorRequest::RfTx
+                    | VendorRequest::BeginProg
+                    | VendorRequest::FlashErase
+            ) {
+                require_length(4, vec.len())?;
+                firmware_status(cmd, u32::from_le_bytes(vec[..4].try_into().unwrap()))?;
+            }
             Ok(ControlResult::Data(vec))
         });
         match transport.finish_pending(TIMEOUT).await? {
@@ -546,6 +498,7 @@ enum ControlResult {
     Setting(UsbAltSetting),
     RxEndpoint(Endpoint<Bulk, In>),
     TxEndpoint(Endpoint<Bulk, Out>),
+    FlashPage([u8; 256]),
 }
 impl UsbTransport {
     /// Creates a new `UsbTransport` from an nusb `Interface`.

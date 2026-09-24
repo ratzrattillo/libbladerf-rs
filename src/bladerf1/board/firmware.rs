@@ -5,11 +5,8 @@
 //! to ensure it fits within the reserved flash partition.
 
 use crate::bladerf1::board::FlashSession;
-use crate::bladerf1::hardware::spi_flash::{
-    BLADERF_FLASH_BYTE_LEN_FIRMWARE, BLADERF_FLASH_ERASE_BLOCK_SIZE, BLADERF_FLASH_PAGE_SIZE,
-};
+use crate::bladerf1::hardware::spi_flash::BLADERF_FLASH_BYTE_LEN_FIRMWARE;
 use crate::error::{Error, Result};
-use crate::flash::pad_to_page;
 use crate::maybe_future::Op;
 use nusb::MaybeFuture;
 
@@ -43,18 +40,9 @@ impl FlashSession<'_> {
                 )));
             }
 
-            let padded = pad_to_page(firmware);
-
-            let firmware_sectors =
-                BLADERF_FLASH_BYTE_LEN_FIRMWARE / BLADERF_FLASH_ERASE_BLOCK_SIZE as u32;
-
-            let page_count = padded.len() / BLADERF_FLASH_PAGE_SIZE;
-
-            self.erase_sectors(0, firmware_sectors).await?;
-            self.write_pages(0, page_count, &padded).await?;
-            self.verify_pages(0, &padded).await?;
-
-            Ok(())
+            let mut image = vec![0xff; BLADERF_FLASH_BYTE_LEN_FIRMWARE as usize];
+            image[..firmware.len()].copy_from_slice(firmware);
+            self.erase_write_verify(0, &image).await
         })
     }
 }

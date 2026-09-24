@@ -7,7 +7,9 @@
 
 use crate::bladerf1::board::FlashSession;
 use crate::bladerf1::board::fpga::{BLADERF_FLASH_FPGA_SIZE_40KLE, BLADERF_FLASH_FPGA_SIZE_115KLE};
-use crate::bladerf1::hardware::spi_flash::{BLADERF_FLASH_ADDR_CAL, BLADERF_FLASH_PAGE_SIZE};
+use crate::bladerf1::hardware::spi_flash::{
+    BLADERF_FLASH_ADDR_CAL, BLADERF_FLASH_ERASE_BLOCK_SIZE, BLADERF_FLASH_PAGE_SIZE,
+};
 use crate::error::Error;
 use crate::error::Result;
 use crate::flash::{FpgaSize, binkv_decode_field, make_cal_region};
@@ -49,13 +51,22 @@ impl FlashSession<'_> {
     /// Reads the existing FPGA size indicator, constructs a full calibration
     /// page image, and erases/writes/verifies the calibration sector. Use
     /// this to update the factory trim after performing a new calibration
-    /// measurement.
+    /// measurement. Other pages in that sector are preserved. The firmware's
+    /// calibration cache is refreshed by a device restart.
     pub fn write_flash_dac_trim(&mut self, dac_trim: u16) -> impl MaybeFuture<Output = Result<()>> {
         Op::new(async move {
             let fpga_size = self.read_flash_fpga_size().await?;
             let cal_image = make_cal_region(fpga_size, dac_trim)?;
             let cal_page = BLADERF_FLASH_ADDR_CAL / BLADERF_FLASH_PAGE_SIZE as u32;
-            self.erase_write_verify(cal_page, &cal_image).await
+            let mut sector = vec![0; BLADERF_FLASH_ERASE_BLOCK_SIZE];
+            self.read_pages(
+                cal_page,
+                sector.len() / BLADERF_FLASH_PAGE_SIZE,
+                &mut sector,
+            )
+            .await?;
+            sector[..BLADERF_FLASH_PAGE_SIZE].copy_from_slice(&cal_image);
+            self.erase_write_verify(cal_page, &sector).await
         })
     }
 

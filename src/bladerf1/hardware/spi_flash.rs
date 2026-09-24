@@ -8,7 +8,10 @@ use crate::error::{Error, Result};
 use crate::maybe_future::Op;
 use crate::usb::{UsbInterfaceCommands, VendorRequest};
 use nusb::MaybeFuture;
-use nusb::Speed;
+
+pub(crate) mod layout;
+pub(crate) use layout::FlashMeta;
+use layout::{Page, PageIndex, SectorIndex, pages, pages_mut};
 
 /// Size of a single flash page in bytes.
 pub use crate::flash::BLADERF_FLASH_PAGE_SIZE;
@@ -25,155 +28,75 @@ pub const BLADERF_FLASH_BYTE_LEN_CAL: usize = 0x100;
 /// Flash address of the FPGA bitstream region.
 pub const BLADERF_FLASH_ADDR_FPGA: u32 = 0x00040000;
 
-/// Metadata about the SPI flash device constructed from a USB vendor query.
-pub(crate) struct FlashMeta {
-    /// Total flash capacity in bytes.
-    pub flash_size_bytes: u32,
-    /// Total number of pages.
-    pub total_pages: u32,
-    /// Total number of erasable sectors.
-    pub total_sectors: u32,
-}
-
 impl FlashSession<'_> {
-    /// Checks the USB speed and returns the appropriate transfer chunk size.
-    ///
-    /// Returns `Error::UnsupportedSpeed` if the device is not at High or Super speed.
-    fn chunk_size(&self) -> Result<usize> {
-        match self.nios.transport().speed() {
-            Speed::Super | Speed::SuperPlus => Ok(BLADERF_FLASH_PAGE_SIZE),
-            Speed::High => Ok(64),
-            _ => Err(Error::UnsupportedSpeed),
-        }
-    }
-
-    fn read_page_buffer(&mut self, buf: &mut [u8]) -> impl MaybeFuture<Output = Result<()>> {
-        Op::new(async move {
-            let chunk_size = self.chunk_size()?;
-            for (offset, chunk) in buf.chunks_exact_mut(chunk_size).enumerate() {
-                self.nios
-                    .control()
-                    .await?
-                    .usb_vendor_cmd_in_w_index_data(
-                        VendorRequest::ReadPageBuffer,
-                        (offset * chunk_size) as u16,
-                        chunk,
-                    )
-                    .await?;
-            }
-            Ok(())
-        })
-    }
-
-    fn write_page_buffer(&mut self, buf: &[u8]) -> impl MaybeFuture<Output = Result<()>> {
-        Op::new(async move {
-            let chunk_size = self.chunk_size()?;
-            for (offset, chunk) in buf.chunks_exact(chunk_size).enumerate() {
-                self.nios
-                    .control()
-                    .await?
-                    .usb_vendor_cmd_out_w_index(
-                        VendorRequest::WritePageBuffer,
-                        (offset * chunk_size) as u16,
-                        chunk,
-                    )
-                    .await?;
-            }
-            Ok(())
-        })
-    }
-
     /// Reads the on-device calibration cache into the provided buffer.
     pub(crate) fn read_cal_cache(
         &mut self,
-        buf: &mut [u8],
+        buf: &mut Page,
     ) -> impl MaybeFuture<Output = Result<()>> {
         Op::new(async move {
-            let chunk_size = self.chunk_size()?;
-            for (offset, chunk) in buf.chunks_exact_mut(chunk_size).enumerate() {
-                self.nios
-                    .control()
-                    .await?
-                    .usb_vendor_cmd_in_w_index_data(
-                        VendorRequest::ReadCalCache,
-                        (offset * chunk_size) as u16,
-                        chunk,
-                    )
-                    .await?;
-            }
+            *buf = self.nios.control().await?.read_calibration_page().await?;
             Ok(())
         })
     }
 
-    /// Reads a single page of flash into the provided buffer.
+    /// Reads one complete 256-byte flash page.
     ///
-    /// Returns `Error::Argument` if the page number is out of range.
+    /// # Errors
+    /// Returns an argument error if `buf` is not exactly 256 bytes or `page`
+    /// is out of range. USB and firmware failures are propagated.
     pub fn read_page(
         &mut self,
         page: u32,
         buf: &mut [u8],
     ) -> impl MaybeFuture<Output = Result<()>> {
         Op::new(async move {
-            let total_pages = self.flash_meta.total_pages;
-            if page >= total_pages {
-                return Err(Error::Argument(format!(
-                    "flash page {page} out of range (0..{total_pages})"
-                )));
-            }
-            self.nios
-                .control()
-                .await?
-                .usb_vendor_cmd_int_w_index(VendorRequest::FlashRead, page as u16)
-                .await?;
-            self.read_page_buffer(buf).await
+            let buf = <&mut Page>::try_from(buf).map_err(|_| {
+                Error::Argument("flash page buffer must be exactly 256 bytes".into())
+            })?;
+            let page = self.flash_meta.page(page)?;
+            self.read_page_index(page, buf).await
         })
     }
 
-    /// Writes a single page of flash from the provided buffer.
+    /// Writes one complete 256-byte flash page.
     ///
     /// The corresponding sector must be erased before writing.
-    /// Returns `Error::Argument` if the page number is out of range.
+    /// Cancellation retains the whole page transaction for completion before
+    /// subsequent I/O. Completed writes are not rolled back.
+    ///
+    /// # Errors
+    /// Returns an argument error if `buf` is not exactly 256 bytes or `page`
+    /// is out of range. USB and firmware failures are propagated.
     pub fn write_page(&mut self, page: u32, buf: &[u8]) -> impl MaybeFuture<Output = Result<()>> {
         Op::new(async move {
-            let total_pages = self.flash_meta.total_pages;
-            if page >= total_pages {
-                return Err(Error::Argument(format!(
-                    "flash page {page} out of range (0..{total_pages})"
-                )));
-            }
-            self.write_page_buffer(buf).await?;
-            self.nios
-                .control()
-                .await?
-                .usb_vendor_cmd_int_w_index(VendorRequest::FlashWrite, page as u16)
-                .await?;
-            Ok(())
+            let buf = <&Page>::try_from(buf)
+                .map_err(|_| Error::Argument("flash page data must be exactly 256 bytes".into()))?;
+            let page = self.flash_meta.page(page)?;
+            self.write_page_index(page, buf).await
         })
     }
 
-    /// Erases a 64 KB flash sector.
+    /// Erases a complete 64-KiB flash sector.
     ///
-    /// Returns `Error::Argument` if the sector number is out of range.
+    /// # Errors
+    /// Returns an argument error for an out-of-range sector, or the underlying
+    /// USB/firmware error. Cancellation does not undo an erase.
     pub fn erase_sector(&mut self, sector: u32) -> impl MaybeFuture<Output = Result<()>> {
         Op::new(async move {
-            let total_sectors = self.flash_meta.total_sectors;
-            if sector >= total_sectors {
-                return Err(Error::Argument(format!(
-                    "flash sector {sector} out of range (0..{total_sectors})"
-                )));
-            }
-            self.nios
-                .control()
-                .await?
-                .usb_vendor_cmd_int_w_index(VendorRequest::FlashErase, sector as u16)
-                .await?;
-            Ok(())
+            let sector = self.flash_meta.sector(sector)?;
+            self.erase_sector_index(sector).await
         })
     }
 
     /// Reads contiguous pages of flash into the provided buffer.
     ///
-    /// Returns `Error::Argument` if the buffer is too small for the requested page count.
+    /// Empty ranges are no-ops and may start one page past the flash.
+    ///
+    /// # Errors
+    /// Returns an argument error unless `buf` contains exactly `page_count`
+    /// whole pages and the entire range fits in flash. USB/firmware failures
+    /// are propagated; earlier pages may already have been read.
     pub fn read_pages(
         &mut self,
         page_start: u32,
@@ -181,21 +104,11 @@ impl FlashSession<'_> {
         buf: &mut [u8],
     ) -> impl MaybeFuture<Output = Result<()>> {
         Op::new(async move {
-            let required = page_count * BLADERF_FLASH_PAGE_SIZE;
-            if buf.len() < required {
-                return Err(Error::Argument(format!(
-                    "buffer too small: {required} bytes required, {} provided",
-                    buf.len()
-                )));
-            }
-
-            for page_idx in 0..page_count {
-                let offset = page_idx * BLADERF_FLASH_PAGE_SIZE;
-                self.read_page(
-                    page_start + page_idx as u32,
-                    &mut buf[offset..offset + BLADERF_FLASH_PAGE_SIZE],
-                )
-                .await?;
+            let pages = pages_mut(buf)?;
+            require_page_count(page_count, pages.len())?;
+            let indices = self.flash_meta.pages(page_start, pages.len())?;
+            for (index, page) in indices.zip(pages) {
+                self.read_page_index(index, page).await?;
             }
             Ok(())
         })
@@ -203,8 +116,15 @@ impl FlashSession<'_> {
 
     /// Writes contiguous pages of flash from the provided buffer.
     ///
-    /// Corresponding sectors must be erased before writing.
-    /// Returns `Error::Argument` if the buffer is too small for the requested page count.
+    /// Corresponding sectors must be erased before writing. Empty ranges are
+    /// no-ops and may start one page past the flash. Completed writes persist
+    /// after an error or cancellation; unfinished page transactions are settled
+    /// before the next I/O operation.
+    ///
+    /// # Errors
+    /// Returns an argument error unless `buf` contains exactly `page_count`
+    /// whole pages and the entire range fits in flash. Propagates USB/firmware
+    /// failures without automatically replaying failed writes.
     pub fn write_pages(
         &mut self,
         page_start: u32,
@@ -212,35 +132,33 @@ impl FlashSession<'_> {
         buf: &[u8],
     ) -> impl MaybeFuture<Output = Result<()>> {
         Op::new(async move {
-            let required = page_count * BLADERF_FLASH_PAGE_SIZE;
-            if buf.len() < required {
-                return Err(Error::Argument(format!(
-                    "buffer too small: {required} bytes required, {} provided",
-                    buf.len()
-                )));
-            }
-
-            for page_idx in 0..page_count {
-                let offset = page_idx * BLADERF_FLASH_PAGE_SIZE;
-                self.write_page(
-                    page_start + page_idx as u32,
-                    &buf[offset..offset + BLADERF_FLASH_PAGE_SIZE],
-                )
-                .await?;
+            let pages = pages(buf)?;
+            require_page_count(page_count, pages.len())?;
+            let indices = self.flash_meta.pages(page_start, pages.len())?;
+            for (index, page) in indices.zip(pages) {
+                self.write_page_index(index, page).await?;
             }
             Ok(())
         })
     }
 
-    /// Erases a range of contiguous 64 KB flash sectors.
+    /// Erases a range of contiguous 64-KiB flash sectors.
+    ///
+    /// Empty ranges are no-ops and may start one sector past the flash.
+    /// Completed erases persist after cancellation or a later error.
+    ///
+    /// # Errors
+    /// Rejects an invalid complete range before any erase. Propagates
+    /// USB/firmware failures without automatically replaying failed erases.
     pub fn erase_sectors(
         &mut self,
         start: u32,
         count: u32,
     ) -> impl MaybeFuture<Output = Result<()>> {
         Op::new(async move {
-            for sector in start..start + count {
-                self.erase_sector(sector).await?;
+            let indices = self.flash_meta.sectors(start, count as usize)?;
+            for sector in indices {
+                self.erase_sector_index(sector).await?;
             }
             Ok(())
         })
@@ -248,34 +166,24 @@ impl FlashSession<'_> {
 
     /// Reads flash pages and verifies each against the expected data.
     ///
-    /// Returns `Error::FlashVerificationFailed` on the first mismatch.
+    /// Empty ranges are no-ops and may start one page past the flash.
+    ///
+    /// # Errors
+    /// Rejects partial pages and out-of-range requests before I/O. Returns
+    /// [`Error::FlashVerificationFailed`] on the first mismatch, with a byte
+    /// offset relative to `page_start`, or the underlying USB/firmware error.
     pub fn verify_pages(
         &mut self,
         page_start: u32,
         expected: &[u8],
     ) -> impl MaybeFuture<Output = Result<()>> {
         Op::new(async move {
-            for (page_idx, expected_page) in expected
-                .as_chunks::<BLADERF_FLASH_PAGE_SIZE>()
-                .0
-                .iter()
-                .enumerate()
-            {
+            let pages = pages(expected)?;
+            let indices = self.flash_meta.pages(page_start, pages.len())?;
+            for (page_idx, (index, expected_page)) in indices.zip(pages).enumerate() {
                 let mut actual = [0u8; BLADERF_FLASH_PAGE_SIZE];
-                self.read_page(page_start + page_idx as u32, &mut actual)
-                    .await?;
-                if *expected_page != actual {
-                    let local = expected_page
-                        .iter()
-                        .zip(&actual)
-                        .position(|(e, a)| e != a)
-                        .unwrap();
-                    return Err(Error::FlashVerificationFailed {
-                        byte_offset: page_idx * BLADERF_FLASH_PAGE_SIZE + local,
-                        expected: expected_page[local],
-                        actual: actual[local],
-                    });
-                }
+                self.read_page_index(index, &mut actual).await?;
+                verify_page(expected_page, &actual, page_idx * BLADERF_FLASH_PAGE_SIZE)?;
             }
             Ok(())
         })
@@ -283,27 +191,114 @@ impl FlashSession<'_> {
 
     /// Returns the total flash capacity in bytes.
     pub fn size_bytes(&self) -> u32 {
-        self.flash_meta.flash_size_bytes
+        self.flash_meta.size_bytes()
     }
 
     /// Returns the total number of flash pages.
     pub fn total_pages(&self) -> u32 {
-        self.flash_meta.total_pages
+        self.flash_meta.total_pages()
     }
 
     /// Returns the total number of erasable flash sectors.
     pub fn total_sectors(&self) -> u32 {
-        self.flash_meta.total_sectors
+        self.flash_meta.total_sectors()
     }
 
     /// Returns the number of erasable sectors available for FPGA bitstream storage.
     pub fn fpga_flash_sectors(&self) -> u32 {
-        self.flash_meta.total_sectors
+        self.flash_meta.total_sectors()
             - BLADERF_FLASH_ADDR_FPGA / BLADERF_FLASH_ERASE_BLOCK_SIZE as u32
     }
 
     /// Returns the total FPGA bitstream storage capacity in bytes.
     pub fn fpga_flash_bytes(&self) -> usize {
         self.fpga_flash_sectors() as usize * BLADERF_FLASH_ERASE_BLOCK_SIZE
+    }
+
+    pub(crate) fn read_page_index(
+        &mut self,
+        index: PageIndex,
+        page: &mut Page,
+    ) -> impl MaybeFuture<Output = Result<()>> {
+        Op::new(async move {
+            *page = self
+                .nios
+                .control()
+                .await?
+                .read_flash_page(index.get())
+                .await?;
+            Ok(())
+        })
+    }
+
+    pub(crate) fn write_page_index(
+        &mut self,
+        index: PageIndex,
+        page: &Page,
+    ) -> impl MaybeFuture<Output = Result<()>> {
+        Op::new(async move {
+            self.nios
+                .control()
+                .await?
+                .write_flash_page(index.get(), page)
+                .await
+        })
+    }
+
+    pub(crate) fn erase_sector_index(
+        &mut self,
+        index: SectorIndex,
+    ) -> impl MaybeFuture<Output = Result<()>> {
+        Op::new(async move {
+            self.nios
+                .control()
+                .await?
+                .usb_vendor_cmd_int_w_index(VendorRequest::FlashErase, index.get())
+                .await?;
+            Ok(())
+        })
+    }
+}
+
+fn require_page_count(requested: usize, actual: usize) -> Result<()> {
+    if requested != actual {
+        return Err(Error::Argument(
+            "flash page count must match the complete buffer".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn verify_page(expected: &Page, actual: &Page, byte_offset: usize) -> Result<()> {
+    if let Some(local) = expected.iter().zip(actual).position(|(e, a)| e != a) {
+        return Err(Error::FlashVerificationFailed {
+            byte_offset: byte_offset + local,
+            expected: expected[local],
+            actual: actual[local],
+        });
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn verification_preserves_later_page_byte_offsets_and_values() {
+        let expected = [0xab; 256];
+        let mut actual = expected;
+        actual[237] = 0xcd;
+        assert!(matches!(
+            verify_page(&expected, &actual, 7 * 256),
+            Err(Error::FlashVerificationFailed {
+                byte_offset: 2029,
+                expected: 0xab,
+                actual: 0xcd
+            })
+        ));
+        assert!(require_page_count(usize::MAX, 0).is_err());
+        assert!(require_page_count(0, 1).is_err());
+        assert!(require_page_count(0, 0).is_ok());
     }
 }

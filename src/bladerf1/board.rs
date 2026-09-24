@@ -461,16 +461,9 @@ impl BladeRf1 {
             let manufacturer_id = ((result >> 8) & 0xFF) as u8;
             let device_id = (result & 0xFF) as u8;
             let flash_size_bytes = decode_flash_size(manufacturer_id, device_id)?;
-            let total_pages = flash_size_bytes
-                / crate::bladerf1::hardware::spi_flash::BLADERF_FLASH_PAGE_SIZE as u32;
-            let total_sectors = flash_size_bytes / (64 * 1024);
             Ok(FlashSession {
                 nios: &mut self.nios,
-                flash_meta: FlashMeta {
-                    flash_size_bytes,
-                    total_pages,
-                    total_sectors,
-                },
+                flash_meta: FlashMeta::new(flash_size_bytes)?,
             })
         })
     }
