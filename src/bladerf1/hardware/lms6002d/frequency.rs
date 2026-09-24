@@ -49,7 +49,7 @@ pub struct QuickTune {
 impl From<&LmsFreq> for QuickTune {
     fn from(f: &LmsFreq) -> Self {
         Self {
-            freqsel: f.freqsel,
+            freqsel: f.freqsel.bits(),
             vcocap: f.vcocap,
             nint: f.nint,
             nfrac: f.nfrac,
@@ -59,18 +59,26 @@ impl From<&LmsFreq> for QuickTune {
     }
 }
 
-impl From<QuickTune> for LmsFreq {
-    fn from(qt: QuickTune) -> Self {
-        Self {
-            freqsel: qt.freqsel,
+impl TryFrom<QuickTune> for LmsFreq {
+    type Error = Error;
+
+    fn try_from(qt: QuickTune) -> crate::Result<Self> {
+        if qt.nint > 0x1ff
+            || qt.nfrac > 0x7f_ffff
+            || qt.vcocap > VCOCAP_MAX_VALUE
+            || (qt.flags & !(LMS_FREQ_FLAGS_LOW_BAND | LMS_FREQ_FLAGS_FORCE_VCOCAP)) != 0
+        {
+            return Err(Error::Argument("invalid quick-tune PLL parameters".into()));
+        }
+        Ok(Self {
+            freqsel: FrequencySelect::try_from(qt.freqsel)?,
             vcocap: qt.vcocap,
             nint: qt.nint,
             nfrac: qt.nfrac,
             flags: qt.flags,
             xb_gpio: qt.xb_gpio,
-            x: 0,
             vcocap_result: 0,
-        }
+        })
     }
 }
 /// VCO4 lower frequency boundary in Hz.
@@ -106,6 +114,31 @@ pub const DIV4: u8 = 0x5;
 pub const DIV8: u8 = 0x6;
 /// Post-divider: divide by 16.
 pub const DIV16: u8 = 0x7;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct FrequencySelect(u8);
+
+impl TryFrom<u8> for FrequencySelect {
+    type Error = Error;
+
+    fn try_from(bits: u8) -> crate::Result<Self> {
+        if BANDS.iter().any(|band| band.value == bits) {
+            Ok(Self(bits))
+        } else {
+            Err(Error::Argument("invalid PLL frequency selector".into()))
+        }
+    }
+}
+
+impl FrequencySelect {
+    pub(crate) const fn bits(self) -> u8 {
+        self.0
+    }
+
+    const fn divider(self) -> u8 {
+        1 << ((self.0 & 7) - 3)
+    }
+}
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct FreqRange {
     low: u64,
@@ -199,10 +232,10 @@ pub(crate) const BANDS: [FreqRange; 16] = [
 /// Computed from a target frequency and written to the synthesizer registers.
 /// The VCO multiplies the 38.4 MHz reference by (NINT + NFRAC/2^23), then
 /// divides by X to produce the RF output. VCOCAP adjusts the VCO tuning varactor.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LmsFreq {
     /// Frequency selector: VCO choice and post-divider.
-    pub(crate) freqsel: u8,
+    pub(crate) freqsel: FrequencySelect,
     /// VCOCAP tuning capacitor trim value.
     pub(crate) vcocap: u8,
     /// Integer portion of the fractional-N PLL divider.
@@ -213,15 +246,13 @@ pub struct LmsFreq {
     pub(crate) flags: u8,
     /// XB-200 expansion GPIO configuration for filter and path routing.
     pub(crate) xb_gpio: u8,
-    /// VCO multiplication factor (power of 2).
-    pub(crate) x: u8,
     /// Final VCOCAP value after VTUNE convergence search.
     pub(crate) vcocap_result: u8,
 }
 impl From<&LmsFreq> for u64 {
     fn from(value: &LmsFreq) -> Self {
         let pll_coeff = ((value.nint as u64) << 23) + value.nfrac as u64;
-        let div = (value.x as u64) << 23;
+        let div = u64::from(value.freqsel.divider()) << 23;
         let numerator =
             (LMS_REFERENCE_HZ as u128 * pll_coeff as u128 + (div as u128 >> 1)) / div as u128;
         numerator as u64
@@ -243,38 +274,29 @@ impl TryFrom<u64> for LmsFreq {
                 vcocap as u8
             }
         }
-        let freq = value.clamp(BLADERF_FREQUENCY_MIN as u64, BLADERF_FREQUENCY_MAX as u64);
+        if !(BLADERF_FREQUENCY_MIN as u64..=BLADERF_FREQUENCY_MAX as u64).contains(&value) {
+            return Err(Error::Argument(
+                "frequency outside the LMS6002D range".into(),
+            ));
+        }
+        let freq = value;
         let freq_range = BANDS
             .iter()
             .find(|freq_range| (freq >= freq_range.low) && (freq <= freq_range.high))
             .ok_or(Error::Argument(
                 "Could not determine frequency range".into(),
             ))?;
-        let freqsel = freq_range.value;
-        log::trace!("freqsel: {freqsel}");
+        let freqsel = FrequencySelect::try_from(freq_range.value)?;
+        log::trace!("freqsel: {freqsel:?}");
         let vcocap = estimate_vcocap(freq as u32, freq_range.low as u32, freq_range.high as u32);
         log::trace!("vcocap: {vcocap}");
-        let vco_x = 1u64 << ((freqsel & 7) - 3);
+        let vco_x = u64::from(freqsel.divider());
         log::trace!("vco_x: {vco_x}");
-        if vco_x > u8::MAX as u64 {
-            return Err(Error::Internal("VCO divider out of u8 range"));
-        }
-        let x = vco_x as u8;
-        log::trace!("x: {x}");
-        let mut temp = (vco_x * freq) / LMS_REFERENCE_HZ as u64;
-        if temp > u16::MAX as u64 {
-            return Err(Error::Argument(
-                "frequency results in nint exceeding u16 range".into(),
-            ));
-        }
-        let nint = temp as u16;
+        let coefficient = (((vco_x * freq) << 23) + u64::from(LMS_REFERENCE_HZ) / 2)
+            / u64::from(LMS_REFERENCE_HZ);
+        let nint = (coefficient >> 23) as u16;
         log::trace!("nint: {nint}");
-        let nfrac_num = (1u64 << 23) * (vco_x * freq - nint as u64 * LMS_REFERENCE_HZ as u64);
-        temp = (nfrac_num + LMS_REFERENCE_HZ as u64 / 2) / LMS_REFERENCE_HZ as u64;
-        if temp > u32::MAX as u64 {
-            return Err(Error::Internal("nfrac exceeds u32 range"));
-        }
-        let nfrac = temp as u32;
+        let nfrac = (coefficient & 0x7f_ffff) as u32;
         log::trace!("nfrac: {nfrac}");
         let flags = if Band::from(freq) == Band::Low {
             LMS_FREQ_FLAGS_LOW_BAND
@@ -289,7 +311,6 @@ impl TryFrom<u64> for LmsFreq {
             nfrac,
             flags,
             xb_gpio: 0,
-            x,
             vcocap_result: 0,
         })
     }
@@ -393,7 +414,7 @@ impl<'a> Lms6002d<'a> {
             let lb_enabled = matches!(lben_lbrfen & 0x7, 1..=3)
                 || ((lben_lbrfen & 0x70) != 0 && (loopbben & 0x0c) != 0);
             if let Err(e) = self
-                .write_pll_config(channel, f.freqsel, low_band, lb_enabled)
+                .write_pll_config(channel, f.freqsel.bits(), low_band, lb_enabled)
                 .await
             {
                 self.turn_off_dsms().await?;
@@ -444,27 +465,32 @@ impl<'a> Lms6002d<'a> {
         channel: Channel,
     ) -> impl MaybeFuture<Output = crate::Result<LmsFreq>> {
         Op::new(async move {
-            let mut f = LmsFreq::default();
             let base: u8 = if channel == Channel::Rx { 0x20 } else { 0x10 };
             let data = self.read(base).await?;
-            f.nint = (data as u16) << 1;
+            let mut nint = (data as u16) << 1;
             let data = self.read(base + 1).await?;
-            f.nint |= ((data & 0x80) >> 7) as u16;
-            f.nfrac = (data as u32 & 0x7f) << 16;
+            nint |= ((data & 0x80) >> 7) as u16;
+            let mut nfrac = (data as u32 & 0x7f) << 16;
             let data = self.read(base + 2).await?;
-            f.nfrac |= (data as u32) << 8;
+            nfrac |= (data as u32) << 8;
             let data = self.read(base + 3).await?;
-            f.nfrac |= data as u32;
+            nfrac |= data as u32;
             let data = self.read(base + 5).await?;
-            f.freqsel = data >> 2;
-            let frange = f.freqsel & 7;
-            if frange < 4 {
+            if ((data >> 2) & 7) < 4 {
                 return Err(crate::error::Error::NotInitialized);
             }
-            f.x = 1 << (frange - 3);
+            let freqsel = FrequencySelect::try_from(data >> 2)
+                .map_err(|_| Error::BoardState("invalid PLL frequency selector"))?;
             let data = self.read(base + 9).await?;
-            f.vcocap = data & 0x3f;
-            Ok(f)
+            Ok(LmsFreq {
+                freqsel,
+                nint,
+                nfrac,
+                vcocap: data & 0x3f,
+                flags: 0,
+                xb_gpio: 0,
+                vcocap_result: 0,
+            })
         })
     }
 
@@ -516,7 +542,7 @@ impl<'a> Lms6002d<'a> {
                 flags |= LMS_FREQ_FLAGS_LOW_BAND;
             }
             Ok(QuickTune {
-                freqsel: f.freqsel,
+                freqsel: f.freqsel.bits(),
                 vcocap: f.vcocap,
                 nint: f.nint,
                 nfrac: f.nfrac,
@@ -772,5 +798,44 @@ impl<'a> Lms6002d<'a> {
             data &= !0x05;
             self.write(0x09, data).await
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn selectors_and_quick_tunes_preserve_frequency_at_band_boundaries() {
+        for band in BANDS {
+            let selector = FrequencySelect::try_from(band.value).unwrap();
+            assert!(matches!(selector.divider(), 2 | 4 | 8 | 16));
+            for frequency in [band.low, band.high, (band.low + band.high) / 2] {
+                let pll = LmsFreq::try_from(frequency).unwrap();
+                assert!(u64::from(&pll).abs_diff(frequency) <= 1);
+                assert!(pll.nfrac <= 0x7f_ffff);
+                let restored = LmsFreq::try_from(QuickTune::from(&pll)).unwrap();
+                assert_eq!(u64::from(&restored), u64::from(&pll));
+            }
+        }
+    }
+
+    #[test]
+    fn invalid_pll_parameters_are_rejected() {
+        for bits in 0..=u8::MAX {
+            assert_eq!(
+                FrequencySelect::try_from(bits).is_ok(),
+                BANDS.iter().any(|band| band.value == bits)
+            );
+        }
+        assert!(LmsFreq::try_from(0).is_err());
+        assert!(LmsFreq::try_from(u64::MAX).is_err());
+        let pll = LmsFreq::try_from(915_000_000).unwrap();
+        let mut quick = QuickTune::from(&pll);
+        quick.nfrac = 0x80_0000;
+        assert!(LmsFreq::try_from(quick).is_err());
+        quick = QuickTune::from(&pll);
+        quick.vcocap = 64;
+        assert!(LmsFreq::try_from(quick).is_err());
     }
 }

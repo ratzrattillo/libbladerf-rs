@@ -21,7 +21,7 @@ use crate::bladerf1::hardware::lms6002d::frequency::LmsFreq;
 pub use crate::bladerf1::hardware::lms6002d::frequency::QuickTune;
 use crate::bladerf1::protocol::RetuneTimestamp;
 use crate::channel::Channel;
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::maybe_future::Op;
 use crate::range::{Range, RangeItem};
 use nusb::MaybeFuture;
@@ -128,10 +128,6 @@ impl RfLinkSession<'_> {
         Op::new(async move {
             self.require_initialized().await?;
             let f = self.lms().get_frequency(channel).await?;
-            if f.x == 0 {
-                log::error!("LMSFreq.x was zero!");
-                return Err(Error::Internal("LMSFreq.x was zero"));
-            }
             #[allow(unused_mut)]
             let mut frequency_hz: u64 = (&f).into();
             log::trace!("Frequency Hz: {frequency_hz}");
@@ -226,7 +222,7 @@ impl RfLinkSession<'_> {
         Op::new(async move {
             self.require_initialized().await?;
             let f: LmsFreq = if let Some(qt) = quick_tune {
-                qt.into()
+                qt.try_into()?
             } else {
                 #[cfg(feature = "xb200")]
                 if self.nios.xb200_is_enabled().await? {
@@ -250,7 +246,15 @@ impl RfLinkSession<'_> {
             let result = self
                 .nios
                 .nios_retune(
-                    channel, timestamp, f.nint, f.nfrac, f.freqsel, f.vcocap, band, tune, f.xb_gpio,
+                    channel,
+                    timestamp,
+                    f.nint,
+                    f.nfrac,
+                    f.freqsel.bits(),
+                    f.vcocap,
+                    band,
+                    tune,
+                    f.xb_gpio,
                 )
                 .await?;
             Ok((f, result.duration()))
