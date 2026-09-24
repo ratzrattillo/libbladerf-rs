@@ -140,7 +140,7 @@ impl fmt::Display for FwLogEntry {
 impl RfLinkSession<'_> {
     /// Returns `true` if the FPGA has completed configuration.
     pub fn is_fpga_configured(&mut self) -> impl MaybeFuture<Output = Result<bool>> {
-        Op::new(async move { self.nios.interface().usb_is_fpga_configured().await })
+        Op::new(async move { self.nios.control().await?.usb_is_fpga_configured().await })
     }
 
     /// Reads all entries from the firmware log buffer.
@@ -154,7 +154,8 @@ impl RfLinkSession<'_> {
             loop {
                 let raw = self
                     .nios
-                    .interface()
+                    .control()
+                    .await?
                     .usb_vendor_cmd_int(VendorRequest::ReadLogEntry)
                     .await?;
                 if raw == LOG_EOF {
@@ -193,16 +194,17 @@ impl ConfigSession<'_> {
                 )));
             }
 
-            self.nios.interface().usb_begin_fpga_prog().await?;
+            self.nios.control().await?.usb_begin_fpga_prog().await?;
             self.nios
-                .interface()
+                .control()
+                .await?
                 .usb_bulk_out(CONTROL_ENDPOINT_OUT, bitstream, FPGA_LOAD_TIMEOUT)
                 .await?;
 
             let configured = {
                 let mut result = false;
                 for _ in 0..FPGA_STATUS_POLL_ATTEMPTS {
-                    if self.nios.interface().usb_is_fpga_configured().await? {
+                    if self.nios.control().await?.usb_is_fpga_configured().await? {
                         result = true;
                         break;
                     }

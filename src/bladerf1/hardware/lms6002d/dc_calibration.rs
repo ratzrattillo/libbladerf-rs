@@ -11,7 +11,7 @@
 use crate::Channel;
 use crate::bladerf1::hardware::lms6002d::Lms6002d;
 use crate::bladerf1::hardware::lms6002d::gain::{
-    GAIN_SPEC_LNA, GAIN_SPEC_RXVGA1, GAIN_SPEC_RXVGA2, LnaGainCode,
+    GAIN_SPEC_LNA, GAIN_SPEC_RXVGA1, GAIN_SPEC_RXVGA2,
 };
 use crate::error::{Error, Result};
 use crate::maybe_future::Op;
@@ -163,11 +163,23 @@ impl Display for DcCals {
 pub(crate) struct DcCalState {
     clk_en: u8,
     reg0x72: u8,
-    lna_gain: LnaGainCode,
-    rxvga1_gain: i32,
-    rxvga2_gain: i32,
     rxvga1_curr_gain: i32,
     rxvga2_curr_gain: i32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Measurement {
+    Value(u8),
+    Incomplete,
+}
+
+fn calibrated_value(initial: Measurement, retry: Option<Measurement>) -> Option<u8> {
+    match (initial, retry) {
+        (Measurement::Incomplete, _) => None,
+        (Measurement::Value(31), Some(Measurement::Value(value))) if value != 0 => Some(value),
+        (Measurement::Value(31), _) => None,
+        (Measurement::Value(value), _) => Some(value),
+    }
 }
 
 /// DC calibration target submodule.
@@ -186,6 +198,15 @@ pub enum DcCalModule {
 }
 
 impl DcCalModule {
+    fn temporary_registers(self) -> Result<&'static [u8]> {
+        match self {
+            Self::LpfTuning => Ok(&[0x02, 0x03, 0x09]),
+            Self::TxLpf => Ok(&[0x32, 0x33, 0x36, 0x3f, 0x09]),
+            Self::RxLpf => Ok(&[0x52, 0x53, 0x5f, 0x72, 0x75, 0x76, 0x65, 0x09]),
+            Self::RxVga2 => Ok(&[0x62, 0x63, 0x64, 0x68, 0x6e, 0x72, 0x75, 0x76, 0x65, 0x09]),
+            Self::Invalid => Err(Error::Unsupported("DC calibration module")),
+        }
+    }
     /// Base register address for this calibration module.
     pub(crate) const fn base_addr(self) -> u8 {
         match self {
@@ -370,36 +391,42 @@ impl<'a> Lms6002d<'a> {
         module: DcCalModule,
     ) -> impl MaybeFuture<Output = Result<()>> {
         Op::new(async move {
+            let restoration = self
+                .nios
+                .save_lms_registers(module.temporary_registers()?)
+                .await?;
+            let result = self.run_dc_calibration(module).await;
+            self.nios.finish_restoration(restoration, result).await
+        })
+    }
+
+    fn run_dc_calibration(&mut self, module: DcCalModule) -> impl MaybeFuture<Output = Result<()>> {
+        Op::new(async move {
             let mut state = self.dc_cal_backup(module).await?;
-            if self.dc_cal_module_init(module, &mut state).await.is_err() {
-                let _ = self.dc_cal_module_deinit(module).await;
-                return self.dc_cal_restore(module, &state).await;
-            }
-            let mut converged = false;
-            let mut limit_reached = false;
-            while !converged && !limit_reached {
-                if let Ok(c) = self.dc_cal_module(module, &mut state).await {
-                    converged = c;
-                    if !converged {
-                        if let Ok(l) = self.dc_cal_retry_adjustment(module, &mut state).await {
-                            limit_reached = l;
-                        } else {
-                            break;
-                        }
-                    }
-                } else {
-                    break;
+            self.dc_cal_module_init(module, &mut state).await?;
+            loop {
+                if self.dc_cal_module(module, &mut state).await? {
+                    return Ok(());
+                }
+                if self.dc_cal_retry_adjustment(module, &mut state).await? {
+                    return Err(Error::CalibrationFailed("gain adjustment limit reached"));
                 }
             }
-            if !converged {
-                log::warn!("DC Calibration (module={module:?}) failed to converge.");
-            }
-            let _ = self.dc_cal_module_deinit(module).await;
-            self.dc_cal_restore(module, &state).await
         })
     }
 
     pub(crate) fn set_dc_cals(&mut self, dc_cals: DcCals) -> impl MaybeFuture<Output = Result<()>> {
+        Op::new(async move {
+            let restoration = self
+                .nios
+                .save_lms_registers(&[0x02, 0x03, 0x32, 0x33, 0x52, 0x53, 0x62, 0x63, 0x09])
+                .await?;
+            let result = self.write_dc_cals(dc_cals).await;
+            self.nios.finish_restoration(restoration, result).await
+        })
+    }
+
+    fn write_dc_cals(&mut self, dc_cals: DcCals) -> impl MaybeFuture<Output = Result<()>> {
         Op::new(async move {
             let cal_tx_lpf: bool = (dc_cals.tx_lpf_i >= 0) || (dc_cals.tx_lpf_q >= 0);
             let cal_rx_lpf: bool = (dc_cals.rx_lpf_i >= 0) || (dc_cals.rx_lpf_q >= 0);
@@ -467,6 +494,17 @@ impl<'a> Lms6002d<'a> {
 
     pub(crate) fn get_dc_cals(&mut self) -> impl MaybeFuture<Output = Result<DcCals>> {
         Op::new(async move {
+            let restoration = self
+                .nios
+                .save_lms_registers(&[0x03, 0x33, 0x53, 0x63])
+                .await?;
+            let result = self.read_dc_cals().await;
+            self.nios.finish_restoration(restoration, result).await
+        })
+    }
+
+    fn read_dc_cals(&mut self) -> impl MaybeFuture<Output = Result<DcCals>> {
+        Op::new(async move {
             Ok(DcCals {
                 lpf_tuning: self.get_dc_cal_value(0x00, 0).await? as i16,
                 tx_lpf_i: self.get_dc_cal_value(0x30, 0).await? as i16,
@@ -517,7 +555,7 @@ impl<'a> Lms6002d<'a> {
         base: u8,
         cal_address: u8,
         dc_cntval: u8,
-    ) -> impl MaybeFuture<Output = Result<u8>> {
+    ) -> impl MaybeFuture<Output = Result<Measurement>> {
         Op::new(async move {
             log::debug!("Calibrating module {base:#x}:{cal_address:#x}");
             let mut val = self.read(base + 0x03).await?;
@@ -538,11 +576,11 @@ impl<'a> Lms6002d<'a> {
                 if ((val >> 1) & 1) == 0 {
                     let dc_regval = self.read(base).await? & 0x3f;
                     log::debug!("DC_REGVAL: {dc_regval}");
-                    return Ok(dc_regval);
+                    return Ok(Measurement::Value(dc_regval));
                 }
             }
             log::warn!("DC calibration loop did not converge.");
-            Err(Error::CalibrationFailed("loop did not converge"))
+            Ok(Measurement::Incomplete)
         })
     }
 
@@ -554,17 +592,11 @@ impl<'a> Lms6002d<'a> {
             let mut state = DcCalState {
                 clk_en: self.read(0x09).await?,
                 reg0x72: 0,
-                lna_gain: LnaGainCode::BypassLna1Lna2,
-                rxvga1_gain: 0,
-                rxvga2_gain: 0,
                 rxvga1_curr_gain: 0,
                 rxvga2_curr_gain: 0,
             };
             if module == DcCalModule::RxLpf || module == DcCalModule::RxVga2 {
                 state.reg0x72 = self.read(0x72).await?;
-                state.lna_gain = LnaGainCode::from(self.lna_get_gain().await?);
-                state.rxvga1_gain = self.rxvga1_get_gain().await?.db() as i32;
-                state.rxvga2_gain = self.rxvga2_get_gain().await?.db() as i32;
             }
             Ok(state)
         })
@@ -626,7 +658,6 @@ impl<'a> Lms6002d<'a> {
         _state: &DcCalState,
     ) -> impl MaybeFuture<Output = Result<bool>> {
         Op::new(async move {
-            let mut converged: bool = false;
             if module == DcCalModule::RxVga2 {
                 match submodule {
                     0 => {
@@ -648,15 +679,15 @@ impl<'a> Lms6002d<'a> {
                 }
             }
             let base = module.base_addr();
-            let mut dc_regval = self.dc_cal_loop(base, submodule, 31).await?;
-            if dc_regval == 31 {
-                log::debug!("DC_REGVAL suboptimal value - retrying DC cal loop.");
-                dc_regval = self.dc_cal_loop(base, submodule, 0).await?;
-                if dc_regval == 0 {
-                    log::debug!("Bad DC_REGVAL detected. DC cal failed.");
-                    return Ok(converged);
-                }
-            }
+            let initial = self.dc_cal_loop(base, submodule, 31).await?;
+            let second = if initial == Measurement::Value(31) {
+                Some(self.dc_cal_loop(base, submodule, 0).await?)
+            } else {
+                None
+            };
+            let Some(dc_regval) = calibrated_value(initial, second) else {
+                return Ok(false);
+            };
             if module == DcCalModule::LpfTuning {
                 let mut val = self.read(0x35).await?;
                 val &= !0x3f;
@@ -667,8 +698,7 @@ impl<'a> Lms6002d<'a> {
                 val |= dc_regval;
                 self.write(0x55, val).await?;
             }
-            converged = true;
-            Ok(converged)
+            Ok(true)
         })
     }
 
@@ -719,52 +749,6 @@ impl<'a> Lms6002d<'a> {
         })
     }
 
-    fn dc_cal_module_deinit(
-        &mut self,
-        module: DcCalModule,
-    ) -> impl MaybeFuture<Output = Result<()>> {
-        Op::new(async move {
-            match module {
-                DcCalModule::LpfTuning => {}
-                DcCalModule::RxLpf => {
-                    self.set(0x5f, 1 << 7).await?;
-                }
-                DcCalModule::RxVga2 => {
-                    self.write(0x68, 0x01).await?;
-                    self.clear(0x64, 0x01).await?;
-                    self.set(0x6e, 3 << 6).await?;
-                }
-                DcCalModule::TxLpf => {
-                    self.set(0x3f, 1 << 7).await?;
-                    self.clear(0x36, 1 << 7).await?;
-                }
-                _ => {
-                    return Err(Error::Unsupported("DC calibration module"));
-                }
-            }
-            Ok(())
-        })
-    }
-
-    fn dc_cal_restore(
-        &mut self,
-        module: DcCalModule,
-        state: &DcCalState,
-    ) -> impl MaybeFuture<Output = Result<()>> {
-        Op::new(async move {
-            self.write(0x09, state.clk_en).await?;
-            if module == DcCalModule::RxLpf || module == DcCalModule::RxVga2 {
-                self.write(0x72, state.reg0x72).await?;
-                self.lna_set_gain(state.lna_gain.into()).await?;
-                self.rxvga1_set_gain((state.rxvga1_gain as i8).into())
-                    .await?;
-                self.rxvga2_set_gain((state.rxvga2_gain as i8).into())
-                    .await?;
-            }
-            Ok(())
-        })
-    }
-
     fn dc_cal_module(
         &mut self,
         module: DcCalModule,
@@ -775,7 +759,7 @@ impl<'a> Lms6002d<'a> {
             for submodule in 0..module.num_submodules() {
                 converged = self.dc_cal_submodule(module, submodule, state).await?;
                 if !converged {
-                    return Err(Error::CalibrationFailed("submodule did not converge"));
+                    return Ok(false);
                 }
             }
             Ok(converged)
@@ -860,5 +844,29 @@ impl<'a> Lms6002d<'a> {
             let regval = self.read(addr).await?;
             Ok(unscale_dc_offset(channel, regval))
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn faq_4_7_retries_code_31_from_zero_and_accepts_changed_codes() {
+        for code in 0..64 {
+            if code != 31 {
+                assert_eq!(calibrated_value(Measurement::Value(code), None), Some(code));
+            }
+            assert_eq!(
+                calibrated_value(Measurement::Value(31), Some(Measurement::Value(code))),
+                (code != 0).then_some(code),
+            );
+        }
+        assert_eq!(calibrated_value(Measurement::Value(31), None), None);
+        assert_eq!(calibrated_value(Measurement::Incomplete, None), None);
+        assert_eq!(
+            calibrated_value(Measurement::Value(31), Some(Measurement::Incomplete)),
+            None
+        );
     }
 }

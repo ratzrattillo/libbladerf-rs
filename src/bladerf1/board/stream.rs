@@ -1084,7 +1084,8 @@ impl<'a, 'b> RxStreamBuilder<'a, 'b> {
             let endpoint = self
                 .dev
                 .nios
-                .interface()
+                .control()
+                .await?
                 .acquire_streaming_rx_endpoint()
                 .await?;
             let lease = self.dev.nios.streams.claim(Channel::Rx)?;
@@ -1217,7 +1218,8 @@ impl<'a, 'b> TxStreamBuilder<'a, 'b> {
             let endpoint = self
                 .dev
                 .nios
-                .interface()
+                .control()
+                .await?
                 .acquire_streaming_tx_endpoint()
                 .await?;
             let lease = self.dev.nios.streams.claim(Channel::Tx)?;

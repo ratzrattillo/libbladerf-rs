@@ -37,8 +37,12 @@ impl RfLinkSession<'_> {
                     self.nios.usb_set_firmware_loopback(true).await
                 }
                 _ => {
-                    let fw_lb_enabled: bool =
-                        self.nios.interface().usb_get_firmware_loopback().await?;
+                    let fw_lb_enabled: bool = self
+                        .nios
+                        .control()
+                        .await?
+                        .usb_get_firmware_loopback()
+                        .await?;
                     if fw_lb_enabled {
                         self.nios.usb_set_firmware_loopback(false).await?;
                     }
@@ -75,7 +79,12 @@ impl RfLinkSession<'_> {
         Op::new(async move {
             self.require_initialized().await?;
             let mut lb = Loopback::None;
-            let fw_lb_enabled = self.nios.interface().usb_get_firmware_loopback().await?;
+            let fw_lb_enabled = self
+                .nios
+                .control()
+                .await?
+                .usb_get_firmware_loopback()
+                .await?;
             if fw_lb_enabled {
                 lb = Loopback::Firmware;
             }

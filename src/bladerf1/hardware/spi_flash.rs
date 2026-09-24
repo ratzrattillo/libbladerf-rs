@@ -52,7 +52,8 @@ impl FlashSession<'_> {
             let chunk_size = self.chunk_size()?;
             for (offset, chunk) in buf.chunks_exact_mut(chunk_size).enumerate() {
                 self.nios
-                    .interface()
+                    .control()
+                    .await?
                     .usb_vendor_cmd_in_w_index_data(
                         VendorRequest::ReadPageBuffer,
                         (offset * chunk_size) as u16,
@@ -69,7 +70,8 @@ impl FlashSession<'_> {
             let chunk_size = self.chunk_size()?;
             for (offset, chunk) in buf.chunks_exact(chunk_size).enumerate() {
                 self.nios
-                    .interface()
+                    .control()
+                    .await?
                     .usb_vendor_cmd_out_w_index(
                         VendorRequest::WritePageBuffer,
                         (offset * chunk_size) as u16,
@@ -90,7 +92,8 @@ impl FlashSession<'_> {
             let chunk_size = self.chunk_size()?;
             for (offset, chunk) in buf.chunks_exact_mut(chunk_size).enumerate() {
                 self.nios
-                    .interface()
+                    .control()
+                    .await?
                     .usb_vendor_cmd_in_w_index_data(
                         VendorRequest::ReadCalCache,
                         (offset * chunk_size) as u16,
@@ -118,7 +121,8 @@ impl FlashSession<'_> {
                 )));
             }
             self.nios
-                .interface()
+                .control()
+                .await?
                 .usb_vendor_cmd_int_w_index(VendorRequest::FlashRead, page as u16)
                 .await?;
             self.read_page_buffer(buf).await
@@ -139,7 +143,8 @@ impl FlashSession<'_> {
             }
             self.write_page_buffer(buf).await?;
             self.nios
-                .interface()
+                .control()
+                .await?
                 .usb_vendor_cmd_int_w_index(VendorRequest::FlashWrite, page as u16)
                 .await?;
             Ok(())
@@ -158,7 +163,8 @@ impl FlashSession<'_> {
                 )));
             }
             self.nios
-                .interface()
+                .control()
+                .await?
                 .usb_vendor_cmd_int_w_index(VendorRequest::FlashErase, sector as u16)
                 .await?;
             Ok(())

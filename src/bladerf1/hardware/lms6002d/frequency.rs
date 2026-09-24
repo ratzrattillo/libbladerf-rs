@@ -384,59 +384,41 @@ impl<'a> Lms6002d<'a> {
         f: &mut LmsFreq,
     ) -> impl MaybeFuture<Output = crate::Result<()>> {
         Op::new(async move {
+            let restoration = self.nios.save_lms_registers(&[0x09]).await?;
+            let result = self.program_frequency(channel, f).await;
+            self.nios.finish_restoration(restoration, result).await
+        })
+    }
+
+    fn program_frequency(
+        &mut self,
+        channel: Channel,
+        f: &mut LmsFreq,
+    ) -> impl MaybeFuture<Output = crate::Result<()>> {
+        Op::new(async move {
             let base: u8 = if channel == Channel::Rx { 0x20 } else { 0x10 };
             let pll_base: u8 = base | 0x80;
             f.vcocap_result = 0xff;
             let mut data = self.read(0x09).await?;
             data |= 0x05;
             self.write(0x09, data).await?;
-            let vcocap_reg_state = match self.read(base + 9).await {
-                Ok(v) => v,
-                Err(e) => {
-                    self.turn_off_dsms().await?;
-                    log::error!(
-                        "Failed to read vcocap regstate! Device requires re-initialization (call initialize()) to restore DSM state."
-                    );
-                    return Err(e);
-                }
-            };
+            let vcocap_reg_state = self.read(base + 9).await?;
             let vcocap_reg_state = vcocap_reg_state & !0x3f;
-            if let Err(e) = self.write_vcocap(base, f.vcocap, vcocap_reg_state).await {
-                self.turn_off_dsms().await?;
-                log::error!(
-                    "Failed to write vcocap_reg_state! Device requires re-initialization (call initialize()) to restore DSM state."
-                );
-                return Err(e);
-            }
+            self.write_vcocap(base, f.vcocap, vcocap_reg_state).await?;
             let low_band = (f.flags & LMS_FREQ_FLAGS_LOW_BAND) != 0;
             let lben_lbrfen = self.read(0x08).await?;
             let loopbben = self.read(0x46).await?;
             let lb_enabled = matches!(lben_lbrfen & 0x7, 1..=3)
                 || ((lben_lbrfen & 0x70) != 0 && (loopbben & 0x0c) != 0);
-            if let Err(e) = self
-                .write_pll_config(channel, f.freqsel.bits(), low_band, lb_enabled)
-                .await
-            {
-                self.turn_off_dsms().await?;
-                log::error!(
-                    "Failed to write pll_config! Device requires re-initialization (call initialize()) to restore DSM state."
-                );
-                return Err(e);
-            }
+            self.write_pll_config(channel, f.freqsel.bits(), low_band, lb_enabled)
+                .await?;
             let mut freq_data = [0u8; 4];
             freq_data[0] = (f.nint >> 1) as u8;
             freq_data[1] = (((f.nint & 1) << 7) as u32 | ((f.nfrac >> 16) & 0x7f)) as u8;
             freq_data[2] = ((f.nfrac >> 8) & 0xff) as u8;
             freq_data[3] = (f.nfrac & 0xff) as u8;
             for (idx, value) in freq_data.iter().enumerate() {
-                if let Err(e) = self.write(pll_base + idx as u8, *value).await {
-                    self.turn_off_dsms().await?;
-                    log::error!(
-                        "Failed to write pll {}! Device requires re-initialization (call initialize()) to restore DSM state.",
-                        pll_base + idx as u8
-                    );
-                    return Err(e);
-                }
+                self.write(pll_base + idx as u8, *value).await?;
             }
             if (f.flags & LMS_FREQ_FLAGS_FORCE_VCOCAP) != 0 {
                 f.vcocap_result = f.vcocap;
@@ -789,14 +771,6 @@ impl<'a> Lms6002d<'a> {
                 return Err(Error::TuningFailed);
             }
             Ok(vcocap)
-        })
-    }
-
-    fn turn_off_dsms(&mut self) -> impl MaybeFuture<Output = crate::Result<()>> {
-        Op::new(async move {
-            let mut data = self.read(0x09).await?;
-            data &= !0x05;
-            self.write(0x09, data).await
         })
     }
 }

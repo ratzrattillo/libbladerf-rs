@@ -11,7 +11,7 @@
 use crate::bladerf1::hardware::lms6002d::{Band, Tune};
 use crate::bladerf1::protocol::{RetuneResult, nios_encode_retune};
 use crate::channel::Channel;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::maybe_future::Op;
 use crate::protocol::nios::packet_generic::NiosNum;
 use crate::protocol::nios::targets::NiosPkt8x16AddrAgcCorr;
@@ -26,6 +26,8 @@ use crate::version::SemanticVersion;
 use nusb::MaybeFuture;
 pub(crate) mod streams;
 use streams::StreamClaims;
+mod restoration;
+use restoration::{Restoration, RestorationLease};
 
 /// Central NIOS register I/O hub.
 ///
@@ -37,6 +39,7 @@ pub struct NiosCore {
     /// The underlying USB transport for device communication.
     transport: UsbTransport,
     pub(crate) streams: StreamClaims,
+    restoration: Option<Restoration>,
 }
 impl NiosCore {
     /// Creates a new `NiosCore` wrapping the given USB transport.
@@ -44,6 +47,7 @@ impl NiosCore {
         Self {
             transport,
             streams: StreamClaims::default(),
+            restoration: None,
         }
     }
     /// Returns a shared reference to the underlying `UsbTransport`.
@@ -51,22 +55,72 @@ impl NiosCore {
         &self.transport
     }
     /// Returns the serialized control transport.
-    pub fn interface(&mut self) -> &mut UsbTransport {
-        &mut self.transport
+    pub async fn control(&mut self) -> Result<&mut UsbTransport> {
+        self.recover().await?;
+        Ok(&mut self.transport)
+    }
+
+    pub fn device_reset(&mut self) -> impl MaybeFuture<Output = Result<()>> {
+        use crate::usb::BladeRf1UsbInterfaceCommands;
+        self.transport.usb_device_reset()
     }
     /// Switches the USB alternate setting, releasing NIOS endpoints first.
     pub fn usb_change_setting(
         &mut self,
         setting: UsbAltSetting,
     ) -> impl MaybeFuture<Output = Result<()>> {
-        self.transport.usb_change_setting(setting)
+        Op::new(async move {
+            self.recover().await?;
+            self.transport.usb_change_setting(setting).await
+        })
     }
     /// Sets the firmware loopback mode and cycles the USB alt setting.
     pub fn usb_set_firmware_loopback(
         &mut self,
         enable: bool,
     ) -> impl MaybeFuture<Output = Result<()>> {
-        self.transport.usb_set_firmware_loopback(enable)
+        Op::new(async move {
+            self.recover().await?;
+            self.transport.usb_set_firmware_loopback(enable).await
+        })
+    }
+
+    pub(crate) async fn recover(&mut self) -> Result<()> {
+        if let Some(restoration) = self.restoration.as_mut()
+            && restoration.restore(&mut self.transport).await?
+        {
+            self.restoration = None;
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn save_lms_registers(
+        &mut self,
+        addresses: &[u8],
+    ) -> Result<RestorationLease> {
+        self.recover().await?;
+        if self.restoration.is_some() {
+            return Err(Error::Internal("nested temporary-register operation"));
+        }
+        let mut writes = std::collections::VecDeque::with_capacity(addresses.len());
+        for &address in addresses {
+            let value = self
+                .nios_read::<u8, u8>(crate::protocol::nios::NiosPkt8x8Target::Lms6, address)
+                .await?;
+            writes.push_back((address, value));
+        }
+        let (restoration, lease) = Restoration::new(writes);
+        self.restoration = Some(restoration);
+        Ok(lease)
+    }
+
+    pub(crate) async fn finish_restoration<T>(
+        &mut self,
+        lease: RestorationLease,
+        result: Result<T>,
+    ) -> Result<T> {
+        drop(lease);
+        restoration::with_cleanup(result, self.recover().await)
     }
     /// Issues a generic NIOS register read.
     ///
@@ -78,6 +132,7 @@ impl NiosCore {
         addr: A,
     ) -> impl MaybeFuture<Output = Result<D>> {
         Op::new(async move {
+            self.recover().await?;
             let id = id.into();
             let mut request = [0; 16];
             nios_encode_read::<A, D>(&mut request, id, addr)?;
@@ -98,6 +153,7 @@ impl NiosCore {
         data: D,
     ) -> impl MaybeFuture<Output = Result<()>> {
         Op::new(async move {
+            self.recover().await?;
             let id = id.into();
             let mut request = [0; 16];
             nios_encode_write::<A, D>(&mut request, id, addr, data)?;
@@ -248,6 +304,7 @@ impl NiosCore {
         xb_gpio: u8,
     ) -> impl MaybeFuture<Output = Result<crate::bladerf1::protocol::RetuneResult>> {
         Op::new(async move {
+            self.recover().await?;
             if timestamp == crate::bladerf1::protocol::RetuneTimestamp::Now {
                 log::trace!("Clearing Retune Queue");
             }

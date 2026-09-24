@@ -233,6 +233,20 @@ pub enum Error {
     #[error("device recovery required; reset and reopen the connection")]
     RecoveryRequired,
 
+    /// A saved temporary hardware setting could not yet be restored.
+    #[error("temporary-register restoration failed: {0}")]
+    RestorationFailed(#[source] Box<Error>),
+
+    /// An operation and its cleanup both failed; both errors remain available.
+    #[error("{operation}; cleanup also failed: {cleanup}")]
+    OperationAndCleanup {
+        /// Primary operation failure.
+        #[source]
+        operation: Box<Error>,
+        /// Failure encountered during restoration or teardown.
+        cleanup: Box<Error>,
+    },
+
     /// The trigger must be armed before it can be fired or disarmed.
     #[error("trigger not armed")]
     TriggerNotArmed,
@@ -251,6 +265,8 @@ impl Error {
     /// Returns the coarse category of this error.
     pub fn kind(&self) -> ErrorKind {
         match self {
+            Self::OperationAndCleanup { operation, .. } => operation.kind(),
+            Self::RestorationFailed(_) => ErrorKind::State,
             Self::Io(_) | Self::Json(_) => ErrorKind::Io,
             Self::Nusb(_)
             | Self::Transfer(_)
