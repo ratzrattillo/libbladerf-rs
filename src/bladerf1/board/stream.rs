@@ -186,29 +186,10 @@ impl<E: BulkEndpoint> BufferPool<E> {
 
     fn pickup_tx_completed(&mut self) -> Result<()> {
         if let Some(completion) = self.poll_completion() {
-            completion.status?;
             self.recycle(completion.buffer);
+            completion.status?;
         }
         Ok(())
-    }
-
-    /// Reaps completions that are already ready and resubmits them, keeping
-    /// the pipeline full. Bounded by the pool size so a device that completes
-    /// resubmitted buffers immediately cannot livelock the caller.
-    fn drain_extras(&mut self) {
-        for _ in 0..self.buffer_count {
-            let Some(extra) = self.poll_completion() else {
-                break;
-            };
-            let mut b = extra.buffer;
-            b.clear();
-            b.set_requested_len(self.buffer_size);
-            if extra.status.is_err() {
-                self.available.push_back(b);
-            } else {
-                self.submit(b);
-            }
-        }
     }
 }
 
@@ -378,7 +359,6 @@ impl<E: BulkEndpoint> StreamCore<E> {
             pool.recycle(completion.buffer);
             return Err(e.into());
         }
-        pool.drain_extras();
         Ok(completion.buffer)
     }
 
@@ -454,7 +434,6 @@ impl<E: BulkEndpoint> Future for RxRead<'_, E> {
             pool.recycle(completion.buffer);
             return Poll::Ready(Err(e.into()));
         }
-        pool.drain_extras();
         Poll::Ready(Ok(completion.buffer))
     }
 }
@@ -477,7 +456,6 @@ impl<E: BulkEndpoint> MaybeFuture for RxRead<'_, E> {
             pool.recycle(completion.buffer);
             return Err(e.into());
         }
-        pool.drain_extras();
         Ok(completion.buffer)
     }
 }
@@ -1187,6 +1165,7 @@ mod tests {
         cancellable: bool,
         fill: usize,
         clear_halts: usize,
+        sequence: u64,
     }
 
     #[derive(Clone)]
@@ -1200,6 +1179,7 @@ mod tests {
                 cancellable: true,
                 fill: MPS,
                 clear_halts: 0,
+                sequence: 0,
             })))
         }
         fn cancellable(&self) -> bool {
@@ -1244,6 +1224,8 @@ mod tests {
                     if status.is_ok() {
                         buffer.clear();
                         buffer.extend_fill(fill.min(buffer.capacity()), 0xAB);
+                        buffer[..8].copy_from_slice(&st.sequence.to_le_bytes());
+                        st.sequence += 1;
                     }
                     Some(Completion {
                         actual_len: buffer.len(),
@@ -1653,13 +1635,55 @@ mod tests {
     #[test]
     fn async_and_sync_reads_agree() {
         let mut f = Fixture::rx();
+        let mut g = Fixture::rx();
         f.core.start(&mut f.host).wait().unwrap();
+        g.core.start(&mut g.host).wait().unwrap();
         let a = f.core.read(None).wait().unwrap();
-        let b = block_on(f.core.read(None).into_future()).unwrap();
+        let b = block_on(g.core.read(None).into_future()).unwrap();
         assert_eq!(&a[..], &b[..]);
-        f.assert_pool_invariant(2);
+        f.assert_pool_invariant(1);
+        g.assert_pool_invariant(1);
         f.core.recycle(a);
-        f.core.recycle(b);
+        g.core.recycle(b);
+    }
+
+    #[test]
+    fn all_read_paths_deliver_every_ready_completion_in_order() {
+        for path in 0..3 {
+            let mut f = Fixture::rx();
+            f.core.start(&mut f.host).wait().unwrap();
+            for expected in 0..(BUFFERS * 8) as u64 {
+                let buffer = match path {
+                    0 => f.core.read(None).wait(),
+                    1 => block_on(f.core.read(None).into_future()),
+                    _ => f.core.try_read(),
+                }
+                .unwrap();
+                assert_eq!(
+                    u64::from_le_bytes(buffer[..8].try_into().unwrap()),
+                    expected
+                );
+                f.assert_pool_invariant(1);
+                f.core.recycle(buffer);
+            }
+        }
+    }
+
+    #[test]
+    fn tx_probe_recycles_failed_completions() {
+        let mut f = Fixture::new(Channel::Tx, false);
+        f.core.start(&mut f.host).wait().unwrap();
+        for _ in 0..BUFFERS * 4 {
+            let mut buffer = f.core.get_buffer(None).wait().unwrap();
+            buffer.extend_from_slice(&[1, 2, 3, 4]);
+            f.core.submit(buffer, 4).unwrap();
+            f.ep.complete_next(Err(TransferError::Stall));
+            assert!(matches!(
+                f.core.try_get_buffer(),
+                Err(Error::Transfer(TransferError::Stall))
+            ));
+            f.assert_pool_invariant(0);
+        }
     }
 
     #[test]
