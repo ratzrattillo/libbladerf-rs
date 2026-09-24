@@ -255,16 +255,17 @@ impl<E: BulkEndpoint> BufferPool<E> {
     }
 
     /// Collects all in-flight transfers and returns their buffers to the
-    /// pool. Each completion is bounded by a 5-second deadline.
+    /// pool. Each completion is bounded by the supplied deadline.
     ///
     /// Where cancellation is not available (WebUSB), callers drain while
     /// the module is still streaming so the transfers finish naturally.
-    async fn drain(&mut self) -> Result<()> {
+    async fn drain(&mut self, timeout: Duration) -> Result<()> {
         while self.pending() > 0 {
-            let completion =
-                crate::maybe_future::timeout(DRAIN_TIMEOUT, self.endpoint.next_complete())
-                    .await
-                    .ok_or(Error::Timeout)?;
+            let completion = crate::maybe_future::timeout(timeout, self.endpoint.next_complete())
+                .await
+                .ok_or_else(|| Error::StreamDrainIncomplete {
+                    pending: self.pending(),
+                })?;
             self.recycle(completion.buffer);
             match completion.status {
                 Ok(()) | Err(TransferError::Cancelled) => {}
@@ -415,6 +416,10 @@ impl<E: BulkEndpoint> StreamCore<E> {
         Ok(self.pool_ref()?.buffer_count)
     }
 
+    fn pending_transfers(&self) -> Result<usize> {
+        Ok(self.pool_ref()?.pending())
+    }
+
     pub(crate) fn recycle(&mut self, buf: Buffer) {
         if let Ok(pool) = self.pool_mut() {
             pool.recycle(buf);
@@ -486,7 +491,7 @@ impl<E: BulkEndpoint> StreamCore<E> {
     ) -> impl MaybeFuture<Output = Result<()>> + 'a {
         Op::new(async move {
             self.begin_teardown(host, StopGoal::Prepared)?;
-            self.teardown(host).await
+            self.teardown(host, DRAIN_TIMEOUT).await
         })
     }
 
@@ -499,7 +504,7 @@ impl<E: BulkEndpoint> StreamCore<E> {
             if matches!(self.state, StreamState::Closed) {
                 return Ok(());
             }
-            self.teardown(host).await
+            self.teardown(host, DRAIN_TIMEOUT).await
         })
     }
 
@@ -545,7 +550,7 @@ impl<E: BulkEndpoint> StreamCore<E> {
     /// promises never settle once the device stops streaming, so they are
     /// collected while the module is still active, then the module is
     /// disabled.
-    async fn teardown<H: StreamHost>(&mut self, host: &mut H) -> Result<()> {
+    async fn teardown<H: StreamHost>(&mut self, host: &mut H, timeout: Duration) -> Result<()> {
         loop {
             let StreamState::Stopping { pool, phase, goal } = &mut self.state else {
                 unreachable!()
@@ -560,7 +565,7 @@ impl<E: BulkEndpoint> StreamCore<E> {
                     };
                 }
                 StopPhase::DrainBeforeDisable => {
-                    pool.drain().await?;
+                    pool.drain(timeout).await?;
                     *phase = StopPhase::Module;
                 }
                 StopPhase::Module => {
@@ -568,7 +573,7 @@ impl<E: BulkEndpoint> StreamCore<E> {
                     *phase = StopPhase::Drain;
                 }
                 StopPhase::Drain => {
-                    pool.drain().await?;
+                    pool.drain(timeout).await?;
                     *phase = StopPhase::ClearHalt;
                 }
                 StopPhase::ClearHalt => {
@@ -979,6 +984,18 @@ impl<'a, 'b> RxStreamBuilder<'a, 'b> {
 }
 
 impl RxStream {
+    /// Counts submitted transfers whose completions have not yet been collected.
+    ///
+    /// During a WebUSB drain, provide enough source data for these existing
+    /// reads before retrying stop/close. Each read requests [`Self::buffer_size`]
+    /// bytes. No replacement reads are submitted during teardown.
+    ///
+    /// # Errors
+    /// Returns [`Error::StreamClosed`] after close.
+    pub fn pending_transfers(&self) -> Result<usize> {
+        self.core.pending_transfers()
+    }
+
     /// Returns the validated timestamp-message layout captured when the stream was built.
     ///
     /// # Errors
@@ -1000,9 +1017,18 @@ impl RxStream {
         }
     }
 
-    /// Performs full stream teardown: disables the RX module, cancels pending
-    /// transfers, drains them, clears halt, and deconfigures format GPIO bits.
-    /// Consumes the stream pool; subsequent calls return `Error::StreamClosed`.
+    /// Closes RX and releases its endpoint after all transfers have been collected.
+    ///
+    /// Native backends cancel before disabling; WebUSB drains before disabling.
+    /// Keep a trigger or firmware-loopback TX source available until RX drains.
+    /// A failed/cancelled close retains the pool and remaining cleanup work.
+    /// Shared format bits remain set while a compatible peer uses them.
+    ///
+    /// # Errors
+    /// Returns [`Error::StreamDrainIncomplete`] if a completion takes over five
+    /// seconds. Restore the source and retry this method with the same session.
+    /// Propagates USB errors and rejects wrong-device sessions. After success,
+    /// subsequent calls return [`Error::StreamClosed`].
     pub fn close<'a>(
         &'a mut self,
         dev: &'a mut RfLinkSession<'_>,
@@ -1020,8 +1046,14 @@ impl RxStream {
         self.core.start(dev)
     }
 
-    /// Stops the RX stream: disables the module and tears down transfers,
-    /// but retains the buffer pool so the stream can be restarted.
+    /// Stops RX, retaining its endpoint claim and buffer pool for restart.
+    ///
+    /// Uses the same resumable teardown and source requirements as [`Self::close`].
+    /// Flash/Config sessions remain unavailable until the stream is closed.
+    ///
+    /// # Errors
+    /// Returns [`Error::StreamDrainIncomplete`] for an unfinished drain and
+    /// propagates teardown errors. Keep the stream and retry after recovery.
     pub fn stop<'a>(
         &'a mut self,
         dev: &'a mut RfLinkSession<'_>,
@@ -1119,6 +1151,14 @@ impl<'a, 'b> TxStreamBuilder<'a, 'b> {
 }
 
 impl TxStream {
+    /// Counts submitted transfers whose completions have not yet been collected.
+    ///
+    /// # Errors
+    /// Returns [`Error::StreamClosed`] after close.
+    pub fn pending_transfers(&self) -> Result<usize> {
+        self.core.pending_transfers()
+    }
+
     /// Returns the validated timestamp-message layout captured when the stream was built.
     ///
     /// # Errors
@@ -1665,6 +1705,68 @@ mod tests {
     }
 
     #[test]
+    fn source_limited_drain_times_out_without_disabling_or_losing_ownership() {
+        for goal in [StopGoal::Prepared, StopGoal::Closed] {
+            let mut f = Fixture::new(Channel::Rx, false);
+            f.ep.set_cancellable(false);
+            f.core.start(&mut f.host).wait().unwrap();
+            f.core.begin_teardown(&mut f.host, goal).unwrap();
+            for completed in 0..BUFFERS {
+                let error = block_on(f.core.teardown(&mut f.host, Duration::ZERO)).unwrap_err();
+                assert!(
+                    matches!(error, Error::StreamDrainIncomplete { pending } if pending == BUFFERS - completed)
+                );
+                assert_eq!(error.kind(), ErrorKind::Timeout);
+                assert_eq!(f.available(), completed);
+                f.assert_pool_invariant(0);
+                assert!(f.host.module(Channel::Rx));
+                assert_eq!(f.host.claims.format_users(), 1);
+                assert!(matches!(
+                    f.host.claims.require_idle(),
+                    Err(Error::StreamsActive)
+                ));
+                assert!(matches!(f.core.try_read(), Err(Error::StreamTransition)));
+                assert!(
+                    !f.log()
+                        .iter()
+                        .any(|operation| operation == "cancel" || operation == "deconfig")
+                );
+                f.ep.complete_next(Ok(()));
+            }
+            block_on(f.core.teardown(&mut f.host, Duration::ZERO)).unwrap();
+            assert_eq!(f.ep.pending(), 0);
+            assert!(!f.host.module(Channel::Rx));
+            assert_eq!(f.host.claims.format_users(), 0);
+            if goal == StopGoal::Prepared {
+                f.assert_pool_invariant(0);
+                f.core.close(&mut f.host).wait().unwrap();
+            }
+            assert!(f.host.claims.require_idle().is_ok());
+        }
+    }
+
+    #[test]
+    fn failed_noncancellable_drain_returns_the_failed_buffer_and_resumes_the_rest() {
+        let mut f = Fixture::new(Channel::Rx, false);
+        f.ep.set_cancellable(false);
+        f.core.start(&mut f.host).wait().unwrap();
+        f.ep.complete_next(Err(TransferError::Disconnected));
+        assert!(matches!(
+            f.core.close(&mut f.host).wait(),
+            Err(Error::Transfer(TransferError::Disconnected))
+        ));
+        assert_eq!(f.available(), 1);
+        assert_eq!(f.core.pending_transfers().unwrap(), BUFFERS - 1);
+        assert!(f.host.module(Channel::Rx));
+        f.assert_pool_invariant(0);
+        for _ in 1..BUFFERS {
+            f.ep.complete_next(Ok(()));
+        }
+        f.core.close(&mut f.host).wait().unwrap();
+        assert!(f.host.claims.require_idle().is_ok());
+    }
+
+    #[test]
     fn duplex_formats_survive_either_close_order_and_reject_incompatible_start() {
         for close_rx_first in [false, true] {
             let mut f = Fixture::rx();
@@ -2073,8 +2175,8 @@ mod tests {
         f.core.start(&mut f.host).wait().unwrap();
         for _ in 0..BUFFERS * 3 {
             let mut buf = f.core.get_buffer(None).wait().unwrap();
-            buf.extend_from_slice(&[0; 2]);
-            f.core.submit(buf, 2).unwrap();
+            buf.extend_from_slice(&[0; 4]);
+            f.core.submit(buf, 4).unwrap();
         }
         f.assert_pool_invariant(0);
     }
@@ -2092,6 +2194,10 @@ mod tests {
             f.core.submit(buf, MPS * 4 + 1),
             Err(Error::Argument(_))
         ));
+        f.assert_pool_invariant(0);
+        let mut buf = f.core.get_buffer(None).wait().unwrap();
+        buf.extend_from_slice(&[0; 2]);
+        assert!(matches!(f.core.submit(buf, 2), Err(Error::Argument(_))));
         f.assert_pool_invariant(0);
     }
 

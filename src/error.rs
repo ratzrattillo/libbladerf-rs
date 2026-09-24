@@ -250,6 +250,17 @@ pub enum Error {
     #[error("stream transition is incomplete; retry start, stop, or close")]
     StreamTransition,
 
+    /// Stream teardown timed out while retaining uncollected transfers.
+    ///
+    /// Keep the stream, restore its completion source, and retry stop/close.
+    /// WebUSB RX may need its trigger released or additional firmware-loopback
+    /// TX data. No new RX requests are submitted during this transition.
+    #[error("stream drain timed out with {pending} transfers pending; retain the stream and retry")]
+    StreamDrainIncomplete {
+        /// Transfers whose completions and buffers remain owned by the stream.
+        pending: usize,
+    },
+
     /// Protocol synchronization was lost; reset and reopen the device before further I/O.
     #[error("device recovery required; reset and reopen the connection")]
     RecoveryRequired,
@@ -298,7 +309,7 @@ impl Error {
             | Self::UsbTransferLength { .. }
             | Self::UsbControlResponseTooShort { .. } => ErrorKind::Usb,
             Self::NiosPacket(_) | Self::MetadataLength { .. } => ErrorKind::Protocol,
-            Self::Timeout => ErrorKind::Timeout,
+            Self::Timeout | Self::StreamDrainIncomplete { .. } => ErrorKind::Timeout,
             Self::WouldBlock => ErrorKind::WouldBlock,
             Self::NotFound => ErrorKind::NotFound,
             Self::Argument(_) | Self::InvalidSampleRate(_) => ErrorKind::InvalidArgument,

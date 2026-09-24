@@ -100,6 +100,7 @@ async fn streams(rf: &mut RfLinkSession<'_>) -> Result<()> {
         .build()
         .await?;
     rx.start(rf).await?;
+    let _: usize = rx.pending_transfers()?;
     let buffer: Buffer = rx.read(None).await?;
     rx.recycle(buffer);
     let _ = rx.try_read();
@@ -108,6 +109,7 @@ async fn streams(rf: &mut RfLinkSession<'_>) -> Result<()> {
 
     let mut tx: TxStream = TxStream::builder(rf).build().await?;
     tx.start(rf).await?;
+    let _: usize = tx.pending_transfers()?;
     let mut buffer: Buffer = tx.get_buffer(Some(Duration::from_secs(1))).await?;
     buffer.extend_from_slice(&[0; 4]);
     tx.submit(buffer, 4)?;

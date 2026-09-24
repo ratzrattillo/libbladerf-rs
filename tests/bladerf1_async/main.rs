@@ -13,6 +13,7 @@ use std::time::Duration;
 
 mod connection;
 mod metadata;
+mod recovery;
 
 fn logging_init() {
     let _ = env_logger::builder()
@@ -71,68 +72,72 @@ async fn firmware_loopback_stream() -> Result<()> {
     logging_init();
     let mut dev = open().await?;
     let mut rf = dev.rf_link_session().await?;
-    let original_rx_sr = rf.get_sample_rate(Channel::Rx).await?;
-    let original_tx_sr = rf.get_sample_rate(Channel::Tx).await?;
-    rf.set_sample_rate(Channel::Rx, 2_000_000).await?;
-    rf.set_sample_rate(Channel::Tx, 2_000_000).await?;
+    let original_loopback = rf.get_loopback().await?;
     rf.set_loopback(Loopback::Firmware).await?;
-
-    let num_samples = 2048;
-    let buffer_size = num_samples * 4;
+    let buffer_size = 8192;
     let mut rx = RxStream::builder(&mut rf)
         .buffer_size(buffer_size)
-        .buffer_count(8)
+        .buffer_count(4)
         .format(SampleFormat::Sc16Q11)
         .build()
         .await?;
-    rx.start(&mut rf).await?;
     let mut tx = TxStream::builder(&mut rf)
         .buffer_size(buffer_size)
-        .buffer_count(8)
+        .buffer_count(4)
         .format(SampleFormat::Sc16Q11)
         .build()
         .await?;
-    tx.start(&mut rf).await?;
-
-    let tx_data: Vec<u8> = (0..num_samples)
-        .flat_map(|i| {
-            let phase = (i as f32 * 2.0 * std::f32::consts::PI / 64.0).sin();
-            let val = (phase * 2047.0) as i16;
-            let bytes = val.to_le_bytes();
-            [bytes[0], bytes[1], bytes[0], bytes[1]]
-        })
-        .collect();
-    let mut tx_buf = tx.get_buffer(None).await?;
-    tx_buf.extend_from_slice(&tx_data);
-    tx.submit(tx_buf, tx_data.len())?;
-    tokio::time::timeout(Duration::from_secs(5), tx.wait_completion(None))
-        .await
-        .expect("TX completion timed out")?;
-
-    let rx_buf = tokio::time::timeout(Duration::from_secs(5), rx.read(None))
-        .await
-        .expect("RX read timed out")?;
-    let non_zero = rx_buf
-        .as_chunks::<4>()
-        .0
-        .iter()
-        .filter(|chunk| **chunk != [0, 0, 0, 0])
-        .count();
-    log::info!(
-        "async firmware loopback: {} bytes, {non_zero} non-zero samples",
-        rx_buf.len()
+    let mut expected = vec![0; buffer_size];
+    let mut mismatches = 0;
+    let result: Result<()> = async {
+        for restart in 0..3 {
+            rx.start(&mut rf).await?;
+            tx.start(&mut rf).await?;
+            for frame in 0..64 {
+                for (word, bytes) in expected.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+                    let index = ((restart * 64 + frame) * (buffer_size / 4) + word) as u32;
+                    *bytes = index.wrapping_mul(0x9e37_79b9).to_le_bytes();
+                }
+                let mut buffer = tx.get_buffer(None).await?;
+                buffer.extend_from_slice(&expected);
+                tx.submit(buffer, buffer_size)?;
+                tokio::time::timeout(Duration::from_secs(2), tx.wait_completion(None))
+                    .await
+                    .map_err(|_| libbladerf_rs::Error::Timeout)??;
+                let buffer = tokio::time::timeout(Duration::from_secs(2), rx.read(None))
+                    .await
+                    .map_err(|_| libbladerf_rs::Error::Timeout)??;
+                if buffer[..] != expected {
+                    mismatches += 1;
+                }
+                rx.recycle(buffer);
+            }
+            for _ in 0..rx.pending_transfers()? {
+                let mut buffer = tx.get_buffer(None).await?;
+                buffer.extend_from_slice(&expected);
+                tx.submit(buffer, buffer_size)?;
+                tokio::time::timeout(Duration::from_secs(2), tx.wait_completion(None))
+                    .await
+                    .map_err(|_| libbladerf_rs::Error::Timeout)??;
+            }
+            rx.stop(&mut rf).await?;
+            tx.stop(&mut rf).await?;
+        }
+        Ok(())
+    }
+    .await;
+    let close_rx = rx.close(&mut rf).await;
+    let close_tx = tx.close(&mut rf).await;
+    let restore = rf.set_loopback(original_loopback).await;
+    result?;
+    close_rx?;
+    close_tx?;
+    restore?;
+    assert_eq!(
+        mismatches, 0,
+        "numbered loopback payloads must match byte for byte"
     );
-    assert!(
-        non_zero > num_samples / 4,
-        "got {non_zero} non-zero samples"
-    );
-    rx.recycle(rx_buf);
-
-    rx.close(&mut rf).await?;
-    tx.close(&mut rf).await?;
-    rf.set_loopback(Loopback::None).await?;
-    rf.set_sample_rate(Channel::Rx, original_rx_sr).await?;
-    rf.set_sample_rate(Channel::Tx, original_tx_sr).await?;
+    println!("192 numbered loopback buffers verified across three starts");
     dev.close().await
 }
 
