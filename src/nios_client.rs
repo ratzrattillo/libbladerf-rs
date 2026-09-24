@@ -90,13 +90,12 @@ impl NiosCore {
     ) -> impl MaybeFuture<Output = Result<D>> {
         Op::new(async move {
             let id = id.into();
-            let out_buf = self.transport.out_buffer()?;
-            log::trace!("nios_read: DMA buffer len = {} bytes", out_buf.len());
-            nios_encode_read::<A, D>(out_buf, id, addr)?;
-            let response = self.transport.submit(None).await?;
+            let mut request = [0; 16];
+            nios_encode_read::<A, D>(&mut request, id, addr)?;
+            let response = self.transport.exchange(&request, None).await?;
             log::trace!("nios_read: response len = {} bytes", response.len());
-            validate_response_address(response, id, addr)?;
-            nios_decode_read::<A, D>(response)
+            validate_response_address(&response, id, addr)?;
+            nios_decode_read::<A, D>(&response)
         })
     }
     /// Issues a generic NIOS register write.
@@ -111,11 +110,11 @@ impl NiosCore {
     ) -> impl MaybeFuture<Output = Result<()>> {
         Op::new(async move {
             let id = id.into();
-            let out_buf = self.transport.out_buffer()?;
-            nios_encode_write::<A, D>(out_buf, id, addr, data)?;
-            let response = self.transport.submit(None).await?;
-            validate_response_address(response, id, addr)?;
-            nios_decode_write::<A, D>(response)
+            let mut request = [0; 16];
+            nios_encode_write::<A, D>(&mut request, id, addr, data)?;
+            let response = self.transport.exchange(&request, None).await?;
+            validate_response_address(&response, id, addr)?;
+            nios_decode_write::<A, D>(&response)
         })
     }
     /// Reads the config GPIO register.
@@ -267,12 +266,21 @@ impl NiosCore {
             if timestamp == crate::bladerf1::protocol::RetuneTimestamp::Now {
                 log::trace!("Clearing Retune Queue");
             }
-            let out_buf = self.transport.out_buffer()?;
+            let mut request = [0; 16];
             nios_encode_retune(
-                out_buf, channel, timestamp, nint, nfrac, freqsel, vcocap, band, tune, xb_gpio,
+                &mut request,
+                channel,
+                timestamp,
+                nint,
+                nfrac,
+                freqsel,
+                vcocap,
+                band,
+                tune,
+                xb_gpio,
             )?;
-            let response = self.transport.submit(None).await?;
-            RetuneResult::decode(timestamp, response)
+            let response = self.transport.exchange(&request, None).await?;
+            RetuneResult::decode(timestamp, &response)
         })
     }
     /// Writes a value to the ADF4351 synthesizer (XB-200 expansion board).

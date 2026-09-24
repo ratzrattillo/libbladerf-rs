@@ -12,7 +12,6 @@
 use crate::channel::Channel;
 use crate::error::{Error, Result};
 use crate::maybe_future::{NonWasmSend, Op};
-use crate::protocol::nios::NiosPacketError;
 use nusb::transfer::{
     Buffer, Bulk, Completion, ControlIn, ControlOut, ControlType, EndpointDirection, In, Out,
     Recipient, TransferError,
@@ -22,6 +21,9 @@ use std::future::Future;
 use std::num::NonZero;
 use std::task::{Context, Poll};
 use std::time::Duration;
+
+mod transaction;
+use transaction::NiosExchange;
 
 /// USB endpoint address for the control OUT bulk endpoint.
 pub const CONTROL_ENDPOINT_OUT: u8 = 0x02;
@@ -533,12 +535,7 @@ pub(crate) async fn drain_pending<E: BulkEndpoint>(ep: &mut E, deadline: Duratio
     buffers
 }
 
-struct NiosEndpoints {
-    ep_out: Endpoint<Bulk, Out>,
-    ep_in: Endpoint<Bulk, In>,
-    buf_out: Option<Buffer>,
-    buf_in: Option<Buffer>,
-}
+type NiosEndpoints = NiosExchange<Endpoint<Bulk, Out>, Endpoint<Bulk, In>>;
 
 /// Concrete USB transport wrapping an `nusb` interface.
 ///
@@ -552,7 +549,6 @@ pub struct UsbTransport {
     speed: Speed,
 }
 impl UsbTransport {
-    const NIOS_PKT_SIZE: usize = 16;
     /// Creates a new `UsbTransport` from an nusb `Interface`.
     pub fn new(interface: Interface, speed: Speed) -> Self {
         let current_alt_setting =
@@ -582,7 +578,7 @@ impl UsbTransport {
         setting: UsbAltSetting,
     ) -> impl MaybeFuture<Output = Result<()>> {
         Op::new(async move {
-            self.release_endpoints().await;
+            self.release_endpoints().await?;
             self.interface.set_alt_setting(setting as u8).await?;
             self.current_alt_setting = setting;
             Ok(())
@@ -605,18 +601,17 @@ impl UsbTransport {
             Ok(())
         })
     }
-    /// Cancels pending NIOS transfers and releases the cached endpoints.
+    /// Finishes pending NIOS transactions before releasing their endpoints.
     ///
     /// Called before switching USB alternate settings to ensure clean
-    /// endpoint teardown. Waits up to 5 seconds for in-flight transfers.
-    pub fn release_endpoints(&mut self) -> impl MaybeFuture<Output = ()> {
+    /// endpoint teardown. Incomplete transactions retain their endpoints for retry.
+    pub fn release_endpoints(&mut self) -> impl MaybeFuture<Output = Result<()>> {
         Op::new(async move {
-            if let Some(mut endpoints) = self.nios_endpoints.take() {
-                endpoints.ep_out.cancel_all();
-                endpoints.ep_in.cancel_all();
-                drop(drain_pending(&mut endpoints.ep_out, RELEASE_TIMEOUT).await);
-                drop(drain_pending(&mut endpoints.ep_in, RELEASE_TIMEOUT).await);
+            if let Some(endpoints) = self.nios_endpoints.as_mut() {
+                endpoints.finish(RELEASE_TIMEOUT).await?;
             }
+            self.nios_endpoints = None;
+            Ok(())
         })
     }
     fn ensure_nios_endpoints(&mut self) -> Result<&mut NiosEndpoints> {
@@ -629,87 +624,25 @@ impl UsbTransport {
                 .interface
                 .endpoint::<Bulk, In>(CONTROL_ENDPOINT_IN)
                 .map_err(Error::EndpointBusy)?;
-            let buf_out = Some(ep_out.allocate(Self::NIOS_PKT_SIZE));
-            let buf_in = Some(ep_in.allocate(ep_in.max_packet_size()));
-            self.nios_endpoints = Some(NiosEndpoints {
-                ep_out,
-                ep_in,
-                buf_out,
-                buf_in,
-            });
+            self.nios_endpoints = Some(NiosExchange::new(ep_out, ep_in));
         }
         self.nios_endpoints
             .as_mut()
             .ok_or(Error::EndpointNotAvailable)
     }
-    /// Returns a mutable 16-byte buffer for constructing a NIOS packet.
+    /// Exchanges a NIOS packet, first settling any abandoned previous transaction.
     ///
-    /// Lazily initializes the NIOS bulk endpoints and allocates the
-    /// output buffer on first call.
-    pub fn out_buffer(&mut self) -> Result<&mut [u8]> {
-        let endpoints = self.ensure_nios_endpoints()?;
-        let buf = endpoints
-            .buf_out
-            .as_mut()
-            .ok_or(Error::EndpointNotAvailable)?;
-        buf.clear();
-        buf.extend_fill(Self::NIOS_PKT_SIZE, 0);
-        Ok(buf)
-    }
-    /// Submits a NIOS packet and returns the response data.
-    ///
-    /// Performs a paired bulk OUT/IN transfer: submits the pre-filled
-    /// output buffer and waits for the corresponding IN response.
-    /// Returns a slice of exactly 16 bytes on success.
-    ///
-    /// On native targets the transaction is bounded by `timeout` (default
-    /// 3 s); on expiry the NIOS endpoints are cancelled and released so the
-    /// next call starts from a clean state. On wasm the transaction is
-    /// awaited without a deadline.
-    pub fn submit(
+    /// Timeouts and cancelled waits retain pending transfers on every backend.
+    pub fn exchange(
         &mut self,
+        request: &[u8; 16],
         timeout: Option<Duration>,
-    ) -> impl MaybeFuture<Output = Result<&[u8]>> {
+    ) -> impl MaybeFuture<Output = Result<[u8; 16]>> {
         Op::new(async move {
             let t = timeout.unwrap_or(TIMEOUT);
             let endpoints = self.ensure_nios_endpoints()?;
-            if let Err(e) = Self::transact(endpoints, t).await {
-                if matches!(e, Error::Timeout) {
-                    self.release_endpoints().await;
-                }
-                return Err(e);
-            }
-            let in_buf = self
-                .nios_endpoints
-                .as_ref()
-                .and_then(|e| e.buf_in.as_ref())
-                .ok_or(Error::EndpointNotAvailable)?;
-            let in_len = in_buf.len();
-            if in_len != Self::NIOS_PKT_SIZE {
-                return Err(NiosPacketError::InvalidSize(in_len).into());
-            }
-            Ok(&in_buf[..Self::NIOS_PKT_SIZE])
+            endpoints.exchange(request, t).await
         })
-    }
-    async fn transact(endpoints: &mut NiosEndpoints, timeout: Duration) -> Result<()> {
-        let buf_out = endpoints
-            .buf_out
-            .take()
-            .ok_or(Error::EndpointNotAvailable)?;
-        log::trace!("submit: OUT buffer len = {}", buf_out.len());
-        endpoints.ep_out.submit(buf_out);
-        let response = next_complete(&mut endpoints.ep_out, timeout).await?;
-        let actual_len = response.actual_len;
-        endpoints.buf_out = Some(response.buffer);
-        response.status?;
-        require_length(Self::NIOS_PKT_SIZE, actual_len)?;
-        let mut buf_in = endpoints.buf_in.take().ok_or(Error::EndpointNotAvailable)?;
-        buf_in.set_requested_len(endpoints.ep_in.max_packet_size());
-        endpoints.ep_in.submit(buf_in);
-        let response = next_complete(&mut endpoints.ep_in, timeout).await?;
-        endpoints.buf_in = Some(response.buffer);
-        response.status?;
-        Ok(())
     }
     /// Acquires the RX streaming bulk IN endpoint.
     ///

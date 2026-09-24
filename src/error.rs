@@ -213,6 +213,10 @@ pub enum Error {
     #[error("cannot switch mode while streams are active")]
     StreamsActive,
 
+    /// Protocol synchronization was lost; reset and reopen the device before further I/O.
+    #[error("device recovery required; reset and reopen the connection")]
+    RecoveryRequired,
+
     /// The trigger must be armed before it can be fired or disarmed.
     #[error("trigger not armed")]
     TriggerNotArmed,
@@ -252,6 +256,7 @@ impl Error {
             | Self::StreamAlreadyStarted
             | Self::NoTransfersInFlight
             | Self::StreamsActive
+            | Self::RecoveryRequired
             | Self::TriggerNotArmed
             | Self::TriggerNotMaster => ErrorKind::State,
             Self::BoardState(_)
