@@ -6,7 +6,6 @@ use libbladerf_rs::bladerf1::ExpansionBoard::XbNone;
 use libbladerf_rs::bladerf1::{
     BladeRf1, RfLinkSession, RxStream, SampleFormat, TuningMode, TxStream,
 };
-use std::thread::sleep;
 use std::time::Duration;
 
 fn do_rx(rf: &mut RfLinkSession) -> Result<()> {
@@ -16,54 +15,44 @@ fn do_rx(rf: &mut RfLinkSession) -> Result<()> {
         .format(SampleFormat::Sc16Q11)
         .build()
         .wait()?;
-    streamer.start(rf).wait()?;
-
-    let buffer = streamer.read(None).wait()?;
-    let n = buffer.len();
-
-    println!("Read {} bytes via zero-copy DMA buffer", n);
-    println!("First 32 bytes: {:02x?}", &buffer[..32.min(buffer.len())]);
-
-    streamer.recycle(buffer);
-    let _ = streamer.close(rf).wait();
+    let result: Result<()> = (|| {
+        streamer.start(rf).wait()?;
+        let buffer = streamer.read(Some(Duration::from_secs(2))).wait()?;
+        println!("Read {} bytes via zero-copy DMA buffer", buffer.len());
+        println!("First 32 bytes: {:02x?}", &buffer[..32.min(buffer.len())]);
+        streamer.recycle(buffer);
+        Ok(())
+    })();
+    let close = streamer.close(rf).wait();
+    result?;
+    close?;
     Ok(())
 }
 
 fn _do_tx(rf: &mut RfLinkSession) -> Result<()> {
-    println!("called do_tx()");
-    sleep(Duration::from_millis(5_000));
-    rf.perform_format_config(SampleFormat::Sc16Q11).wait()?;
-    println!("called perform_format_config(SampleFormat::Sc16Q11)");
-    sleep(Duration::from_millis(5_000));
-    rf.enable_module(Channel::Tx, true).wait()?;
-    println!("called enable_module(Channel::Tx, true)");
-    sleep(Duration::from_millis(5_000));
-
     let mut streamer = TxStream::builder(rf)
         .buffer_size(32_768)
         .buffer_count(8)
         .format(SampleFormat::Sc16Q11)
         .build()
         .wait()?;
-    streamer.start(rf).wait()?;
-
-    let buf: Vec<u8> = (0..5_000).flat_map(|_| [0xFF, 0x07, 0xFF, 0x07]).collect();
-
-    for _ in 0..10 {
-        let mut buffer = streamer.get_buffer(None).wait()?;
-        buffer.extend_from_slice(&buf);
-        streamer.submit(buffer, buf.len())?;
-        streamer
-            .wait_completion(Some(Duration::from_millis(5_000)))
-            .wait()?;
-        println!("Submitted buffer");
-    }
-
-    sleep(Duration::from_millis(5_000));
-
-    println!("called enable_module(Channel::Tx, false)");
-    let _ = streamer.close(rf).wait();
-
+    let result: Result<()> = (|| {
+        streamer.start(rf).wait()?;
+        let buf: Vec<u8> = (0..5_000).flat_map(|_| [0xFF, 0x07, 0xFF, 0x07]).collect();
+        for _ in 0..10 {
+            let mut buffer = streamer.get_buffer(Some(Duration::from_secs(2))).wait()?;
+            buffer.extend_from_slice(&buf);
+            streamer.submit(buffer, buf.len())?;
+            streamer
+                .wait_completion(Some(Duration::from_secs(2)))
+                .wait()?;
+            println!("Submitted buffer");
+        }
+        Ok(())
+    })();
+    let close = streamer.close(rf).wait();
+    result?;
+    close?;
     Ok(())
 }
 
@@ -75,7 +64,7 @@ fn main() -> Result<()> {
         .filter_module("libbladerf_rs::usb", log::LevelFilter::Info)
         .init();
 
-    let frequency: u64 = 100_000_000;
+    let frequency: u64 = 915_000_000;
     let mut bladerf = BladeRf1::from_first().wait()?;
     let mut rf = bladerf.rf_link_session().wait()?;
 
@@ -97,6 +86,7 @@ fn main() -> Result<()> {
 
     rf.set_frequency(Channel::Rx, frequency, TuningMode::Fpga)
         .wait()?;
+    rf.set_sample_rate(Channel::Rx, 2_000_000).wait()?;
     let gain_range_rx = RfLinkSession::get_gain_range(Channel::Rx);
     log::debug!("Gain Range RX: {gain_range_rx:?}");
     let mid_gain = (gain_range_rx.min().unwrap() + gain_range_rx.max().unwrap()) / 2.0;
@@ -105,7 +95,9 @@ fn main() -> Result<()> {
     let gain_rx = rf.get_gain(Channel::Rx).wait()?;
     log::debug!("Gain RX: {}", gain_rx.db());
 
-    do_rx(&mut rf)?;
-
+    let result = do_rx(&mut rf);
+    let close = bladerf.close().wait();
+    result?;
+    close?;
     Ok(())
 }

@@ -132,14 +132,12 @@ fn main() -> Result<()> {
     log::info!("Flashing FPGA bitstream...");
     flash.flash_fpga(&bitstream).wait()?;
     log::info!("FPGA bitstream written and verified");
-    drop(flash);
 
     if cli.load {
         log::info!("Loading FPGA bitstream...");
         let mut config = bladerf.config_session().wait()?;
         config.load_fpga(&bitstream).wait()?;
         log::info!("FPGA loaded");
-        drop(config);
 
         if !cli.no_init {
             let mut rf = bladerf.rf_link_session().wait()?;
@@ -148,5 +146,6 @@ fn main() -> Result<()> {
         }
     }
 
+    bladerf.close().wait()?;
     Ok(())
 }

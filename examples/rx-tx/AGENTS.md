@@ -14,10 +14,9 @@ All commands run from the **repository root**:
 ## API used
 
 - `BladeRf1::from_first`, `initialize`
-- `RxStream::builder`, `read`, `recycle`, `close`
-- `TxStream::builder`, `get_buffer`, `submit`, `wait_completion`
+- `RxStream::builder`, `start`, `read`, `recycle`, `close`
+- `TxStream::builder`, `start`, `get_buffer`, `submit`, `wait_completion`, `close`
 - `expansion_get_attached`, `expansion_attach` (when frequency below LMS6002D minimum)
-- `perform_format_config`, `enable_module` (in `_do_tx`)
 
 ## Feature flags
 
@@ -29,8 +28,9 @@ libbladerf-rs = { path = "../..", features = ["xb200"] }
 
 ## Notes
 
-- `_do_tx` is defined but not called from `main()`. It demonstrates manual format config + module enable + streaming.
-- RX reads one buffer, prints first 32 bytes, then closes the stream.
+- `_do_tx` is defined but not called from `main()`. It uses the stream lifecycle to configure format and module state.
+- RX tunes to 915 MHz at 2 MS/s, reads one buffer, prints its first 32 bytes, and closes the stream and device.
+- Both helpers attempt stream cleanup before propagating data-path errors.
 
 ## Hardware
 

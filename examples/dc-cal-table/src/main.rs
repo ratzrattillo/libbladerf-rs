@@ -299,9 +299,6 @@ fn dc_calibration_rx(
 ) -> Result<Vec<DcCalParams>> {
     let mut backup = rf.get_rx_cal_backup().wait()?;
 
-    rf.set_sample_rate(Channel::Rx, RX_CAL_RATE as u32).wait()?;
-    rf.set_bandwidth(Channel::Rx, RX_CAL_BW as u32).wait()?;
-
     let buf_size = RX_CAL_COUNT as usize * 4;
     let mut rx_stream = RxStream::builder(rf)
         .buffer_size(buf_size)
@@ -310,49 +307,68 @@ fn dc_calibration_rx(
         .build()
         .wait()?;
 
-    rx_stream.start(rf).wait()?;
+    let result = (|| {
+        rf.set_sample_rate(Channel::Rx, RX_CAL_RATE as u32).wait()?;
+        rf.set_bandwidth(Channel::Rx, RX_CAL_BW as u32).wait()?;
+        rx_stream.start(rf).wait()?;
 
-    let mut cal = RxCal::new(
-        0,
-        rf.get_timestamp(Channel::Rx).wait()? + 20 * RX_CAL_TS_INC,
-        backup.tx_frequency(),
-    );
-
-    let num_samples = RX_CAL_COUNT as usize;
-    let mut samples = vec![0i16; num_samples * 2];
-    let mut results = Vec::new();
-
-    let mut freq = f_min;
-    while freq <= f_max {
-        let mut params = DcCalParams {
-            frequency: freq,
-            corr_i: 0,
-            corr_q: 0,
-            error_i: 0.0,
-            error_q: 0.0,
-            max_dc: DcPair::default(),
-            mid_dc: DcPair::default(),
-            min_dc: DcPair::default(),
-        };
-        perform_rx_cal(rf, &mut rx_stream, &mut cal, &mut params, &mut samples)?;
-        log::info!(
-            "Calibrated @ {:10} Hz: I={:4} (Error: {:.2}), Q={:4} (Error: {:.2})",
-            params.frequency,
-            params.corr_i,
-            params.error_i,
-            params.corr_q,
-            params.error_q,
+        let mut cal = RxCal::new(
+            0,
+            rf.get_timestamp(Channel::Rx).wait()? + 20 * RX_CAL_TS_INC,
+            backup.tx_frequency(),
         );
-        results.push(params);
-        if freq == f_max {
-            break;
-        }
-        freq = (freq + f_inc).min(f_max);
-    }
 
-    rx_stream.stop(rf).wait()?;
-    rf.set_rx_cal_backup(&mut backup).wait()?;
-    Ok(results)
+        let num_samples = RX_CAL_COUNT as usize;
+        let mut samples = vec![0i16; num_samples * 2];
+        let mut results = Vec::new();
+
+        let mut freq = f_min;
+        while freq <= f_max {
+            let mut params = DcCalParams {
+                frequency: freq,
+                corr_i: 0,
+                corr_q: 0,
+                error_i: 0.0,
+                error_q: 0.0,
+                max_dc: DcPair::default(),
+                mid_dc: DcPair::default(),
+                min_dc: DcPair::default(),
+            };
+            perform_rx_cal(rf, &mut rx_stream, &mut cal, &mut params, &mut samples)?;
+            log::info!(
+                "Calibrated @ {:10} Hz: I={:4} (Error: {:.2}), Q={:4} (Error: {:.2})",
+                params.frequency,
+                params.corr_i,
+                params.error_i,
+                params.corr_q,
+                params.error_q,
+            );
+            results.push(params);
+            if freq == f_max {
+                break;
+            }
+            freq = freq.saturating_add(f_inc).min(f_max);
+        }
+        Ok(results)
+    })();
+    let close = rx_stream.close(rf).wait().map_err(Into::into);
+    let restore = rf.set_rx_cal_backup(&mut backup).wait().map_err(Into::into);
+    finish_calibration(result, [close, restore])
+}
+
+fn finish_calibration<T>(
+    result: Result<T>,
+    cleanup: impl IntoIterator<Item = Result<()>>,
+) -> Result<T> {
+    cleanup
+        .into_iter()
+        .fold(result, |result, cleanup| match (result, cleanup) {
+            (Ok(value), Ok(())) => Ok(value),
+            (Ok(_), Err(error)) | (Err(error), Ok(())) => Err(error),
+            (Err(error), Err(cleanup)) => {
+                Err(error.context(format!("cleanup also failed: {cleanup:#}")))
+            }
+        })
 }
 
 fn get_tx_cal_backup(rf: &mut RfLinkSession<'_>) -> Result<TxCalBackup> {
@@ -371,20 +387,28 @@ fn get_tx_cal_backup(rf: &mut RfLinkSession<'_>) -> Result<TxCalBackup> {
 fn set_tx_cal_backup(rf: &mut RfLinkSession<'_>, backup: &TxCalBackup) -> Result<()> {
     let mut retval: Result<()> = Ok(());
     let mut try_set = |res: LibResult<()>| {
-        if let Err(e) = res {
-            if retval.is_ok() {
-                retval = Err(e.into());
-            }
+        if let Err(e) = res
+            && retval.is_ok()
+        {
+            retval = Err(e.into());
         }
     };
-    try_set(rf.set_loopback(backup.loopback.clone()).wait());
+    try_set(rf.set_loopback(backup.loopback).wait());
     try_set(
         rf.set_frequency(Channel::Rx, backup.rx_freq, TuningMode::Fpga)
             .wait(),
     );
     let mut rate = backup.rx_sample_rate;
-    let _ = rf.set_rational_sample_rate(Channel::Rx, &mut rate).wait();
-    let _ = rf.set_bandwidth(Channel::Rx, backup.rx_bandwidth).wait();
+    try_set(
+        rf.set_rational_sample_rate(Channel::Rx, &mut rate)
+            .wait()
+            .map(|_| ()),
+    );
+    try_set(
+        rf.set_bandwidth(Channel::Rx, backup.rx_bandwidth)
+            .wait()
+            .map(|_| ()),
+    );
     try_set(
         rf.set_gain_stage(GainStage::Lna, (backup.rx_lna as i8).into())
             .wait(),
@@ -398,9 +422,11 @@ fn set_tx_cal_backup(rf: &mut RfLinkSession<'_>, backup: &TxCalBackup) -> Result
             .wait(),
     );
     let mut tx_rate = backup.tx_sample_rate;
-    let _ = rf
-        .set_rational_sample_rate(Channel::Tx, &mut tx_rate)
-        .wait();
+    try_set(
+        rf.set_rational_sample_rate(Channel::Tx, &mut tx_rate)
+            .wait()
+            .map(|_| ()),
+    );
     retval
 }
 
@@ -425,7 +451,7 @@ fn tx_cal_update_frequency(
 ) -> Result<()> {
     rf.set_frequency(Channel::Tx, freq, TuningMode::Fpga)
         .wait()?;
-    let rx_freq = freq - 1_000_000;
+    let rx_freq = freq.saturating_sub(1_000_000);
     cal.rx_low = rx_freq >= get_frequency_min() as u64;
     let actual_rx_freq = if cal.rx_low {
         rx_freq
@@ -440,7 +466,7 @@ fn tx_cal_update_frequency(
         Loopback::Lna2
     };
     if cal.loopback != lb {
-        rf.set_loopback(lb.clone()).wait()?;
+        rf.set_lms_loopback(lb).wait()?;
         cal.loopback = lb;
     }
     Ok(())
@@ -603,6 +629,17 @@ fn dc_calibration_tx(
     f_inc: u64,
 ) -> Result<Vec<DcCalParams>> {
     let backup = get_tx_cal_backup(rf)?;
+    let result = tx_calibration_sweep(rf, f_min, f_max, f_inc);
+    let restore = set_tx_cal_backup(rf, &backup);
+    finish_calibration(result, [restore])
+}
+
+fn tx_calibration_sweep(
+    rf: &mut RfLinkSession<'_>,
+    f_min: u64,
+    f_max: u64,
+    f_inc: u64,
+) -> Result<Vec<DcCalParams>> {
     apply_tx_cal_settings(rf)?;
 
     let buf_size = TX_CAL_COUNT as usize * 4;
@@ -613,62 +650,63 @@ fn dc_calibration_tx(
         .build()
         .wait()?;
 
-    tx_stream.start(rf).wait()?;
+    let result = (|| {
+        let mut rx_stream = RxStream::builder(rf)
+            .buffer_size(buf_size)
+            .buffer_count(8)
+            .format(SampleFormat::Sc16Q11)
+            .build()
+            .wait()?;
 
-    let mut zero_buf = tx_stream.get_buffer(None).wait()?;
-    zero_buf.clear();
-    zero_buf.extend_from_slice(&[0u8; 512]);
-    tx_stream.submit(zero_buf, 512)?;
+        let result = (|| {
+            tx_stream.start(rf).wait()?;
+            rx_stream.start(rf).wait()?;
+            let mut zero_buf = tx_stream.get_buffer(None).wait()?;
+            zero_buf.extend_from_slice(&[0u8; 512]);
+            tx_stream.submit(zero_buf, 512)?;
 
-    let mut rx_stream = RxStream::builder(rf)
-        .buffer_size(buf_size)
-        .buffer_count(8)
-        .format(SampleFormat::Sc16Q11)
-        .build()
-        .wait()?;
+            let mut cal = TxCalState {
+                ts: rf.get_timestamp(Channel::Rx).wait()? + 20 * TX_CAL_TS_INC,
+                loopback: Loopback::Lna1,
+                rx_low: true,
+            };
 
-    rx_stream.start(rf).wait()?;
+            let mut results = Vec::new();
+            let mut freq = f_min;
 
-    let mut cal = TxCalState {
-        ts: rf.get_timestamp(Channel::Rx).wait()? + 20 * TX_CAL_TS_INC,
-        loopback: Loopback::Lna1,
-        rx_low: true,
-    };
-
-    let mut results = Vec::new();
-    let mut freq = f_min;
-
-    while freq <= f_max {
-        let mut params = DcCalParams {
-            frequency: freq,
-            corr_i: 0,
-            corr_q: 0,
-            error_i: 0.0,
-            error_q: 0.0,
-            max_dc: DcPair::default(),
-            mid_dc: DcPair::default(),
-            min_dc: DcPair::default(),
-        };
-        perform_tx_cal(rf, &mut rx_stream, &mut cal, &mut params)?;
-        log::info!(
-            "Calibrated @ {:10} Hz: I={:4} (Error: {:.2}), Q={:4} (Error: {:.2})",
-            params.frequency,
-            params.corr_i,
-            params.error_i,
-            params.corr_q,
-            params.error_q,
-        );
-        results.push(params);
-        if freq == f_max {
-            break;
-        }
-        freq = (freq + f_inc).min(f_max);
-    }
-
-    rx_stream.stop(rf).wait()?;
-    tx_stream.stop(rf).wait()?;
-    set_tx_cal_backup(rf, &backup)?;
-    Ok(results)
+            while freq <= f_max {
+                let mut params = DcCalParams {
+                    frequency: freq,
+                    corr_i: 0,
+                    corr_q: 0,
+                    error_i: 0.0,
+                    error_q: 0.0,
+                    max_dc: DcPair::default(),
+                    mid_dc: DcPair::default(),
+                    min_dc: DcPair::default(),
+                };
+                perform_tx_cal(rf, &mut rx_stream, &mut cal, &mut params)?;
+                log::info!(
+                    "Calibrated @ {:10} Hz: I={:4} (Error: {:.2}), Q={:4} (Error: {:.2})",
+                    params.frequency,
+                    params.corr_i,
+                    params.error_i,
+                    params.corr_q,
+                    params.error_q,
+                );
+                results.push(params);
+                if freq == f_max {
+                    break;
+                }
+                freq = freq.saturating_add(f_inc).min(f_max);
+            }
+            Ok(results)
+        })();
+        let close = rx_stream.close(rf).wait().map_err(Into::into);
+        finish_calibration(result, [close])
+    })();
+    let close = tx_stream.close(rf).wait().map_err(Into::into);
+    finish_calibration(result, [close])
 }
 
 fn calibrate_and_save_table(
@@ -693,7 +731,7 @@ fn calibrate_and_save_table(
 
     let mut entries = Vec::new();
     for p in &params {
-        let mut e = DcCalEntry::new(p.frequency as u32, DcPair::new(p.corr_i, p.corr_q));
+        let mut e = DcCalEntry::new(u32::try_from(p.frequency)?, DcPair::new(p.corr_i, p.corr_q));
         if channel == Channel::Rx {
             e = e.with_agc(p.max_dc, p.mid_dc, p.min_dc);
         }
@@ -720,8 +758,6 @@ fn main() -> Result<()> {
         .filter_module("nusb", log::LevelFilter::Info)
         .init();
 
-    let mut bladerf = BladeRf1::from_first().wait()?;
-
     let channel = match std::env::args().nth(1).as_deref() {
         Some("tx") => Channel::Tx,
         _ => Channel::Rx,
@@ -740,6 +776,12 @@ fn main() -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("missing f_inc"))?
         .parse()?;
 
+    anyhow::ensure!(
+        f_inc > 0 && f_min <= f_max && f_max <= u64::from(u32::MAX),
+        "invalid frequency range or step"
+    );
+    let mut bladerf = BladeRf1::from_first().wait()?;
+
     log::info!(
         "Calibrating {} DC table: {}-{} Hz, step {} Hz",
         if channel == Channel::Rx { "RX" } else { "TX" },
@@ -748,7 +790,9 @@ fn main() -> Result<()> {
         f_inc,
     );
 
-    let table = calibrate_and_save_table(&mut bladerf, channel, f_min, f_max, f_inc)?;
+    let result = calibrate_and_save_table(&mut bladerf, channel, f_min, f_max, f_inc);
+    let close = bladerf.close().wait().map_err(Into::into);
+    let table = finish_calibration(result, [close])?;
     log::info!("Table saved with {} entries", table.entries().len());
 
     Ok(())

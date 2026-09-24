@@ -26,4 +26,6 @@ cargo run -p dc-cal-table -- rx 300000000 3800000000 10000000
 
 Requires a physical BladeRF1 connected via USB (High or SuperSpeed).
 
-The calibration process takes several minutes and requires stable thermal conditions. The resulting table file (`{serial}_dc_rx.tbl` or `{serial}_dc_tx.tbl`) is automatically loaded on the next device open.
+The calibration process takes several minutes and requires stable thermal conditions. The resulting validated JSON table (`{serial}_dc_rx.json` or `{serial}_dc_tx.json`) is automatically loaded on the next device open when present in its calibration directory.
+
+Streams are closed before restoring settings that change USB mode. TX band changes use `set_lms_loopback` for the analog path while streaming. Cleanup runs before propagating measurement errors; zero frequency steps and unrepresentable table frequencies are rejected before opening hardware.
