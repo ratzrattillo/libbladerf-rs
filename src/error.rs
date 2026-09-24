@@ -16,7 +16,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub enum ErrorKind {
     /// USB device, descriptor, endpoint or transfer failure.
     Usb,
-    /// Malformed NIOS request or response packet.
+    /// Malformed NIOS packet or FPGA metadata frame.
     Protocol,
     /// An operation did not complete within its deadline.
     Timeout,
@@ -106,6 +106,15 @@ pub enum Error {
     /// A NIOS packet encode/decode error (malformed request or response).
     #[error("NIOS packet error: {0}")]
     NiosPacket(#[from] NiosPacketError),
+
+    /// A metadata header, payload, or complete-message buffer is truncated.
+    #[error("metadata requires {required} bytes, got {actual}")]
+    MetadataLength {
+        /// Bytes required to complete the metadata frame or buffer.
+        required: usize,
+        /// Bytes provided.
+        actual: usize,
+    },
 
     /// A USB endpoint is already claimed or busy.
     #[error("endpoint busy")]
@@ -288,7 +297,7 @@ impl Error {
             | Self::UnsupportedSpeed
             | Self::UsbTransferLength { .. }
             | Self::UsbControlResponseTooShort { .. } => ErrorKind::Usb,
-            Self::NiosPacket(_) => ErrorKind::Protocol,
+            Self::NiosPacket(_) | Self::MetadataLength { .. } => ErrorKind::Protocol,
             Self::Timeout => ErrorKind::Timeout,
             Self::WouldBlock => ErrorKind::WouldBlock,
             Self::NotFound => ErrorKind::NotFound,

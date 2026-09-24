@@ -12,6 +12,7 @@ fn metadata_wire_fields_are_little_endian_and_allow_unaligned_input() {
     assert_eq!(header.stream_flags(), 0xAB);
     assert_eq!(header.timestamp(), 0x0102_0304_0506_0708);
     assert_eq!(header.meta_flags(), 0x1234_5678);
+    assert_eq!(header.to_bytes(), bytes[1..17]);
     for len in 0..16 {
         assert!(MetadataHeader::from_bytes(&bytes[..len]).is_none());
     }

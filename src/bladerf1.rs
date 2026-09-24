@@ -9,6 +9,7 @@ pub mod calibration;
 pub mod hardware;
 pub mod protocol;
 pub use board::QuickTune;
+pub use board::metadata::{MetadataLayout, MetadataMessage, MetadataPacket};
 pub use board::rf_port::RfPort;
 pub use board::xb::ExpansionBoard;
 #[cfg(feature = "xb200")]

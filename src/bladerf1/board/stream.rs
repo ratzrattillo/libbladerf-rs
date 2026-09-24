@@ -90,6 +90,58 @@ struct StreamConfig {
     buffer_count: NonZeroUsize,
 }
 
+#[derive(Debug, Clone, Copy)]
+enum StreamEncoding {
+    Samples,
+    Timestamps(MetadataLayout),
+    Packets,
+}
+
+impl StreamEncoding {
+    fn hardware_format(self) -> StreamFormat {
+        match self {
+            Self::Samples => StreamFormat::Samples,
+            Self::Timestamps(_) => StreamFormat::Timestamps,
+            Self::Packets => StreamFormat::Packets,
+        }
+    }
+
+    fn alignment(self, packet_size: usize) -> usize {
+        match self {
+            Self::Timestamps(layout) => layout.message_size(),
+            _ => packet_size,
+        }
+    }
+
+    fn metadata_layout(self) -> Result<MetadataLayout> {
+        match self {
+            Self::Timestamps(layout) => Ok(layout),
+            _ => Err(Error::Unsupported(
+                "stream does not use fixed SC16 timestamp messages",
+            )),
+        }
+    }
+
+    fn validate_submission(self, bytes: &[u8]) -> Result<()> {
+        match self {
+            Self::Samples if !bytes.len().is_multiple_of(4) => Err(Error::Argument(
+                "SC16 submissions must contain whole complex samples".into(),
+            )),
+            Self::Timestamps(layout) => layout.messages(bytes).map(|_| ()),
+            Self::Packets => {
+                let (packet, remainder) = MetadataPacket::parse_prefix(bytes)?;
+                if !remainder.is_empty() || packet.payload().is_empty() {
+                    return Err(Error::Argument(
+                        "packet submission must match one nonempty declared payload".into(),
+                    ));
+                }
+                Ok(())
+            }
+            Self::Samples => Ok(()),
+        }
+    }
+}
+
 impl StreamConfig {
     fn new(size: usize, count: usize, max_packet_size: usize) -> Result<Self> {
         let invalid = || Error::Argument("invalid stream buffer size or count".into());
@@ -248,7 +300,7 @@ impl<E: BulkEndpoint> BufferPool<E> {
 /// reference for this stream.
 pub(crate) struct StreamCore<E: BulkEndpoint> {
     channel: Channel,
-    format: StreamFormat,
+    encoding: StreamEncoding,
     lease: StreamLease,
     state: StreamState<E>,
 }
@@ -294,21 +346,25 @@ enum StopGoal {
 impl<E: BulkEndpoint> StreamCore<E> {
     /// Creates the pool. `buffer_size` is rounded up to the endpoint's max
     /// packet size.
-    pub(crate) fn new(
+    fn new(
         channel: Channel,
-        format: SampleFormat,
+        encoding: StreamEncoding,
         lease: StreamLease,
         endpoint: E,
         buffer_size: usize,
         buffer_count: usize,
     ) -> Result<Self> {
-        let config = StreamConfig::new(buffer_size, buffer_count, endpoint.max_packet_size())?;
+        let config = StreamConfig::new(
+            buffer_size,
+            buffer_count,
+            encoding.alignment(endpoint.max_packet_size()),
+        )?;
         log::trace!(
-            "Creating {channel:?} stream: buffer_size={buffer_size}, buffer_count={buffer_count}, format={format:?}"
+            "Creating {channel:?} stream: buffer_size={buffer_size}, buffer_count={buffer_count}, encoding={encoding:?}"
         );
         Ok(Self {
             channel,
-            format: StreamFormat::try_from(format)?,
+            encoding,
             lease,
             state: StreamState::Prepared(BufferPool::new(endpoint, config)),
         })
@@ -377,7 +433,8 @@ impl<E: BulkEndpoint> StreamCore<E> {
             match self.state {
                 StreamState::Prepared(_) => {
                     host.require_initialized().await?;
-                    host.claims().reserve_format(&self.lease, self.format)?;
+                    host.claims()
+                        .reserve_format(&self.lease, self.encoding.hardware_format())?;
                     let StreamState::Prepared(pool) =
                         std::mem::replace(&mut self.state, StreamState::Closed)
                     else {
@@ -398,7 +455,8 @@ impl<E: BulkEndpoint> StreamCore<E> {
                 };
                 match phase {
                     StartPhase::Format => {
-                        host.perform_format_config(self.format).await?;
+                        host.perform_format_config(self.encoding.hardware_format())
+                            .await?;
                         *phase = StartPhase::Module;
                     }
                     StartPhase::Module => {
@@ -581,6 +639,7 @@ impl<E: BulkEndpoint> StreamCore<E> {
             self.recycle(buf);
             return Err(error);
         }
+        let encoding = self.encoding;
         let pool = self.started_pool_mut()?;
         if len > pool.buffer_size {
             pool.recycle(buf);
@@ -591,6 +650,10 @@ impl<E: BulkEndpoint> StreamCore<E> {
             return Err(Error::Argument(
                 "submit length does not match the bytes written into the buffer".into(),
             ));
+        }
+        if let Err(error) = encoding.validate_submission(&buf) {
+            pool.recycle(buf);
+            return Err(error);
         }
         pool.submit(buf);
         Ok(())
@@ -792,223 +855,12 @@ pub struct TxStream {
     core: StreamCore<nusb::Endpoint<Bulk, Out>>,
 }
 
-/// I/Q sample format for streaming.
-///
-/// Determines the layout of sample data within transfer buffers and
-/// which format GPIO bits are configured on the FPGA.
-#[derive(PartialEq, Eq, Clone, Copy, Debug)]
-pub enum SampleFormat {
-    /// 16-bit complex samples, 12 bits of data per I/Q component (4 bytes/sample).
-    Sc16Q11 = 0,
-    /// Sc16Q11 with 16-byte metadata headers prepended to each transfer.
-    Sc16Q11Meta = 1,
-    /// Packet-mode metadata (CMD/RSP headers) prepended to each transfer.
-    PacketMeta = 2,
-    /// 8-bit complex samples, 8 bits of data per I/Q component (2 bytes/sample).
-    Sc8Q7 = 3,
-    /// Sc8Q7 with 16-byte metadata headers prepended to each transfer.
-    Sc8Q7Meta = 4,
-    /// Highly-packed Sc16Q11: 12 bits per component packed at 6 bytes per 2 samples (3 bytes/sample).
-    Sc16Q11Packed = 5,
-}
-/// GPIO bit that enables packet-mode metadata headers.
-pub const BLADERF_GPIO_PACKET: u32 = 1 << 19;
-/// GPIO bit that enables per-transfer timestamp metadata.
-pub const BLADERF_GPIO_TIMESTAMP: u32 = 1 << 16;
-/// GPIO bit that halves the timestamp counter rate.
-pub const BLADERF_GPIO_TIMESTAMP_DIV2: u32 = 1 << 17;
-/// GPIO bit that enables 8-bit sample mode (Sc8Q7).
-pub const BLADERF_GPIO_8BIT_MODE: u32 = 1 << 20;
-/// GPIO bit that enables highly-packed Sc16Q11 mode.
-pub const BLADERF_GPIO_HIGHLY_PACKED_MODE: u32 = 1 << 21;
-
-/// Size of the metadata header in bytes for *-Meta formats.
-pub const METADATA_HEADER_SIZE: usize = 16;
-
-/// Metadata header prepended to transfers using *-Meta sample formats.
-///
-/// Each field serves a dual purpose depending on whether the format
-/// uses timestamp metadata or packet metadata.
-#[repr(C, packed)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub struct MetadataHeader {
-    reserved_or_length: u16,
-    flags_or_core: u16,
-    timestamp: u64,
-    meta_flags: u32,
-}
-
-impl MetadataHeader {
-    /// Creates a new metadata header from raw field values.
-    pub fn new(
-        reserved_or_length: u16,
-        flags_or_core: u16,
-        timestamp: u64,
-        meta_flags: u32,
-    ) -> Self {
-        Self {
-            reserved_or_length,
-            flags_or_core,
-            timestamp,
-            meta_flags,
-        }
-    }
-
-    /// Parses a `MetadataHeader` from a byte slice.
-    /// Returns `None` if the slice is shorter than `METADATA_HEADER_SIZE`.
-    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
-        let bytes = bytes.get(..METADATA_HEADER_SIZE)?;
-        Some(Self {
-            reserved_or_length: u16::from_le_bytes(bytes[..2].try_into().ok()?),
-            flags_or_core: u16::from_le_bytes(bytes[2..4].try_into().ok()?),
-            timestamp: u64::from_le_bytes(bytes[4..12].try_into().ok()?),
-            meta_flags: u32::from_le_bytes(bytes[12..16].try_into().ok()?),
-        })
-    }
-
-    /// Returns the 40-bit hardware timestamp from the header.
-    pub fn timestamp(&self) -> u64 {
-        self.timestamp
-    }
-
-    /// Returns the metadata flags (overflow/underflow indicators).
-    pub fn meta_flags(&self) -> u32 {
-        self.meta_flags
-    }
-
-    /// Returns `true` if the metadata version byte matches a known format (0x00 or 0x34).
-    pub fn is_valid_meta_format(&self) -> bool {
-        let ver = self.flags_or_core as u8;
-        ver == 0x00 || ver == 0x34
-    }
-
-    /// Returns the stream flags (high byte of `flags_or_core`).
-    pub fn stream_flags(&self) -> u8 {
-        (self.flags_or_core >> 8) as u8
-    }
-
-    /// Returns the metadata version (low byte of `flags_or_core`).
-    pub fn meta_version(&self) -> u8 {
-        (self.flags_or_core & 0xFF) as u8
-    }
-
-    /// Returns the packet length (valid for PacketMeta format).
-    pub fn packet_length(&self) -> u16 {
-        self.reserved_or_length
-    }
-
-    /// Returns the source core ID (high byte of `flags_or_core`, valid for PacketMeta format).
-    pub fn packet_core_id(&self) -> u8 {
-        (self.flags_or_core >> 8) as u8
-    }
-
-    /// Returns the packet flags (low byte of `flags_or_core`, valid for PacketMeta format).
-    pub fn packet_flags(&self) -> u8 {
-        self.flags_or_core as u8
-    }
-}
-
-#[inline(always)]
-const fn sign_extend_12(val: u16) -> i16 {
-    ((val << 4) as i16) >> 4
-}
-
-impl SampleFormat {
-    /// Returns the size of a single I/Q sample in bytes for this format.
-    pub fn sample_size(self) -> usize {
-        match self {
-            Self::Sc16Q11 | Self::Sc16Q11Meta | Self::PacketMeta => 4,
-            Self::Sc16Q11Packed => 3,
-            Self::Sc8Q7 | Self::Sc8Q7Meta => 2,
-        }
-    }
-
-    /// Unpacks Sc16Q11Packed data (3 bytes per sample) into standard Sc16Q11 (4 bytes per sample).
-    /// `num_samples` must be a multiple of 2. Returns `Error::Argument` if buffers are too small.
-    pub fn unpack_sc16q11_packed(src: &[u8], dst: &mut [u8], num_samples: usize) -> Result<()> {
-        if !num_samples.is_multiple_of(2) {
-            return Err(Error::Argument(
-                "num_samples must be a multiple of 2".into(),
-            ));
-        }
-        let src_needed = 3usize.saturating_mul(num_samples);
-        let dst_needed = 4usize.saturating_mul(num_samples);
-        if src.len() < src_needed {
-            return Err(Error::Argument("source buffer too small".into()));
-        }
-        if dst.len() < dst_needed {
-            return Err(Error::Argument("destination buffer too small".into()));
-        }
-        let pairs = num_samples / 2;
-        let src_chunks = src[..src_needed].as_chunks::<6>().0;
-        let dst_chunks = dst[..dst_needed].as_chunks_mut::<8>().0;
-        for (s, d) in src_chunks.iter().zip(dst_chunks.iter_mut()).take(pairs) {
-            let w0 = u16::from_le_bytes([s[0], s[1]]);
-            let w1 = u16::from_le_bytes([s[2], s[3]]);
-            let w2 = u16::from_le_bytes([s[4], s[5]]);
-            let i0 = sign_extend_12(w0 & 0x0FFF);
-            let q0 = sign_extend_12((w0 >> 12) | ((w1 & 0x00FF) << 4));
-            let i1 = sign_extend_12((w1 >> 8) | ((w2 & 0x000F) << 8));
-            let q1 = sign_extend_12(w2 >> 4);
-            d[0] = i0 as u8;
-            d[1] = (i0 >> 8) as u8;
-            d[2] = q0 as u8;
-            d[3] = (q0 >> 8) as u8;
-            d[4] = i1 as u8;
-            d[5] = (i1 >> 8) as u8;
-            d[6] = q1 as u8;
-            d[7] = (q1 >> 8) as u8;
-        }
-        Ok(())
-    }
-
-    /// Packs standard Sc16Q11 data (4 bytes per sample) into Sc16Q11Packed (3 bytes per sample).
-    /// `num_samples` must be a multiple of 2. Returns `Error::Argument` if buffers are too small.
-    pub fn pack_sc16q11_packed(src: &[u8], dst: &mut [u8], num_samples: usize) -> Result<()> {
-        if !num_samples.is_multiple_of(2) {
-            return Err(Error::Argument(
-                "num_samples must be a multiple of 2".into(),
-            ));
-        }
-        let src_needed = 4usize.saturating_mul(num_samples);
-        let dst_needed = 3usize.saturating_mul(num_samples);
-        if src.len() < src_needed {
-            return Err(Error::Argument("source buffer too small".into()));
-        }
-        if dst.len() < dst_needed {
-            return Err(Error::Argument("destination buffer too small".into()));
-        }
-        let pairs = num_samples / 2;
-        let src_chunks = src[..src_needed].as_chunks::<8>().0;
-        let dst_chunks = dst[..dst_needed].as_chunks_mut::<6>().0;
-        for (s, d) in src_chunks.iter().zip(dst_chunks.iter_mut()).take(pairs) {
-            let v0 = i16::from_le_bytes([s[0], s[1]]) as u16;
-            let v1 = i16::from_le_bytes([s[2], s[3]]) as u16;
-            let v2 = i16::from_le_bytes([s[4], s[5]]) as u16;
-            let v3 = i16::from_le_bytes([s[6], s[7]]) as u16;
-            let w0 = (v0 & 0x0FFF) | ((v1 & 0x000F) << 12);
-            let w1 = ((v1 >> 4) & 0x00FF) | ((v2 & 0x00FF) << 8);
-            let w2 = ((v2 >> 8) & 0x000F) | ((v3 & 0x0FFF) << 4);
-            d[0] = w0 as u8;
-            d[1] = (w0 >> 8) as u8;
-            d[2] = w1 as u8;
-            d[3] = (w1 >> 8) as u8;
-            d[4] = w2 as u8;
-            d[5] = (w2 >> 8) as u8;
-        }
-        Ok(())
-    }
-}
-
-impl SampleFormat {
-    /// Returns `true` if this format requires timestamp metadata headers.
-    pub fn requires_timestamps(self) -> bool {
-        matches!(
-            self,
-            SampleFormat::Sc16Q11Meta | SampleFormat::Sc8Q7Meta | SampleFormat::PacketMeta
-        )
-    }
-}
+pub use super::metadata::{METADATA_HEADER_SIZE, MetadataHeader};
+use super::metadata::{MetadataLayout, MetadataPacket};
+pub use super::sample_format::{
+    BLADERF_GPIO_8BIT_MODE, BLADERF_GPIO_HIGHLY_PACKED_MODE, BLADERF_GPIO_PACKET,
+    BLADERF_GPIO_TIMESTAMP, BLADERF_GPIO_TIMESTAMP_DIV2, SampleFormat,
+};
 
 impl RfLinkSession<'_> {
     /// Checks format support against the loaded FPGA and firmware.
@@ -1023,20 +875,48 @@ impl RfLinkSession<'_> {
         format: SampleFormat,
         _direction: Channel,
     ) -> impl MaybeFuture<Output = Result<bool>> {
+        self.stream_encoding(format).map(|result| match result {
+            Ok(_) => Ok(true),
+            Err(Error::Unsupported(_)) => Ok(false),
+            Err(error) => Err(error),
+        })
+    }
+
+    /// Queries the fixed-message layout for timestamped SC16 on this device.
+    ///
+    /// # Errors
+    /// Returns an unsupported error for incompatible firmware/FPGA versions,
+    /// or the underlying USB/protocol error. A stream retains this layout for
+    /// its protected endpoint lifetime.
+    pub fn metadata_layout(&mut self) -> impl MaybeFuture<Output = Result<MetadataLayout>> {
+        self.stream_encoding(SampleFormat::Sc16Q11Meta)
+            .map(|result| result?.metadata_layout())
+    }
+
+    fn stream_encoding(
+        &mut self,
+        format: SampleFormat,
+    ) -> impl MaybeFuture<Output = Result<StreamEncoding>> {
         Op::new(async move {
-            let Ok(format) = StreamFormat::try_from(format) else {
-                return Ok(false);
-            };
+            let format = StreamFormat::try_from(format)?;
             if format == StreamFormat::Samples {
-                return Ok(true);
+                return Ok(StreamEncoding::Samples);
             }
             let fpga = self.nios.nios_get_fpga_version().await?;
-            let firmware = if format == StreamFormat::Packets {
-                self.device.fx3_firmware_version().await?.parse()?
-            } else {
-                crate::SemanticVersion::new(0, 0, 0)
-            };
-            Ok(format.supports_versions(fpga, firmware))
+            let firmware = self.device.fx3_firmware_version().await?.parse()?;
+            if !format.supports_versions(fpga, firmware) {
+                return Err(Error::Unsupported(
+                    "sample format is not supported by the loaded FPGA and firmware",
+                ));
+            }
+            match format {
+                StreamFormat::Samples => Ok(StreamEncoding::Samples),
+                StreamFormat::Packets => Ok(StreamEncoding::Packets),
+                StreamFormat::Timestamps => {
+                    MetadataLayout::for_versions(self.nios.transport().speed(), fpga, firmware)
+                        .map(StreamEncoding::Timestamps)
+                }
+            }
         })
     }
 }
@@ -1076,11 +956,7 @@ impl<'a, 'b> RxStreamBuilder<'a, 'b> {
             StreamConfig::new(self.buffer_size, self.buffer_count, 1)?;
             self.dev.nios.streams.require_unclaimed(Channel::Rx)?;
             self.dev.require_initialized().await?;
-            if !self.dev.supports_format(self.format, Channel::Rx).await? {
-                return Err(Error::Unsupported(
-                    "sample format is not supported by the loaded FPGA and firmware",
-                ));
-            }
+            let encoding = self.dev.stream_encoding(self.format).await?;
             let endpoint = self
                 .dev
                 .nios
@@ -1091,7 +967,7 @@ impl<'a, 'b> RxStreamBuilder<'a, 'b> {
             let lease = self.dev.nios.streams.claim(Channel::Rx)?;
             let core = StreamCore::new(
                 Channel::Rx,
-                self.format,
+                encoding,
                 lease,
                 endpoint,
                 self.buffer_size,
@@ -1103,6 +979,16 @@ impl<'a, 'b> RxStreamBuilder<'a, 'b> {
 }
 
 impl RxStream {
+    /// Returns the validated timestamp-message layout captured when the stream was built.
+    ///
+    /// # Errors
+    /// Returns an unsupported error for plain/packet streams, or
+    /// [`Error::StreamClosed`] after close.
+    pub fn metadata_layout(&self) -> Result<MetadataLayout> {
+        self.core.pool_ref()?;
+        self.core.encoding.metadata_layout()
+    }
+
     /// Returns a builder for constructing an `RxStream` with default parameters
     /// (64 KiB buffers, 8 buffers, Sc16Q11 format).
     pub fn builder<'a, 'b>(dev: &'a mut RfLinkSession<'b>) -> RxStreamBuilder<'a, 'b> {
@@ -1210,11 +1096,7 @@ impl<'a, 'b> TxStreamBuilder<'a, 'b> {
             StreamConfig::new(self.buffer_size, self.buffer_count, 1)?;
             self.dev.nios.streams.require_unclaimed(Channel::Tx)?;
             self.dev.require_initialized().await?;
-            if !self.dev.supports_format(self.format, Channel::Tx).await? {
-                return Err(Error::Unsupported(
-                    "sample format is not supported by the loaded FPGA and firmware",
-                ));
-            }
+            let encoding = self.dev.stream_encoding(self.format).await?;
             let endpoint = self
                 .dev
                 .nios
@@ -1225,7 +1107,7 @@ impl<'a, 'b> TxStreamBuilder<'a, 'b> {
             let lease = self.dev.nios.streams.claim(Channel::Tx)?;
             let core = StreamCore::new(
                 Channel::Tx,
-                self.format,
+                encoding,
                 lease,
                 endpoint,
                 self.buffer_size,
@@ -1237,6 +1119,16 @@ impl<'a, 'b> TxStreamBuilder<'a, 'b> {
 }
 
 impl TxStream {
+    /// Returns the validated timestamp-message layout captured when the stream was built.
+    ///
+    /// # Errors
+    /// Returns an unsupported error for plain/packet streams, or
+    /// [`Error::StreamClosed`] after close.
+    pub fn metadata_layout(&self) -> Result<MetadataLayout> {
+        self.core.pool_ref()?;
+        self.core.encoding.metadata_layout()
+    }
+
     /// Returns a builder for constructing a `TxStream` with default parameters
     /// (64 KiB buffers, 8 buffers, Sc16Q11 format).
     pub fn builder<'a, 'b>(dev: &'a mut RfLinkSession<'b>) -> TxStreamBuilder<'a, 'b> {
@@ -1389,6 +1281,17 @@ mod tests {
 
     const MPS: usize = 512;
     const BUFFERS: usize = 4;
+
+    fn timestamp_encoding() -> StreamEncoding {
+        StreamEncoding::Timestamps(
+            MetadataLayout::for_versions(
+                nusb::Speed::Super,
+                crate::SemanticVersion::new(0, 16, 0),
+                crate::SemanticVersion::new(2, 5, 0),
+            )
+            .unwrap(),
+        )
+    }
 
     type Log = Arc<Mutex<Vec<String>>>;
 
@@ -1624,7 +1527,7 @@ mod tests {
             let mut host = MockHost::new(&log);
             let mut core = StreamCore::new(
                 channel,
-                SampleFormat::Sc16Q11,
+                StreamEncoding::Samples,
                 host.claims.claim(channel).unwrap(),
                 ep.endpoint(&log),
                 MPS * 3 + 1,
@@ -1765,11 +1668,11 @@ mod tests {
     fn duplex_formats_survive_either_close_order_and_reject_incompatible_start() {
         for close_rx_first in [false, true] {
             let mut f = Fixture::rx();
-            f.core.format = StreamFormat::Timestamps;
+            f.core.encoding = timestamp_encoding();
             let tx_ep = MockHandle::new(true);
             let mut tx = StreamCore::new(
                 Channel::Tx,
-                SampleFormat::PacketMeta,
+                StreamEncoding::Packets,
                 f.host.claims.claim(Channel::Tx).unwrap(),
                 tx_ep.endpoint(&f.log),
                 MPS,
@@ -1781,7 +1684,7 @@ mod tests {
                 tx.start(&mut f.host).wait(),
                 Err(Error::IncompatibleStreamFormat)
             ));
-            tx.format = StreamFormat::Timestamps;
+            tx.encoding = timestamp_encoding();
             tx.start(&mut f.host).wait().unwrap();
             assert_eq!(f.host.claims.format_users(), 2);
             if close_rx_first {
@@ -1841,6 +1744,37 @@ mod tests {
     }
 
     #[test]
+    fn timestamp_buffers_align_to_messages_and_rejected_tx_payloads_return_to_the_pool() {
+        let log: Log = Arc::default();
+        let ep = MockHandle::new(false);
+        let mut host = MockHost::new(&log);
+        let mut core = StreamCore::new(
+            Channel::Tx,
+            timestamp_encoding(),
+            host.claims.claim(Channel::Tx).unwrap(),
+            ep.endpoint(&log),
+            8193,
+            2,
+        )
+        .unwrap();
+        assert_eq!(core.buffer_size().unwrap(), 16_384);
+        core.start(&mut host).wait().unwrap();
+        let mut buffer = core.get_buffer(None).wait().unwrap();
+        buffer.extend_fill(8191, 0);
+        assert!(matches!(
+            core.submit(buffer, 8191),
+            Err(Error::MetadataLength { .. })
+        ));
+        assert_eq!(core.pool_ref().unwrap().available.len(), 2);
+        assert_eq!(ep.pending(), 0);
+        let mut buffer = core.get_buffer(None).wait().unwrap();
+        buffer.extend_fill(8192, 0);
+        core.submit(buffer, 8192).unwrap();
+        assert_eq!(ep.pending(), 1);
+        core.close(&mut host).wait().unwrap();
+    }
+
+    #[test]
     fn configure_requires_initialized_board() {
         let log: Log = Arc::default();
         let ep = MockHandle::new(true);
@@ -1848,7 +1782,7 @@ mod tests {
         host.initialized = false;
         let mut core = StreamCore::new(
             Channel::Rx,
-            SampleFormat::Sc16Q11,
+            StreamEncoding::Samples,
             host.claims.claim(Channel::Rx).unwrap(),
             ep.endpoint(&log),
             MPS,

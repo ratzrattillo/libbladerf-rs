@@ -12,6 +12,7 @@ use libbladerf_rs::{Channel, Result};
 use std::time::Duration;
 
 mod connection;
+mod metadata;
 
 fn logging_init() {
     let _ = env_logger::builder()

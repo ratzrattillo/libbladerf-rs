@@ -64,6 +64,9 @@ async fn sessions(dev: &mut BladeRf1) -> Result<()> {
         let _supported: bool = rf
             .supports_format(SampleFormat::Sc16Q11Meta, Channel::Rx)
             .await?;
+        let layout: libbladerf_rs::bladerf1::MetadataLayout = rf.metadata_layout().await?;
+        let messages = layout.messages(&[])?;
+        let _: usize = messages.len();
         rf.initialize(false).await?;
         rf.set_frequency(Channel::Rx, 915_000_000, TuningMode::Fpga)
             .await?;
