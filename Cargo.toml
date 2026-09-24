@@ -23,6 +23,7 @@ log = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 futures-timer = "3"
+sync_wrapper = { version = "1", optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { version = "1", default-features = false, features = ["rt"], optional = true }
@@ -42,7 +43,7 @@ criterion = { version = "0.8", features = ["html_reports"] }
 default = ["xb100", "xb200", "xb300", "smol"]
 
 # BladeRF1 support (x40/x115)
-bladerf1 = []
+bladerf1 = ["dep:sync_wrapper"]
 
 # BladeRF2 support (xA4/xA9)
 bladerf2 = []

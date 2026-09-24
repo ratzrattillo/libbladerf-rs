@@ -204,7 +204,7 @@ impl BladeRf1 {
                 _ => None,
             })
     }
-    fn wait_until_ready(&self) -> impl MaybeFuture<Output = crate::Result<()>> {
+    fn wait_until_ready(&mut self) -> impl MaybeFuture<Output = crate::Result<()>> {
         Op::new(async move {
             const MAX_RETRIES: u32 = 30;
             for i in 0..MAX_RETRIES {
@@ -384,7 +384,7 @@ impl BladeRf1 {
     }
     /// Returns the device serial number string.
     pub fn serial(&self) -> impl MaybeFuture<Output = crate::Result<String>> {
-        Op::new(async move { self.device.serial().await })
+        self.device.serial()
     }
 
     /// Loads a DC calibration table from a JSON file for the given channel.
@@ -420,7 +420,7 @@ impl BladeRf1 {
 
     /// Returns the FX3 firmware version as a string.
     pub fn fx3_firmware_version(&self) -> impl MaybeFuture<Output = crate::Result<String>> {
-        Op::new(async move { self.device.fx3_firmware_version().await })
+        self.device.fx3_firmware_version()
     }
 
     /// Creates an [`RfLinkSession`] for normal RF operation.
@@ -432,9 +432,7 @@ impl BladeRf1 {
         &mut self,
     ) -> impl MaybeFuture<Output = crate::Result<RfLinkSession<'_>>> {
         Op::new(async move {
-            if self.nios.transport().current_alt_setting() != UsbAltSetting::RfLink {
-                self.nios.usb_change_setting(UsbAltSetting::RfLink).await?;
-            }
+            self.nios.usb_change_setting(UsbAltSetting::RfLink).await?;
             Ok(RfLinkSession {
                 nios: &mut self.nios,
                 dc_rx_table: self.dc_rx_table.as_ref(),
@@ -452,11 +450,9 @@ impl BladeRf1 {
             if self.nios.active_streams() > 0 {
                 return Err(Error::StreamsActive);
             }
-            if self.nios.transport().current_alt_setting() != UsbAltSetting::SpiFlash {
-                self.nios
-                    .usb_change_setting(UsbAltSetting::SpiFlash)
-                    .await?;
-            }
+            self.nios
+                .usb_change_setting(UsbAltSetting::SpiFlash)
+                .await?;
             let result = self
                 .nios
                 .interface()
@@ -489,9 +485,7 @@ impl BladeRf1 {
             if self.nios.active_streams() > 0 {
                 return Err(Error::StreamsActive);
             }
-            if self.nios.transport().current_alt_setting() != UsbAltSetting::Config {
-                self.nios.usb_change_setting(UsbAltSetting::Config).await?;
-            }
+            self.nios.usb_change_setting(UsbAltSetting::Config).await?;
             Ok(ConfigSession {
                 nios: &mut self.nios,
             })
@@ -504,7 +498,7 @@ impl BladeRf1 {
     }
 
     /// Returns `true` if the FPGA has been configured (loaded and ready).
-    pub fn is_fpga_configured(&self) -> impl MaybeFuture<Output = crate::Result<bool>> {
+    pub fn is_fpga_configured(&mut self) -> impl MaybeFuture<Output = crate::Result<bool>> {
         Op::new(async move { self.nios.interface().usb_is_fpga_configured().await })
     }
 }
@@ -683,7 +677,7 @@ impl RfLinkSession<'_> {
         Op::new(async move {
             let alt_setting = self.nios.get_alt_setting();
             log::trace!("[*] Init - Default Alt Setting {alt_setting:?}");
-            if alt_setting != UsbAltSetting::RfLink {
+            if alt_setting != Some(UsbAltSetting::RfLink) {
                 self.nios.usb_change_setting(UsbAltSetting::RfLink).await?;
                 log::trace!("[*] Init - Set Alt Setting to 0x01");
             }

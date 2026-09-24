@@ -49,9 +49,9 @@ impl NiosCore {
     pub fn transport(&self) -> &UsbTransport {
         &self.transport
     }
-    /// Returns the claimed nusb interface for vendor control requests.
-    pub fn interface(&self) -> &nusb::Interface {
-        self.transport.interface()
+    /// Returns the serialized control transport.
+    pub fn interface(&mut self) -> &mut UsbTransport {
+        &mut self.transport
     }
     /// Switches the USB alternate setting, releasing NIOS endpoints first.
     pub fn usb_change_setting(
@@ -236,12 +236,8 @@ impl NiosCore {
     ///
     /// Maps the raw integer to a `UsbAltSetting` variant; falls back
     /// to `Null` with a warning log if the value is unrecognized.
-    pub fn get_alt_setting(&self) -> UsbAltSetting {
-        let raw = self.transport.interface().get_alt_setting();
-        UsbAltSetting::try_from(raw).unwrap_or_else(|_| {
-            log::warn!("unknown USB alt setting {raw:#x}, treating as Null");
-            UsbAltSetting::Null
-        })
+    pub fn get_alt_setting(&self) -> Option<UsbAltSetting> {
+        self.transport.current_alt_setting()
     }
     /// Issues an LMS6002D retune command.
     ///

@@ -24,6 +24,8 @@ use std::time::Duration;
 
 mod transaction;
 use transaction::NiosExchange;
+pub(crate) mod pending;
+use pending::Pending;
 
 /// USB endpoint address for the control OUT bulk endpoint.
 pub const CONTROL_ENDPOINT_OUT: u8 = 0x02;
@@ -193,75 +195,88 @@ impl BladeRf1DeviceCommands for Device {
 
 /// USB interface-level vendor control requests.
 ///
-/// Implemented for `nusb::Interface`. `UsbTransport` and `NiosCore` expose
-/// their interface through `interface()`; alternate-setting changes live on
-/// `UsbTransport`, which must release its NIOS endpoints first.
+/// Serialized through `UsbTransport`, which retains interrupted operations.
 pub trait UsbInterfaceCommands {
     /// Issues a vendor IN command and returns the 32-bit integer response.
-    fn usb_vendor_cmd_int(&self, cmd: VendorRequest) -> impl MaybeFuture<Output = Result<u32>>;
+    fn usb_vendor_cmd_int(&mut self, cmd: VendorRequest) -> impl MaybeFuture<Output = Result<u32>>;
     /// Issues a vendor IN command with a `wValue` parameter and returns the 32-bit integer response.
     fn usb_vendor_cmd_int_w_value(
-        &self,
+        &mut self,
         cmd: VendorRequest,
         w_value: u16,
     ) -> impl MaybeFuture<Output = Result<u32>>;
     /// Issues a vendor IN command with a `wIndex` parameter and returns the 32-bit integer response.
     fn usb_vendor_cmd_int_w_index(
-        &self,
+        &mut self,
         cmd: VendorRequest,
         w_index: u16,
     ) -> impl MaybeFuture<Output = Result<u32>>;
     /// Issues a vendor OUT command with a `wIndex` parameter and data payload.
     fn usb_vendor_cmd_out_w_index(
-        &self,
+        &mut self,
         cmd: VendorRequest,
         w_index: u16,
         data: &[u8],
     ) -> impl MaybeFuture<Output = Result<()>>;
     /// Issues a vendor IN command with a `wIndex` parameter and fills `buf` with the response data.
     fn usb_vendor_cmd_in_w_index_data(
-        &self,
+        &mut self,
         cmd: VendorRequest,
         w_index: u16,
         buf: &mut [u8],
     ) -> impl MaybeFuture<Output = Result<()>>;
 }
-impl UsbInterfaceCommands for Interface {
-    fn usb_vendor_cmd_int(&self, cmd: VendorRequest) -> impl MaybeFuture<Output = Result<u32>> {
+impl UsbInterfaceCommands for UsbTransport {
+    fn usb_vendor_cmd_int(&mut self, cmd: VendorRequest) -> impl MaybeFuture<Output = Result<u32>> {
         vendor_cmd_in_u32(self, cmd, 0, 0)
     }
     fn usb_vendor_cmd_int_w_value(
-        &self,
+        &mut self,
         cmd: VendorRequest,
         w_value: u16,
     ) -> impl MaybeFuture<Output = Result<u32>> {
         vendor_cmd_in_u32(self, cmd, w_value, 0)
     }
     fn usb_vendor_cmd_int_w_index(
-        &self,
+        &mut self,
         cmd: VendorRequest,
         w_index: u16,
     ) -> impl MaybeFuture<Output = Result<u32>> {
         vendor_cmd_in_u32(self, cmd, 0, w_index)
     }
     fn usb_vendor_cmd_out_w_index(
-        &self,
+        &mut self,
         cmd: VendorRequest,
         w_index: u16,
         data: &[u8],
     ) -> impl MaybeFuture<Output = Result<()>> {
-        let pkt = ControlOut {
-            control_type: ControlType::Vendor,
-            recipient: Recipient::Device,
-            request: cmd as u8,
-            value: 0,
-            index: w_index,
-            data,
-        };
-        self.control_out(pkt, TIMEOUT).map_err(Error::from)
+        Op::new(async move {
+            u16::try_from(data.len())
+                .map_err(|_| Error::Argument("control payload exceeds u16 maximum".into()))?;
+            self.prepare_io().await?;
+            let interface = self.interface.clone();
+            let data = data.to_vec();
+            self.pending.begin(async move {
+                interface
+                    .control_out(
+                        ControlOut {
+                            control_type: ControlType::Vendor,
+                            recipient: Recipient::Device,
+                            request: cmd as u8,
+                            value: 0,
+                            index: w_index,
+                            data: &data,
+                        },
+                        TIMEOUT,
+                    )
+                    .await?;
+                Ok(ControlResult::Done)
+            });
+            self.finish_pending(TIMEOUT).await.map(|_| ())
+        })
     }
     fn usb_vendor_cmd_in_w_index_data(
-        &self,
+        &mut self,
         cmd: VendorRequest,
         w_index: u16,
         buf: &mut [u8],
@@ -277,7 +292,7 @@ impl UsbInterfaceCommands for Interface {
 }
 
 fn vendor_cmd_in(
-    iface: &Interface,
+    transport: &mut UsbTransport,
     cmd: VendorRequest,
     value: u16,
     index: u16,
@@ -291,10 +306,18 @@ fn vendor_cmd_in(
         index,
         length,
     };
-    iface.control_in(pkt, TIMEOUT).map(move |response| {
-        let vec = response?;
-        require_length(length as usize, vec.len())?;
-        Ok(vec)
+    Op::new(async move {
+        transport.prepare_io().await?;
+        let interface = transport.interface.clone();
+        transport.pending.begin(async move {
+            let vec = interface.control_in(pkt, TIMEOUT).await?;
+            require_length(length as usize, vec.len())?;
+            Ok(ControlResult::Data(vec))
+        });
+        match transport.finish_pending(TIMEOUT).await? {
+            Some(ControlResult::Data(vec)) => Ok(vec),
+            _ => Err(Error::Internal("missing vendor response")),
+        }
     })
 }
 
@@ -322,7 +345,7 @@ fn firmware_ack(request: VendorRequest, expected: u32, status: u32) -> Result<()
 }
 
 fn vendor_cmd_in_u32(
-    iface: &Interface,
+    iface: &mut UsbTransport,
     cmd: VendorRequest,
     value: u16,
     index: u16,
@@ -339,34 +362,34 @@ fn vendor_cmd_in_u32(
 pub trait BladeRf1UsbInterfaceCommands: UsbInterfaceCommands {
     /// Enables or disables the USB streaming module for the given channel.
     fn usb_enable_module(
-        &self,
+        &mut self,
         channel: Channel,
         enable: bool,
     ) -> impl MaybeFuture<Output = Result<()>>;
     /// Queries whether firmware loopback is currently enabled.
-    fn usb_get_firmware_loopback(&self) -> impl MaybeFuture<Output = Result<bool>>;
+    fn usb_get_firmware_loopback(&mut self) -> impl MaybeFuture<Output = Result<bool>>;
     /// Resets the FX3 USB controller via a vendor control request.
-    fn usb_device_reset(&self) -> impl MaybeFuture<Output = Result<()>>;
+    fn usb_device_reset(&mut self) -> impl MaybeFuture<Output = Result<()>>;
     /// Returns `true` if the firmware has reported readiness.
-    fn usb_is_firmware_ready(&self) -> impl MaybeFuture<Output = Result<bool>>;
+    fn usb_is_firmware_ready(&mut self) -> impl MaybeFuture<Output = Result<bool>>;
     /// Returns `true` if the FPGA has finished configuration.
-    fn usb_is_fpga_configured(&self) -> impl MaybeFuture<Output = Result<bool>>;
+    fn usb_is_fpga_configured(&mut self) -> impl MaybeFuture<Output = Result<bool>>;
     /// Signals the firmware to begin FPGA programming.
-    fn usb_begin_fpga_prog(&self) -> impl MaybeFuture<Output = Result<()>>;
+    fn usb_begin_fpga_prog(&mut self) -> impl MaybeFuture<Output = Result<()>>;
     /// Performs a bulk OUT transfer to the given endpoint address.
     ///
     /// `timeout` applies on native targets only; on wasm the transfer is
     /// awaited without a deadline because WebUSB cannot cancel transfers.
     fn usb_bulk_out(
-        &self,
+        &mut self,
         endpoint: u8,
         data: &[u8],
         timeout: Duration,
     ) -> impl MaybeFuture<Output = Result<()>>;
 }
-impl BladeRf1UsbInterfaceCommands for Interface {
+impl BladeRf1UsbInterfaceCommands for UsbTransport {
     fn usb_enable_module(
-        &self,
+        &mut self,
         channel: Channel,
         enable: bool,
     ) -> impl MaybeFuture<Output = Result<()>> {
@@ -378,11 +401,11 @@ impl BladeRf1UsbInterfaceCommands for Interface {
         self.usb_vendor_cmd_int_w_value(cmd, enable as u16)
             .map(move |result| firmware_status(cmd, result?))
     }
-    fn usb_get_firmware_loopback(&self) -> impl MaybeFuture<Output = Result<bool>> {
+    fn usb_get_firmware_loopback(&mut self) -> impl MaybeFuture<Output = Result<bool>> {
         self.usb_vendor_cmd_int(VendorRequest::GetLoopback)
             .map_ok(|result| result != 0)
     }
-    fn usb_device_reset(&self) -> impl MaybeFuture<Output = Result<()>> {
+    fn usb_device_reset(&mut self) -> impl MaybeFuture<Output = Result<()>> {
         let pkt = ControlOut {
             control_type: ControlType::Vendor,
             recipient: Recipient::Device,
@@ -391,13 +414,22 @@ impl BladeRf1UsbInterfaceCommands for Interface {
             index: 0x0,
             data: &[],
         };
-        self.control_out(pkt, TIMEOUT).map_err(Error::from)
+        Op::new(async move {
+            self.pending.finish(TIMEOUT).await?;
+            self.current_alt_setting = None;
+            let interface = self.interface.clone();
+            self.pending.begin(async move {
+                interface.control_out(pkt, TIMEOUT).await?;
+                Ok(ControlResult::Done)
+            });
+            self.pending.finish(TIMEOUT).await.map(|_| ())
+        })
     }
-    fn usb_is_firmware_ready(&self) -> impl MaybeFuture<Output = Result<bool>> {
+    fn usb_is_firmware_ready(&mut self) -> impl MaybeFuture<Output = Result<bool>> {
         self.usb_vendor_cmd_int(VendorRequest::QueryDeviceReady)
             .map_ok(|result| result != 0)
     }
-    fn usb_is_fpga_configured(&self) -> impl MaybeFuture<Output = Result<bool>> {
+    fn usb_is_fpga_configured(&mut self) -> impl MaybeFuture<Output = Result<bool>> {
         self.usb_vendor_cmd_int(VendorRequest::QueryFpgaStatus)
             .map(|result| match result? {
                 0 => Ok(false),
@@ -405,26 +437,33 @@ impl BladeRf1UsbInterfaceCommands for Interface {
                 _ => Err(Error::BoardState("unexpected FPGA status response")),
             })
     }
-    fn usb_begin_fpga_prog(&self) -> impl MaybeFuture<Output = Result<()>> {
+    fn usb_begin_fpga_prog(&mut self) -> impl MaybeFuture<Output = Result<()>> {
         self.usb_vendor_cmd_int(VendorRequest::BeginProg)
             .map(|result| firmware_status(VendorRequest::BeginProg, result?))
     }
     fn usb_bulk_out(
-        &self,
+        &mut self,
         endpoint: u8,
         data: &[u8],
         timeout: Duration,
     ) -> impl MaybeFuture<Output = Result<()>> {
         Op::new(async move {
+            self.prepare_io().await?;
             let mut ep = self
+                .interface
                 .endpoint::<Bulk, Out>(endpoint)
                 .map_err(Error::EndpointBusy)?;
             let mut buf = ep.allocate(data.len());
             buf.extend_from_slice(data);
-            ep.submit(buf);
-            let completion = next_complete(&mut ep, timeout).await?;
-            completion.status?;
-            require_length(data.len(), completion.actual_len)
+            let len = data.len();
+            self.pending.begin(async move {
+                ep.submit(buf);
+                let completion = ep.next_complete().await;
+                completion.status?;
+                require_length(len, completion.actual_len)?;
+                Ok(ControlResult::Done)
+            });
+            self.finish_pending(timeout).await.map(|_| ())
         })
     }
 }
@@ -486,26 +525,6 @@ impl<Dir: EndpointDirection> BulkEndpoint for Endpoint<Bulk, Dir> {
     }
 }
 
-/// Awaits the next completion on `ep`, bounded by `timeout`.
-///
-/// On timeout the pending transfers are cancelled and collected where the
-/// endpoint supports cancellation so it is left idle; WebUSB transfers
-/// cannot be cancelled, so there the in-flight transfer is abandoned and
-/// `Error::Timeout` is returned.
-pub(crate) async fn next_complete<E: BulkEndpoint>(
-    ep: &mut E,
-    timeout: Duration,
-) -> Result<Completion> {
-    let Some(completion) = crate::maybe_future::timeout(timeout, ep.next_complete()).await else {
-        if ep.can_cancel() {
-            ep.cancel_all();
-            drop(drain_pending(ep, RELEASE_TIMEOUT).await);
-        }
-        return Err(Error::Timeout);
-    };
-    Ok(completion)
-}
-
 /// Collects all pending completions on `ep` and returns their buffers.
 ///
 /// Each completion is bounded by `deadline`; on expiry the remaining
@@ -545,8 +564,15 @@ type NiosEndpoints = NiosExchange<Endpoint<Bulk, Out>, Endpoint<Bulk, In>>;
 pub struct UsbTransport {
     interface: Interface,
     nios_endpoints: Option<NiosEndpoints>,
-    current_alt_setting: UsbAltSetting,
+    current_alt_setting: Option<UsbAltSetting>,
+    pending: Pending<ControlResult>,
     speed: Speed,
+}
+
+enum ControlResult {
+    Data(Vec<u8>),
+    Done,
+    Setting(UsbAltSetting),
 }
 impl UsbTransport {
     /// Creates a new `UsbTransport` from an nusb `Interface`.
@@ -556,16 +582,13 @@ impl UsbTransport {
         Self {
             interface,
             nios_endpoints: None,
-            current_alt_setting,
+            current_alt_setting: Some(current_alt_setting),
+            pending: Pending::default(),
             speed,
         }
     }
-    /// Returns a shared reference to the underlying nusb `Interface`.
-    pub fn interface(&self) -> &Interface {
-        &self.interface
-    }
     /// Returns the cached current USB alternate setting.
-    pub fn current_alt_setting(&self) -> UsbAltSetting {
+    pub fn current_alt_setting(&self) -> Option<UsbAltSetting> {
         self.current_alt_setting
     }
     /// Returns the USB bus speed (full/high/superspeed).
@@ -578,10 +601,18 @@ impl UsbTransport {
         setting: UsbAltSetting,
     ) -> impl MaybeFuture<Output = Result<()>> {
         Op::new(async move {
+            self.finish_pending(TIMEOUT).await?;
+            if self.current_alt_setting == Some(setting) {
+                return Ok(());
+            }
             self.release_endpoints().await?;
-            self.interface.set_alt_setting(setting as u8).await?;
-            self.current_alt_setting = setting;
-            Ok(())
+            self.current_alt_setting = None;
+            let interface = self.interface.clone();
+            self.pending.begin(async move {
+                interface.set_alt_setting(setting as u8).await?;
+                Ok(ControlResult::Setting(setting))
+            });
+            self.finish_pending(TIMEOUT).await.map(|_| ())
         })
     }
     /// Sets the firmware loopback mode, cycling the alt setting to Null then
@@ -591,15 +622,57 @@ impl UsbTransport {
         enable: bool,
     ) -> impl MaybeFuture<Output = Result<()>> {
         Op::new(async move {
-            let fx3_ret = self
-                .interface
-                .usb_vendor_cmd_int_w_value(VendorRequest::SetLoopback, enable as u16)
-                .await?;
-            firmware_ack(VendorRequest::SetLoopback, u32::from(enable), fx3_ret)?;
-            self.usb_change_setting(UsbAltSetting::Null).await?;
-            self.usb_change_setting(UsbAltSetting::RfLink).await?;
-            Ok(())
+            self.prepare_io().await?;
+            self.release_endpoints().await?;
+            self.current_alt_setting = None;
+            let interface = self.interface.clone();
+            self.pending.begin(async move {
+                let bytes = interface
+                    .control_in(
+                        ControlIn {
+                            control_type: ControlType::Vendor,
+                            recipient: Recipient::Device,
+                            request: VendorRequest::SetLoopback as u8,
+                            value: u16::from(enable),
+                            index: 0,
+                            length: 4,
+                        },
+                        TIMEOUT,
+                    )
+                    .await?;
+                require_length(4, bytes.len())?;
+                firmware_ack(
+                    VendorRequest::SetLoopback,
+                    u32::from(enable),
+                    u32::from_le_bytes(bytes.try_into().unwrap()),
+                )?;
+                interface.set_alt_setting(UsbAltSetting::Null as u8).await?;
+                interface
+                    .set_alt_setting(UsbAltSetting::RfLink as u8)
+                    .await?;
+                Ok(ControlResult::Setting(UsbAltSetting::RfLink))
+            });
+            self.finish_pending(TIMEOUT).await.map(|_| ())
         })
+    }
+    async fn finish_pending(&mut self, timeout: Duration) -> Result<Option<ControlResult>> {
+        if self.current_alt_setting.is_none() && !self.pending.is_pending() {
+            return Err(Error::RecoveryRequired);
+        }
+        let result = self.pending.finish(timeout).await?;
+        if let Some(ControlResult::Setting(setting)) = result {
+            self.current_alt_setting = Some(setting);
+        }
+        self.current_alt_setting.ok_or(Error::RecoveryRequired)?;
+        Ok(result)
+    }
+
+    pub(crate) async fn prepare_io(&mut self) -> Result<()> {
+        self.finish_pending(TIMEOUT).await?;
+        if let Some(endpoints) = &mut self.nios_endpoints {
+            endpoints.finish(TIMEOUT).await?;
+        }
+        Ok(())
     }
     /// Finishes pending NIOS transactions before releasing their endpoints.
     ///
@@ -640,6 +713,7 @@ impl UsbTransport {
     ) -> impl MaybeFuture<Output = Result<[u8; 16]>> {
         Op::new(async move {
             let t = timeout.unwrap_or(TIMEOUT);
+            self.finish_pending(t).await?;
             let endpoints = self.ensure_nios_endpoints()?;
             endpoints.exchange(request, t).await
         })
