@@ -1,3 +1,44 @@
+## [0.6.0] - 2026-09-24
+
+### 🐛 Bug Fixes
+
+- Validate feature and API contracts across native and WebUSB targets
+- *(stream)* Conserve ordered RX completions and failed TX buffers
+- Decode metadata portably and make opening independent of logging
+- *(protocol)* [**breaking**] Validate complete USB and NIOS responses
+- *(calibration)* [**breaking**] Validate table construction and frequency lookups
+- *(tuning)* [**breaking**] Derive PLL dividers from validated frequency selectors
+- *(tuning)* [**breaking**] Distinguish measured retunes from queue acknowledgements
+- *(usb)* Retain NIOS transactions across cancelled and timed-out waits
+- *(usb)* Retain control and reconfiguration operations until confirmed
+- *(stream)* [**breaking**] Coordinate endpoint claims and resumable duplex lifecycles
+- *(calibration)* Preserve outcomes and resume temporary register restoration
+- *(calibration)* [**breaking**] Replace sentinel arguments with named validated updates
+- *(flash)* Validate full ranges and retain page programming transactions
+- *(device)* Retain shutdown and reset operations across cancellation
+- *(stream)* Validate versioned metadata framing within USB buffers
+- *(stream)* Preserve and report source-limited teardown progress
+- *(gain)* [**breaking**] Use bounded integer allocation and integral gain offsets
+- *(examples)* Close endpoint claims and preserve cleanup errors
+- *(features)* Gate XB200 synthesizer I/O behind its feature
+- *(bench)* Measure full stream transfers and close endpoints
+
+### 💼 Other
+
+- Raise MSRV to Rust 1.98.1
+
+### 🚜 Refactor
+
+- *(api)* Expose handle diagnostics and simplify delegated futures
+
+### 📚 Documentation
+
+- Document the 0.6 ownership and recovery migration
+
+### ⚙️ Miscellaneous Tasks
+
+- Add aarch64-linux-android cross-compile check
+- Align workspace checks and runtime platform contracts
 ## [0.5.2] - 2026-09-22
 
 ### 🐛 Bug Fixes
