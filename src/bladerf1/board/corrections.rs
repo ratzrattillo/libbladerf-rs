@@ -11,12 +11,17 @@
 
 use crate::bladerf1::board::RfLinkSession;
 use crate::bladerf1::board::TuningMode;
+use crate::bladerf1::board::{
+    Loopback, METADATA_HEADER_SIZE, MetadataHeader, SampleFormat, TxStream,
+};
 use crate::bladerf1::hardware::lms6002d;
 use crate::bladerf1::hardware::lms6002d::dc_calibration::{DcCalModule, DcCals};
+use crate::bladerf1::hardware::si5338::RationalRate;
 use crate::channel::Channel;
 use crate::error::Result;
 use crate::maybe_future::Op;
 use nusb::MaybeFuture;
+use std::time::Duration;
 /// Converts a duration in milliseconds to a sample count at the given sample rate.
 #[macro_export]
 macro_rules! ms_to_samples {
@@ -88,14 +93,84 @@ impl RfLinkSession<'_> {
             }
         })
     }
+    /// Sample rate applied to the TX channel for the dummy burst that primes
+    /// the LMS6002D TX path before TX LPF DC calibration.
+    const TX_LPF_DUMMY_TX_RATE: u32 = 3_000_000;
+    /// Metadata flags for the one-shot dummy TX burst: burst start, burst
+    /// end, and transmit immediately.
+    const TX_LPF_DUMMY_TX_FLAGS: u32 = (1 << 0) | (1 << 1) | (1 << 2);
+    /// Deadline for the dummy TX transfer to complete.
+    const TX_LPF_DUMMY_TX_TIMEOUT: Duration = Duration::from_secs(2);
+
     /// Runs DC calibration on the TX LPF path of the LMS6002D.
+    ///
+    /// Runs a one-shot zero-sample TX burst through the baseband loopback
+    /// first, because the LMS6002D TX LPF calibration requires the TX path
+    /// to have recently carried samples in order to converge.
     ///
     /// Returns `Error::NotInitialized` if the board has not been initialized.
     pub fn cal_tx_lpf(&mut self) -> impl MaybeFuture<Output = Result<()>> {
         Op::new(async move {
             self.require_initialized().await?;
+            self.tx_lpf_dummy_tx().await?;
             self.calibrate_dc(DcCalModule::TxLpf).await
         })
+    }
+
+    fn tx_lpf_dummy_tx(&mut self) -> impl MaybeFuture<Output = Result<()>> {
+        Op::new(async move {
+            let loopback_backup = self.get_loopback().await?;
+            let mut sample_rate_backup = self.get_rational_sample_rate(Channel::Tx).await?;
+            let result = self.tx_lpf_dummy_tx_burst().await;
+            let restore = self
+                .restore_tx_lpf_dummy_tx(loopback_backup, &mut sample_rate_backup)
+                .await;
+            match (result, restore) {
+                (Err(error), _) | (_, Err(error)) => Err(error),
+                (Ok(()), Ok(())) => Ok(()),
+            }
+        })
+    }
+
+    async fn tx_lpf_dummy_tx_burst(&mut self) -> Result<()> {
+        self.set_loopback(Loopback::BbTxvga1Rxvga2).await?;
+        self.set_sample_rate(Channel::Tx, Self::TX_LPF_DUMMY_TX_RATE)
+            .await?;
+        let message_size = self.metadata_layout().await?.message_size();
+        let mut tx = TxStream::builder(self)
+            .buffer_size(message_size)
+            .buffer_count(1)
+            .format(SampleFormat::Sc16Q11Meta)
+            .build()
+            .await?;
+        let burst = async {
+            tx.start(self).await?;
+            let mut buffer = tx.get_buffer(Some(Self::TX_LPF_DUMMY_TX_TIMEOUT)).await?;
+            buffer.extend_fill(message_size, 0);
+            buffer[..METADATA_HEADER_SIZE].copy_from_slice(
+                &MetadataHeader::new(0, 0, 0, Self::TX_LPF_DUMMY_TX_FLAGS).to_bytes(),
+            );
+            tx.submit(buffer, message_size)?;
+            tx.wait_completion(Some(Self::TX_LPF_DUMMY_TX_TIMEOUT))
+                .await
+        }
+        .await;
+        let close = tx.close(self).await;
+        burst?;
+        close
+    }
+
+    async fn restore_tx_lpf_dummy_tx(
+        &mut self,
+        loopback: Loopback,
+        sample_rate: &mut RationalRate,
+    ) -> Result<()> {
+        let rate = self
+            .set_rational_sample_rate(Channel::Tx, sample_rate)
+            .await;
+        let loopback = self.set_loopback(loopback).await;
+        rate?;
+        loopback
     }
     /// Runs DC calibration on the specified LMS6002D module.
     ///
