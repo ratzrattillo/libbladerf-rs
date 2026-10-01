@@ -24,7 +24,7 @@ request to `main` (plus manual `workflow_dispatch`). It is also a reusable
 10. WebUSB — `cargo check --target wasm32-unknown-unknown --features bladerf1 --lib`
     plus runtime-free public API checks (`.cargo/config.toml` supplies
     `--cfg=web_sys_unstable_apis`)
-11. Explicit Rust 1.98.1 MSRV, isolated native runtime/expansion feature contracts,
+11. Explicit Rust 1.88.0 MSRV, isolated native runtime/expansion feature contracts,
     Android API checks with both runtime integrations, and aarch64/Android/Windows
     cross-builds; Windows also gets a cross-target API check
 12. Conventional Commits — `git-cliff --unreleased --output /dev/null`

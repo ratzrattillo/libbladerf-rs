@@ -1,7 +1,7 @@
 # Migration from 0.5.2 to the 0.6 development API
 
 This checkout contains intentional breaking changes for a coordinated 0.6 release.
-The package version remains 0.5.2 until the release workflow runs. Rust 1.98.1 is
+The package version remains 0.5.2 until the release workflow runs. Rust 1.88.0 is
 the minimum supported compiler.
 
 ## Streams remain independently owned

@@ -7,11 +7,14 @@
 //!
 //! nusb's semantics are mirrored exactly: bulk and control transfers are
 //! real futures completed by nusb's event thread, while device open,
-//! interface claim, alternate setting and clear halt are blocking syscalls
-//! that nusb offloads through its `smol` or `tokio` feature when awaited.
-//! Enable one of this crate's `smol`/`tokio` features for native async use.
+//! interface claim, alternate setting and clear halt are blocking syscalls.
+//! On native targets `.wait()` runs those syscalls inline through
+//! [`await_maybe`], so no async runtime is required; awaiting them instead
+//! needs one of this crate's `smol`/`tokio` features, exactly as with nusb.
 
 use nusb::MaybeFuture;
+#[cfg(not(target_arch = "wasm32"))]
+use std::cell::Cell;
 use std::future::{Future, IntoFuture};
 use std::time::Duration;
 
@@ -22,6 +25,61 @@ pub(crate) use std::marker::Send as NonWasmSend;
 pub(crate) trait NonWasmSend {}
 #[cfg(target_arch = "wasm32")]
 impl<T: ?Sized> NonWasmSend for T {}
+
+#[cfg(not(target_arch = "wasm32"))]
+thread_local! {
+    static BLOCKING_MODE: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Returns `true` while [`Op::wait`] is driving a future synchronously.
+#[cfg(not(target_arch = "wasm32"))]
+fn is_blocking() -> bool {
+    BLOCKING_MODE.with(Cell::get)
+}
+
+/// Sets blocking mode for its lifetime, restoring the previous value on drop.
+///
+/// Saving and restoring (rather than clearing) keeps nested `wait()` calls
+/// correct even if a closure performs its own synchronous I/O.
+#[cfg(not(target_arch = "wasm32"))]
+struct BlockingGuard(bool);
+
+#[cfg(not(target_arch = "wasm32"))]
+impl BlockingGuard {
+    fn enter() -> Self {
+        Self(BLOCKING_MODE.with(|mode| mode.replace(true)))
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Drop for BlockingGuard {
+    fn drop(&mut self) {
+        let previous = self.0;
+        BLOCKING_MODE.with(|mode| mode.set(previous));
+    }
+}
+
+/// Awaits `future`, running nusb's blocking syscalls inline in blocking mode.
+///
+/// Synchronous callers (inside [`Op::wait`]) must not drive nusb's
+/// `Blocking`-backed operations as futures: their `IntoFuture` spawns onto
+/// the `smol`/`tokio` pool, which is unavailable in a runtime-free build.
+/// Calling [`MaybeFuture::wait`] instead runs the syscall inline on this
+/// thread. Asynchronous callers await normally.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) async fn await_maybe<F: MaybeFuture>(future: F) -> F::Output {
+    if is_blocking() {
+        future.wait()
+    } else {
+        future.await
+    }
+}
+
+/// Awaits `future` (WebUSB has no blocking path).
+#[cfg(target_arch = "wasm32")]
+pub(crate) async fn await_maybe<F: MaybeFuture>(future: F) -> F::Output {
+    future.await
+}
 
 /// Wraps a future so it implements [`MaybeFuture`].
 ///
@@ -47,32 +105,8 @@ impl<F: Future> IntoFuture for Op<F> {
 impl<F: Future + NonWasmSend> MaybeFuture for Op<F> {
     #[cfg(not(target_arch = "wasm32"))]
     fn wait(self) -> F::Output {
-        #[cfg(feature = "tokio")]
-        let _context = tokio_context();
+        let _guard = BlockingGuard::enter();
         block_on(self.0)
-    }
-}
-
-/// Enters a tokio runtime context if the current thread has none.
-///
-/// With the `tokio` feature nusb resolves blocking syscalls through
-/// `tokio::task::spawn_blocking`, which requires a runtime context even
-/// when the future is driven by [`block_on`]. Synchronous callers outside
-/// tokio get a lazily created runtime whose blocking pool serves them.
-#[cfg(all(feature = "tokio", not(target_arch = "wasm32")))]
-fn tokio_context() -> Option<tokio::runtime::EnterGuard<'static>> {
-    use std::sync::LazyLock;
-
-    static RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
-        tokio::runtime::Builder::new_current_thread()
-            .build()
-            .expect("failed to build the fallback tokio runtime")
-    });
-
-    if tokio::runtime::Handle::try_current().is_ok() {
-        None
-    } else {
-        Some(RUNTIME.enter())
     }
 }
 

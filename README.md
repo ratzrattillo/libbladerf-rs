@@ -9,7 +9,7 @@ USB transport via [nusb]. Supports Windows, macOS, Linux, Android (via file
 descriptor) and WebUSB (`wasm32-unknown-unknown`). Every I/O method can be
 used synchronously or asynchronously.
 
-Requires Rust 1.98.1 or newer.
+Requires Rust 1.88.0 or newer.
 
 The current development API targets the coordinated 0.6 migration; package
 metadata remains 0.5.2 until release. See [MIGRATION.md](MIGRATION.md).

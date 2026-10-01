@@ -4,7 +4,7 @@ Pure Rust driver for the Nuand BladeRF1 SDR. No C libbladeRF dependency. Based o
 
 [nusb]: https://github.com/kevinmehall/nusb
 
-Edition 2024, MSRV 1.98.1.
+Edition 2024, MSRV 1.88.0.
 
 ## Commands
 
@@ -48,7 +48,7 @@ Rust targets are installed automatically by `check.sh`. The
 
 ### scripts/check.sh vs CI
 
-`scripts/check.sh` mirrors the jobs in `.github/workflows/ci.yml` and adds local hardware tests when `CI` is unset. It pins stable, checks the explicit 1.98.1 MSRV, exercises the feature matrix, runs unit/protocol/API tests with default and tokio-only integrations, checks workspace Clippy on stable/nightly and root tokio-only Clippy, uses nightly rustfmt, checks wasm/Android/Windows public API contracts, cross-builds, validates Conventional Commits, builds docs/examples, and runs deny/audit. Nightly Clippy is a hard failure locally and advisory (`continue-on-error`) in CI. Fix or deliberately allow new lints. `ci.yml` is reusable (`workflow_call`) and is the sole release gate; no checks are duplicated in `release.yml`.
+`scripts/check.sh` mirrors the jobs in `.github/workflows/ci.yml` and adds local hardware tests when `CI` is unset. It pins stable, checks the explicit 1.88.0 MSRV, exercises the feature matrix, runs unit/protocol/API tests with default and tokio-only integrations, checks workspace Clippy on stable/nightly and root tokio-only Clippy, uses nightly rustfmt, checks wasm/Android/Windows public API contracts, cross-builds, validates Conventional Commits, builds docs/examples, and runs deny/audit. Nightly Clippy is a hard failure locally and advisory (`continue-on-error`) in CI. Fix or deliberately allow new lints. `ci.yml` is reusable (`workflow_call`) and is the sole release gate; no checks are duplicated in `release.yml`.
 
 ### Release pipeline
 
@@ -195,7 +195,7 @@ Implementation rules (see `src/maybe_future.rs` and `MIGRATION.md`; `ASYNC_PLAN.
 
 - Single-call methods return the combinator chain directly: `nusb_op().map_ok(..).map_err(Error::from)`, `self.nios.nios_read(..).map_ok(..)`. `Op::new(async move { .. })` is only for bodies with two or more awaits or control flow between them. Direct delegations return the inner `MaybeFuture` unchanged.
 - Inside async blocks, internal calls `.await` the public method directly (`Op<F>: IntoFuture<IntoFuture = F>`, zero cost, no boxing).
-- `Op::wait()` runs a crate-private thread-parking `block_on`. It works because nusb completes transfers on its own event thread, `futures-timer` on its own timer thread, and nusb's blocking syscalls (open, claim, alt setting, clear halt, `list_devices` on Windows) on the `smol` (`blocking` crate) or `tokio` (`spawn_blocking`) pool. That is why one of the two features is mandatory on native (`compile_error!` otherwise); `smol` is the default. With `tokio` alone, `Op::wait()` enters a lazily created private runtime context for callers outside tokio (`tokio_context()`), because `spawn_blocking` needs one; awaited use must already be inside a tokio runtime.
+- `Op::wait()` sets a thread-local blocking-mode guard and runs a crate-private thread-parking `block_on`. The guard makes `await_maybe` route nusb's blocking syscalls (open, claim, alt setting, clear halt, `list_devices` on Windows) to nusb's inline `MaybeFuture::wait` instead of their `IntoFuture`, which would spawn onto the `smol`/`tokio` pool. `block_on` itself needs no runtime: nusb completes transfers on its own event thread and `futures-timer` on its own timer thread. `.wait()` therefore needs no runtime feature on native; only `.await` does.
 - Sleeps use `crate::maybe_future::sleep` (futures-timer; `thread::sleep` for sub-millisecond delays on native). No `std::thread::sleep`, no `Instant` outside `cfg(not(target_arch = "wasm32"))` blocks.
 - Closures held across an await need `+ Send` (`config_gpio_modify`, `nios_config_modify`).
 - Streaming hot paths use hand-written `Future` structs implementing `MaybeFuture`: `wait()` honors timeouts; `poll()` uses `Endpoint::poll_next_complete`. Awaited timeout arguments are ignored. RX/get-buffer deliver one buffer; TX completion waits collect the pending queue. Seify applies its own awaited timeout.
@@ -214,10 +214,10 @@ Implementation rules (see `src/maybe_future.rs` and `MIGRATION.md`; `ASYNC_PLAN.
 | `xb100` | yes | XB-100 expansion board (implies `bladerf1`) |
 | `xb200` | yes | XB-200 expansion board (implies `bladerf1`) |
 | `xb300` | yes | XB-300 expansion board (implies `bladerf1`) |
-| `smol` | yes | `nusb/smol` — blocking syscalls on the `blocking` thread pool |
-| `tokio` | no | `nusb/tokio` — blocking syscalls via `spawn_blocking` |
+| `smol` | yes | `nusb/smol` — async syscalls on the `blocking` thread pool |
+| `tokio` | no | `nusb/tokio` — async syscalls via `spawn_blocking` |
 
-Default features enable all three expansion board features (which each imply `bladerf1`) and `smol`. One of `smol`/`tokio` is required on native targets (compile error otherwise); neither on wasm32.
+Default features enable all three expansion board features (which each imply `bladerf1`) and `smol`. `smol`/`tokio` are needed only to `.await` on native targets (`.wait()` is runtime-free); neither is needed on wasm32.
 
 ## C reference implementation
 
@@ -248,9 +248,9 @@ Default features enable all three expansion board features (which each imply `bl
 - **Unified teardown.** `StreamCore::teardown()` is shared by stop/close and both directions. WebUSB drains before disabling; cleanup releases shared format usage only after confirmed completion.
 - **Endpoint leases instead of an active counter.** `StreamClaims` stores weak owner tokens and optional format reservations. An immutable per-open identity rejects wrong-device sessions; prepared/stopped claims remain live. No shared mutex, generation counter, or independently mutable active count is needed.
 - **Single `MaybeFuture` API instead of sync + `_async` twins.** Matches hackrf-nusb / hydrasdr-rs so seify's bladerf1 backend can be two thin adapters (`.wait()` / `.await`) over one API. One definition per method, no drift.
-- **Runtime agnostic, with nusb's one exception mirrored.** Transfers complete on nusb's own event thread, sleeps use `futures-timer`'s thread, `.wait()` uses our `block_on`; none of this depends on an executor. The single non-agnostic point is nusb's *blocking syscalls* (device open, interface claim, alternate setting, clear halt, `list_devices` on Windows), which nusb offloads through exactly two integrations: the `blocking` crate (nusb feature `smol`) or `tokio::spawn_blocking` (nusb feature `tokio`). We forward both under the same names, like hackrf-nusb and hydrasdr-rs, and require one on native (`compile_error!` otherwise).
+- **Runtime agnostic, with nusb's one exception mirrored.** Transfers complete on nusb's own event thread, sleeps use `futures-timer`'s thread, `.wait()` uses our `block_on`; none of this depends on an executor. The single non-agnostic point is nusb's *blocking syscalls* (device open, interface claim, alternate setting, clear halt, `list_devices` on Windows), which nusb offloads through exactly two integrations: the `blocking` crate (nusb feature `smol`) or `tokio::spawn_blocking` (nusb feature `tokio`). We forward both under the same names, like hackrf-nusb and hydrasdr-rs. They are needed only to `.await`: the blocking `.wait()` path routes those syscalls through nusb's inline `MaybeFuture::wait` via a thread-local guard (`await_maybe`), so no runtime is required.
   - **`smol` is the default and pulls no runtime.** Despite the name it only adds the `blocking` crate, an executor-agnostic thread pool that works under tokio, smol, async-std, `futures::executor` and `block_on`. `cargo tree -e no-dev --features bladerf1` shows no tokio/smol/async-io. A tokio application can use the defaults and never enable our `tokio` feature.
-  - **`tokio` is optional and exists for parity.** It lets a tokio user run nusb's syscalls on tokio's blocking pool. Our only direct tokio dependency (`rt`, optional, native-only) is the ~15-line `tokio_context()` guard in `Op::wait`: `spawn_blocking` needs a runtime context, so sync callers outside tokio get a lazily created private runtime. The dev-dependency on tokio serves `tests/bladerf1_async` and `examples/rx-async` only. Dropping the `tokio` feature entirely (keeping `blocking`) would lose nothing functionally; it is kept for consistency with nusb and the other two drivers. Revisit if "no tokio in the driver's tree" becomes a requirement.
+  - **`tokio` is optional and exists for parity.** It lets a tokio user run nusb's syscalls on tokio's blocking pool. It only forwards `nusb/tokio`; the crate itself adds no direct tokio dependency. The dev-dependency on tokio serves `tests/bladerf1_async` and `examples/rx-async` only. Dropping the `tokio` feature entirely (keeping `blocking`) would lose nothing functionally; it is kept for consistency with nusb and the other two drivers. Revisit if "no tokio in the driver's tree" becomes a requirement.
   - A `blocking_op` adapter that ran the syscalls inline on native was tried and removed: it diverged from nusb's semantics and forced async blocks around single nusb calls.
 - **`perform_format_config` / `perform_format_deconfig` are global.** The format GPIO bits (PACKET, TIMESTAMP, 8BIT_MODE, HIGHLY_PACKED) are global, not per-channel. These methods do not take a `channel` parameter.
 - **GPIO-based init state check, not a cached flag.** `RfLinkSession::require_initialized()` reads the config GPIO register and checks `(cfg & 0x7f) != 0`. This matches the C library's `CHECK_BOARD_STATE` pattern. A cached `initialized: bool` flag on `NiosCore` was tried and rejected because `initialize()` calls guarded methods internally (e.g. `set_frequency`, `set_gain_mode`), creating a circular dependency: the flag is `false` until the end of `initialize()`, but guarded sub-operations need it `true`. Working around this required setting the flag early and clearing on failure — a fragile pattern. The GPIO check eliminates the problem entirely: `initialize()` writes `0x57` to GPIO first, so subsequent `require_initialized()` calls naturally see the initialized state. No ordering issue, no flag management, no `mark_uninitialized()` needed at de-init sites (FPGA reload resets NIOS, which clears GPIO to `0x00`). The extra USB roundtrip per guard check is negligible — every guarded method already does USB I/O.

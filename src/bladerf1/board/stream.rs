@@ -26,7 +26,7 @@
 use crate::bladerf1::board::RfLinkSession;
 use crate::channel::Channel;
 use crate::error::{Error, Result};
-use crate::maybe_future::{NonWasmSend, Op};
+use crate::maybe_future::{NonWasmSend, Op, await_maybe};
 use crate::nios_client::streams::{FORMAT_MASK, StreamClaims, StreamFormat, StreamLease};
 use crate::usb::BulkEndpoint;
 use crate::usb::{BladeRf1DeviceCommands, pending::Pending};
@@ -281,7 +281,7 @@ impl<E: BulkEndpoint> BufferPool<E> {
         if !self.halt.is_pending() {
             let operation = self.endpoint.clear_halt();
             self.halt
-                .begin(async move { operation.await.map_err(Error::from) });
+                .begin(async move { await_maybe(operation).await.map_err(Error::from) });
         }
         self.halt.finish(DRAIN_TIMEOUT).await.map(|_| ())
     }

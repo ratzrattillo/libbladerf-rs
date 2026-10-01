@@ -11,7 +11,7 @@
 
 use crate::channel::Channel;
 use crate::error::{Error, Result};
-use crate::maybe_future::{NonWasmSend, Op};
+use crate::maybe_future::{NonWasmSend, Op, await_maybe};
 use nusb::transfer::{
     Buffer, Bulk, Completion, ControlIn, ControlOut, ControlType, EndpointDirection, In, Out,
     Recipient,
@@ -552,7 +552,7 @@ impl UsbTransport {
             self.current_alt_setting = None;
             let interface = self.interface.clone();
             self.pending.begin(async move {
-                interface.set_alt_setting(setting as u8).await?;
+                await_maybe(interface.set_alt_setting(setting as u8)).await?;
                 Ok(ControlResult::Setting(setting))
             });
             self.finish_pending(TIMEOUT).await.map(|_| ())
@@ -589,10 +589,8 @@ impl UsbTransport {
                     u32::from(enable),
                     u32::from_le_bytes(bytes.try_into().unwrap()),
                 )?;
-                interface.set_alt_setting(UsbAltSetting::Null as u8).await?;
-                interface
-                    .set_alt_setting(UsbAltSetting::RfLink as u8)
-                    .await?;
+                await_maybe(interface.set_alt_setting(UsbAltSetting::Null as u8)).await?;
+                await_maybe(interface.set_alt_setting(UsbAltSetting::RfLink as u8)).await?;
                 Ok(ControlResult::Setting(UsbAltSetting::RfLink))
             });
             self.finish_pending(TIMEOUT).await.map(|_| ())
@@ -645,8 +643,7 @@ impl UsbTransport {
                             (Err(error), _) | (_, Err(error)) => return Err(error),
                             _ => {}
                         }
-                        interface
-                            .set_alt_setting(UsbAltSetting::Null as u8)
+                        await_maybe(interface.set_alt_setting(UsbAltSetting::Null as u8))
                             .await
                             .map_err(Error::from)
                     },
@@ -712,7 +709,7 @@ impl UsbTransport {
             .endpoint::<Bulk, In>(STREAM_ENDPOINT_RX)
             .map_err(Error::EndpointBusy)?;
         self.pending.begin(async move {
-            endpoint.clear_halt().await?;
+            await_maybe(endpoint.clear_halt()).await?;
             Ok(ControlResult::RxEndpoint(endpoint))
         });
         match self.finish_pending(TIMEOUT).await? {
@@ -731,7 +728,7 @@ impl UsbTransport {
             .endpoint::<Bulk, Out>(STREAM_ENDPOINT_TX)
             .map_err(Error::EndpointBusy)?;
         self.pending.begin(async move {
-            endpoint.clear_halt().await?;
+            await_maybe(endpoint.clear_halt()).await?;
             Ok(ControlResult::TxEndpoint(endpoint))
         });
         match self.finish_pending(TIMEOUT).await? {

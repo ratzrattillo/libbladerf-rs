@@ -16,14 +16,16 @@ env:
 
 jobs:
   msrv:
-    name: Minimum Rust 1.98.1
+    name: Minimum Rust 1.88.0
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@1.98.1
+      - uses: dtolnay/rust-toolchain@1.88.0
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --lib
       - run: cargo check --no-default-features --features bladerf1,xb200,tokio --lib
+      # Runtime-free sync path: no `smol`/`tokio`, so no async runtime is compiled in.
+      - run: cargo check --no-default-features --features bladerf1 --lib
 
   fmt:
     runs-on: ubuntu-latest
@@ -38,7 +40,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        features: [smol, tokio, "bladerf1,smol", "bladerf1,tokio", "xb100,smol", "xb200,smol", "xb300,smol", "bladerf1,smol,tokio"]
+        features: [smol, tokio, bladerf1, "bladerf1,smol", "bladerf1,tokio", "xb100,smol", "xb200,smol", "xb300,smol", "bladerf1,smol,tokio"]
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
@@ -156,6 +158,7 @@ jobs:
       - run: cargo test --test unit
       - run: cargo test --test public_api --features bladerf1
       - run: cargo test --no-default-features --features bladerf1,xb200,tokio --lib --test unit --test public_api
+      - run: cargo test --no-default-features --features bladerf1 --test sync_no_runtime
 
   test-macos:
     name: Unit Tests macOS
@@ -170,6 +173,7 @@ jobs:
       - run: cargo test --lib
       - run: cargo test --test unit
       - run: cargo test --test public_api --features bladerf1
+      - run: cargo test --no-default-features --features bladerf1 --test sync_no_runtime
 
   test-windows:
     name: Unit Tests Windows
@@ -184,3 +188,4 @@ jobs:
       - run: cargo test --lib
       - run: cargo test --test unit
       - run: cargo test --test public_api --features bladerf1
+      - run: cargo test --no-default-features --features bladerf1 --test sync_no_runtime

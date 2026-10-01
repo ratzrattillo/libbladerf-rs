@@ -20,7 +20,7 @@ if ! rustup update stable; then
 fi
 rustc --version
 cargo +nightly --version
-rustup toolchain install 1.98.1 --profile minimal --no-self-update
+rustup toolchain install 1.88.0 --profile minimal --no-self-update
 
 # ci.yml env: neutralize the repo's target-cpu=native (see AGENTS.md): cargo
 # appends this after the config's rustflags and rustc honors the last
@@ -29,15 +29,17 @@ export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS="-C target-cpu=x86-64"
 # ci.yml test-* jobs env:
 export RUST_BACKTRACE=full
 
-cargo +1.98.1 check --lib
-cargo +1.98.1 check --no-default-features --features bladerf1,xb200,tokio --lib
+cargo +1.88.0 check --lib
+cargo +1.88.0 check --no-default-features --features bladerf1,xb200,tokio --lib
+# Runtime-free sync path: no `smol`/`tokio`, so no async runtime is compiled in.
+cargo +1.88.0 check --no-default-features --features bladerf1 --lib
 
 ###########################################################
 # BUILD (ci.yml: test-linux)
 ###########################################################
 cargo build --features bladerf1
 cargo build --no-default-features --features bladerf1,tokio
-for features in smol tokio bladerf1,smol bladerf1,tokio xb100,smol xb200,smol xb300,smol bladerf1,smol,tokio; do
+for features in smol tokio bladerf1 bladerf1,smol bladerf1,tokio xb100,smol xb200,smol xb300,smol bladerf1,smol,tokio; do
   cargo check --no-default-features --features "$features" --lib
 done
 
@@ -51,6 +53,8 @@ cargo test --test unit
 # Public API contract (no hardware)
 cargo test --test public_api --features bladerf1
 cargo test --no-default-features --features bladerf1,xb200,tokio --lib --test unit --test public_api
+# Runtime-free sync path (no `smol`/`tokio`), no hardware required
+cargo test --no-default-features --features bladerf1 --test sync_no_runtime
 # Hardware integration tests (single-threaded, shared device), default
 # `smol`. The only addition relative to CI, which runs without a device.
 if [ -z "$CI" ]; then

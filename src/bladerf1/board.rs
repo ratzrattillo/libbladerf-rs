@@ -48,7 +48,7 @@ use crate::bladerf1::hardware::spi_flash::FlashMeta;
 use crate::channel::Channel;
 use crate::error::Error;
 use crate::flash::decode_flash_size;
-use crate::maybe_future::{Op, sleep};
+use crate::maybe_future::{Op, await_maybe, sleep};
 use crate::nios_client::NiosCore;
 use crate::usb::{
     BladeRf1DeviceCommands, BladeRf1UsbInterfaceCommands, DeviceCommands, UsbAltSetting,
@@ -120,8 +120,8 @@ fn is_bladerf1(dev: &DeviceInfo) -> bool {
 ///
 /// Every I/O method returns a [`MaybeFuture`]: call `.wait()` to block the
 /// current thread (native targets only) or `.await` it from async code.
-/// The async path works with any executor when the default `smol` feature
-/// is enabled. Native builds require `smol` or `tokio`; WebUSB requires neither.
+/// The blocking path needs no async runtime; the async path on native
+/// targets requires `smol` (default) or `tokio`, while WebUSB needs neither.
 ///
 /// On construction the device waits for FX3 firmware readiness and
 /// auto-loads DC calibration tables from `<serial>_dc_rx.json` and
@@ -166,7 +166,7 @@ impl BladeRf1 {
             log::debug!("Serial: {serial:?}");
             log::debug!("Speed: {:?}", device.speed());
             log::debug!("Languages: {languages:x?}");
-            let interface = device.detach_and_claim_interface(0).await?;
+            let interface = await_maybe(device.detach_and_claim_interface(0)).await?;
             let speed = match device.speed() {
                 Some(speed) => speed,
                 None => {
@@ -272,8 +272,11 @@ impl BladeRf1 {
     #[cfg(not(target_os = "android"))]
     pub fn from_first() -> impl MaybeFuture<Output = crate::Result<Self>> {
         Op::new(async move {
-            let info = Self::list_bladerf1().await?.next().ok_or(Error::NotFound)?;
-            let device = info.open().await?;
+            let info = await_maybe(Self::list_bladerf1())
+                .await?
+                .next()
+                .ok_or(Error::NotFound)?;
+            let device = await_maybe(info.open()).await?;
             Self::build(device, None).await
         })
     }
@@ -285,11 +288,11 @@ impl BladeRf1 {
     #[cfg(not(target_os = "android"))]
     pub fn from_serial(serial: &str) -> impl MaybeFuture<Output = crate::Result<Self>> {
         Op::new(async move {
-            let info = Self::list_bladerf1()
+            let info = await_maybe(Self::list_bladerf1())
                 .await?
                 .find(|dev| dev.serial_number() == Some(serial))
                 .ok_or(Error::NotFound)?;
-            let device = info.open().await?;
+            let device = await_maybe(info.open()).await?;
             Self::build(device, None).await
         })
     }
@@ -305,11 +308,11 @@ impl BladeRf1 {
         bus_addr: u8,
     ) -> impl MaybeFuture<Output = crate::Result<Self>> {
         Op::new(async move {
-            let info = Self::list_bladerf1()
+            let info = await_maybe(Self::list_bladerf1())
                 .await?
                 .find(|dev| dev.bus_id() == bus_number && dev.device_address() == bus_addr)
                 .ok_or(Error::NotFound)?;
-            let device = info.open().await?;
+            let device = await_maybe(info.open()).await?;
             Self::build(device, None).await
         })
     }
@@ -345,7 +348,7 @@ impl BladeRf1 {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn from_fd(fd: std::os::fd::OwnedFd) -> impl MaybeFuture<Output = crate::Result<Self>> {
         Op::new(async move {
-            let device = Device::from_fd(fd).await?;
+            let device = await_maybe(Device::from_fd(fd)).await?;
             Self::build(device, None).await
         })
     }

@@ -35,11 +35,11 @@
 //!
 //! Every I/O method returns a [`MaybeFuture`]: call `.wait()` to block the
 //! current thread (native targets only) or `.await` it from async code. The
-//! crate mirrors nusb's semantics: like every nusb-based driver it needs
-//! nusb's `smol` (default) or `tokio` feature on native targets, selected
-//! through the features of the same name. Streaming timeouts apply to the
-//! blocking path only; awaited stream futures consume one USB completion per
-//! await and are cancel-safe.
+//! crate mirrors nusb's semantics: on native targets `.wait()` needs no async
+//! runtime, while `.await` requires nusb's `smol` (default) or `tokio`
+//! feature, selected through the features of the same name. Streaming
+//! timeouts apply to the blocking path only; awaited stream futures consume
+//! one USB completion per await and are cancel-safe.
 //!
 //! On `wasm32-unknown-unknown` (WebUSB) there is no `.wait()`; open the
 //! device with [`bladerf1::BladeRf1::from_device`] and shut it down with
@@ -60,15 +60,6 @@
 //! [nusb]: https://github.com/kevinmehall/nusb
 
 #![deny(missing_docs, missing_debug_implementations)]
-
-#[cfg(all(
-    not(target_arch = "wasm32"),
-    not(any(feature = "smol", feature = "tokio"))
-))]
-compile_error!(
-    "libbladerf-rs requires the `smol` or `tokio` feature on native targets (`smol` is part of \
-     the default features); nusb resolves blocking USB operations through one of these runtimes"
-);
 
 #[cfg(feature = "bladerf1")]
 pub mod bladerf1;
