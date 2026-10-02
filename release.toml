@@ -1,4 +1,0 @@
-publish = false
-tag-prefix = ""
-consolidate-commits = true
-dependent-version = "upgrade"

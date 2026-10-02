@@ -43,8 +43,8 @@ compiler compatibility; platform execution requires that platform's USB host.
 toolchain (attempting `rustup update stable` first so new default-warn lints
 are caught locally), checks formatting with nightly rustfmt, and runs clippy on
 both stable (the CI gate) and nightly (early warning for lints about to land).
-There is no `cargo-release` pre-release hook. Run this script before a local
-release. It mirrors CI, with the additional hardware suite when `CI` is unset:
+There is no `cargo-release` pre-release hook. Run this script before triggering
+a release. It mirrors CI, with the additional hardware suite when `CI` is unset:
 
 - MSRV, both runtime builds, and the feature matrix
 - Unit/protocol/public API tests with default and tokio-only integrations
@@ -87,35 +87,27 @@ Enforcement:
 
 ## Changelog
 
-Generated with [`git-cliff`](https://git-cliff.org). `scripts/changelog.sh` runs
-`git-cliff --unreleased --prepend CHANGELOG.md`, prepending entries for
-unreleased commits to `CHANGELOG.md`. It mutates `CHANGELOG.md` in place, so run
-it on demand — it is not part of `scripts/check.sh`.
-
-```bash
-bash scripts/changelog.sh
-```
-
-This is a local preview. The release workflow replaces an existing unreleased
-preview with the versioned section and amends the release commit/tag.
+Generated with [`git-cliff`](https://git-cliff.org). The release workflow
+replaces any `## [unreleased]` section with the versioned section for the new
+tag and amends it into the release commit/tag. There is no local changelog
+generation step.
 
 ## Release process
 
-Releases use [`cargo-release`](https://github.com/crate-ci/cargo-release).
-Config is in `release.toml`:
+Releases are GitHub Actions only. They are driven by
+`.github/workflows/release.yml`, triggered manually via GitHub's
+**workflow_dispatch** with a version bump level (`patch`/`minor`/`major`). There
+is no local release path — do not run `cargo release` by hand.
 
-| Setting | Value | Meaning |
-|---------|-------|---------|
-| `publish` | `false` | `cargo-release` does not publish to crates.io itself |
-| `pre-release-hook` | absent | CI gates the workflow; run local checks explicitly |
-| `tag-prefix` | `""` | Tags are `v0.4.1`, not `libbladerf-rs-v0.4.1` |
-| `consolidate-commits` | `true` | Single release commit |
-| `dependent-version` | `"upgrade"` | Upgrade dependent version requirements |
+The workflow uses [`cargo-release`](https://github.com/crate-ci/cargo-release)
+with its stock defaults (root `tag-prefix = ""`, `consolidate-commits = true`,
+`dependent-version = "upgrade"`); the pipeline passes `--no-publish`/`--no-push`
+and performs the tagging, pushing, and publishing itself. There is no
+`release.toml`.
 
-### Automated release (recommended)
+### Release workflow
 
-The release is driven by `.github/workflows/release.yml`, triggered manually via
-GitHub's **workflow_dispatch** with a version bump level (`patch`/`minor`/`major`):
+The pipeline runs:
 
 1. `ci` — calls the reusable `.github/workflows/ci.yml` workflow.
 2. `bump_and_tag` — `cargo release <level> --execute --no-verify --no-publish --no-push --no-confirm`,
@@ -130,33 +122,15 @@ concurrency group serializes release triggers. `--no-confirm` is mandatory for
 noninteractive cargo-release; otherwise it can exit successfully without a bump.
 Release/publish jobs check out the new branch tip, then resolve the new tag.
 
-### Manual / local release
-
-When releasing locally instead of via the workflow:
-
-```bash
-# Run the checks before invoking cargo-release.
-bash scripts/check.sh
-
-# Preview the coordinated breaking release, then execute the bump locally.
-cargo release minor
-cargo release minor --execute
-
-# Publish manually (publish = false in release.toml):
-cargo publish -p libbladerf-rs --dry-run   # verify tarball contents
-cargo publish -p libbladerf-rs             # actual publish
-
-# Push the release commit and tag:
-git push --follow-tags
-```
-
 ### Version bump levels
 
-| Command | Effect | When to use |
-|---------|--------|-------------|
-| `cargo release patch` | 0.4.1 → 0.4.2 | Bug fixes, minor additions |
-| `cargo release minor` | 0.4.1 → 0.5.0 | New features, **and** breaking changes while major = 0 |
-| `cargo release major` | 0.4.1 → 1.0.0 | Breaking changes after 1.0 |
+The workflow's `workflow_dispatch` input picks one of:
+
+| Level | Effect | When to use |
+|-------|--------|-------------|
+| `patch` | 0.4.1 → 0.4.2 | Bug fixes, minor additions |
+| `minor` | 0.4.1 → 0.5.0 | New features, **and** breaking changes while major = 0 |
+| `major` | 0.4.1 → 1.0.0 | Breaking changes after 1.0 |
 
 While the major version is `0`, breaking changes bump the **minor** version per
 SemVer (0.y.z), not the major.
@@ -168,15 +142,15 @@ SemVer (0.y.z), not the major.
       hardware for the integration tests).
 - [ ] **Commit messages are conventional** — enforced by the `commit-msg` hook
       and re-checked by `scripts/check.sh`.
-- [ ] **Changelog entries are accurate** — review the preview; the workflow
-      generates and commits the versioned section.
+- [ ] **Commit messages are changelog-ready** — the workflow generates and
+      commits the versioned section from the Conventional Commit history.
 - [ ] **`README.md` is up to date** — feature lists, example code, and test
       commands reflect the current API; the example compiles.
 - [ ] **Breaking changes are deliberate** — while major = 0, breaking changes
       bump the minor version; after 1.0, they require a major bump. Keep
       `MIGRATION.md`, `tests/public_api.rs`, examples, and seify integration aligned.
-- [ ] **Working tree is clean** — `git status` clean; `cargo-release` refuses
-      otherwise.
+- [ ] **Working tree is clean** — `git status` clean before triggering the
+      workflow.
 
 ## Post-release
 
