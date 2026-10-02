@@ -28,13 +28,13 @@ fn handle_traits_are_public() {
     debug::<libbladerf_rs::bladerf1::TxStreamBuilder<'_, '_>>();
     #[cfg(not(target_arch = "wasm32"))]
     {
-        fn thread_safe<T: Send + Sync>() {}
-        thread_safe::<BladeRf1>();
-        thread_safe::<RfLinkSession<'_>>();
-        thread_safe::<FlashSession<'_>>();
-        thread_safe::<ConfigSession<'_>>();
-        thread_safe::<RxStream>();
-        thread_safe::<TxStream>();
+        fn movable<T: Send>() {}
+        movable::<BladeRf1>();
+        movable::<RfLinkSession<'_>>();
+        movable::<FlashSession<'_>>();
+        movable::<ConfigSession<'_>>();
+        movable::<RxStream>();
+        movable::<TxStream>();
     }
 }
 

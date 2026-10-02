@@ -20,7 +20,8 @@ use std::cmp::PartialEq;
 use std::fmt::{Display, Formatter};
 
 /// I/Q DC calibration pair with support for linear interpolation between samples.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct DcPair {
     /// I channel calibration value.
     pub i: i16,
@@ -44,7 +45,8 @@ impl DcPair {
 }
 
 /// AGC DC correction values at three gain settings.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct AgcDcCorrection {
     /// DC correction at maximum AGC gain.
     pub max: DcPair,
@@ -63,10 +65,9 @@ fn interp(x0: u32, y0: i16, x1: u32, y1: i16, x: u32) -> i16 {
     (y0 as i64 + num / den) as i16
 }
 /// A validated six-bit LMS6002D DC calibration register value.
-#[derive(
-    Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, serde::Serialize, serde::Deserialize,
-)]
-#[serde(try_from = "u8", into = "u8")]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(try_from = "u8", into = "u8"))]
 pub struct DcCalValue(u8);
 
 impl DcCalValue {
@@ -112,8 +113,9 @@ impl Display for DcCalValue {
 ///
 /// `Default` changes nothing. Readback fills every field. JSON accepts null or
 /// omitted fields for unchanged registers and integers in `0..=63` for updates.
-#[derive(Debug, Default, PartialEq, Eq, Clone, Copy, serde::Serialize, serde::Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[derive(Debug, Default, PartialEq, Eq, Clone, Copy)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(default, deny_unknown_fields))]
 pub struct DcCals {
     /// LPF tuning module.
     pub lpf_tuning: Option<DcCalValue>,
@@ -808,6 +810,7 @@ impl<'a> Lms6002d<'a> {
 mod tests {
     use super::*;
 
+    #[cfg(feature = "serde")]
     #[test]
     fn named_updates_distinguish_zero_from_absent_and_reject_invalid_values() {
         let update: DcCals = serde_json::from_str(r#"{"tx_lpf_i":0,"rx_lpf_i":63}"#).unwrap();

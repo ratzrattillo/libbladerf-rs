@@ -3,24 +3,23 @@ use crate::maybe_future::NonWasmSend;
 use std::future::Future;
 use std::pin::Pin;
 use std::time::Duration;
-use sync_wrapper::SyncWrapper;
 
 #[cfg(not(target_arch = "wasm32"))]
 type OwnedFuture<T> = Pin<Box<dyn Future<Output = Result<T>> + Send>>;
 #[cfg(target_arch = "wasm32")]
 type OwnedFuture<T> = Pin<Box<dyn Future<Output = Result<T>>>>;
 
-pub(crate) struct Pending<T>(SyncWrapper<Option<OwnedFuture<T>>>);
+pub(crate) struct Pending<T>(Option<OwnedFuture<T>>);
 
 impl<T> Default for Pending<T> {
     fn default() -> Self {
-        Self(SyncWrapper::new(None))
+        Self(None)
     }
 }
 
 impl<T> Pending<T> {
     pub(crate) fn is_pending(&mut self) -> bool {
-        self.0.get_mut().is_some()
+        self.0.is_some()
     }
 
     pub(crate) fn begin(
@@ -28,17 +27,17 @@ impl<T> Pending<T> {
         operation: impl Future<Output = Result<T>> + NonWasmSend + 'static,
     ) {
         assert!(!self.is_pending());
-        *self.0.get_mut() = Some(Box::pin(operation));
+        self.0 = Some(Box::pin(operation));
     }
 
     pub(crate) async fn finish(&mut self, timeout: Duration) -> Result<Option<T>> {
-        let Some(operation) = self.0.get_mut().as_mut() else {
+        let Some(operation) = self.0.as_mut() else {
             return Ok(None);
         };
         let result = crate::maybe_future::timeout(timeout, operation)
             .await
             .ok_or(Error::Timeout)?;
-        *self.0.get_mut() = None;
+        self.0 = None;
         result.map(Some)
     }
 }

@@ -31,6 +31,7 @@ fn test_table() -> DcCalTable {
     .unwrap()
 }
 
+#[cfg(feature = "serde")]
 #[test]
 fn roundtrip() {
     let table = test_table();
@@ -45,6 +46,7 @@ fn roundtrip() {
     }
 }
 
+#[cfg(feature = "serde")]
 #[test]
 fn save_and_load() {
     let table = test_table();
@@ -128,7 +130,7 @@ fn single_entry() {
 }
 
 #[test]
-fn constructors_and_deserialization_share_ordering_validation() {
+fn constructors_share_ordering_validation() {
     let table = test_table();
     let mut entries = table.entries().to_vec();
     entries.reverse();
@@ -136,7 +138,12 @@ fn constructors_and_deserialization_share_ordering_validation() {
     assert_eq!(sorted.entries(), table.entries());
     let duplicate = vec![table.entries()[0]; 2];
     assert!(DcCalTable::new(*table.reg_vals(), duplicate).is_err());
+}
 
+#[cfg(feature = "serde")]
+#[test]
+fn deserialization_shares_ordering_validation() {
+    let table = test_table();
     let mut value = serde_json::to_value(&table).unwrap();
     value["entries"].as_array_mut().unwrap().reverse();
     let decoded: DcCalTable = serde_json::from_value(value.clone()).unwrap();
@@ -145,6 +152,7 @@ fn constructors_and_deserialization_share_ordering_validation() {
     assert!(serde_json::from_value::<DcCalTable>(value).is_err());
 }
 
+#[cfg(feature = "serde")]
 #[test]
 fn invalid_json() {
     let result: Result<DcCalTable, _> = serde_json::from_str("not json");

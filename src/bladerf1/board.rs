@@ -123,11 +123,11 @@ fn is_bladerf1(dev: &DeviceInfo) -> bool {
 /// The blocking path needs no async runtime; the async path on native
 /// targets requires `smol` (default) or `tokio`, while WebUSB needs neither.
 ///
-/// On construction the device waits for FX3 firmware readiness and
-/// auto-loads DC calibration tables from `<serial>_dc_rx.json` and
-/// `<serial>_dc_tx.json`. The directory searched defaults to the current
-/// directory; use [`load_dc_cal_tables_from_dir`](BladeRf1::load_dc_cal_tables_from_dir)
-/// to load from an explicit path, which is required on platforms without a
+/// On construction the device waits for FX3 firmware readiness. With the
+/// opt-in `serde` feature, it also auto-loads DC calibration tables from
+/// `<serial>_dc_rx.json` and `<serial>_dc_tx.json`. The directory searched
+/// defaults to the current directory; use `load_dc_cal_tables_from_dir` to
+/// load from an explicit path, which is required on platforms without a
 /// meaningful working directory such as Android.
 ///
 /// On native targets, dropping the handle attempts blocking shutdown, subject
@@ -157,6 +157,8 @@ impl BladeRf1 {
         cal_table_dir: Option<&Path>,
     ) -> impl MaybeFuture<Output = crate::Result<Self>> {
         Op::new(async move {
+            #[cfg(not(feature = "serde"))]
+            let _ = cal_table_dir;
             let manufacturer = device.manufacturer().await;
             let product = device.product().await;
             let serial = device.serial().await;
@@ -187,6 +189,7 @@ impl BladeRf1 {
                 dc_tx_table: None,
             };
             result.wait_until_ready().await?;
+            #[cfg(feature = "serde")]
             Self::auto_load_tables(&mut result, cal_table_dir).await;
             Ok(result)
         })
@@ -234,6 +237,7 @@ impl BladeRf1 {
             Err(Error::Timeout)
         })
     }
+    #[cfg(feature = "serde")]
     async fn auto_load_tables(result: &mut Self, dir: Option<&Path>) {
         let serial = match result.device.serial().await {
             Ok(s) => s,
@@ -336,8 +340,7 @@ impl BladeRf1 {
     /// obtained from `UsbDeviceConnection.getFileDescriptor()`; the host
     /// performs no USB enumeration. DC calibration tables are auto-loaded
     /// from the current directory. On Android, use
-    /// [`load_dc_cal_tables_from_dir`](BladeRf1::load_dc_cal_tables_from_dir)
-    /// to specify an explicit directory.
+    /// `load_dc_cal_tables_from_dir` to specify an explicit directory.
     /// Duplicate the descriptor first if Java retains ownership of the connection.
     /// The driver takes ownership of the supplied [`std::os::fd::OwnedFd`].
     ///
@@ -363,6 +366,7 @@ impl BladeRf1 {
     ///
     /// # Errors
     /// Returns an error only if the device serial number cannot be read.
+    #[cfg(feature = "serde")]
     pub fn load_dc_cal_tables_from_dir(
         &mut self,
         dir: &Path,
@@ -396,6 +400,7 @@ impl BladeRf1 {
     }
 
     /// Loads a DC calibration table from a JSON file for the given channel.
+    #[cfg(feature = "serde")]
     pub fn load_dc_cal_table(&mut self, channel: Channel, path: &Path) -> crate::Result<()> {
         let table = DcCalTable::load(path)?;
         match channel {

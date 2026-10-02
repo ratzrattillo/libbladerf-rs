@@ -3,6 +3,7 @@ mod common;
 
 mod bandwidth;
 mod correction;
+#[cfg(feature = "serde")]
 mod dc_cal_table;
 mod dc_calibration;
 mod flash;

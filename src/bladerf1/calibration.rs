@@ -1,14 +1,20 @@
 //! DC calibration table management — loading, saving, and looking up per-frequency
 //! DC offset correction values.  Tables are JSON files named `<serial>_dc_rx.json`
 //! and `<serial>_dc_tx.json`, auto-loaded at device open.
+//!
+//! The JSON `DcCalTable::load`/`DcCalTable::save` helpers and the serde
+//! derives are available only with the opt-in `serde` feature. The in-memory
+//! construction, lookup, and apply paths are always available.
 
 use crate::bladerf1::hardware::lms6002d::dc_calibration::DcCals;
 use crate::bladerf1::hardware::lms6002d::dc_calibration::{AgcDcCorrection, DcPair};
 use crate::error::{Error, Result};
+#[cfg(feature = "serde")]
 use std::path::Path;
 
 /// Single calibration entry with frequency, DC offset I/Q pair, and AGC sub-ranges.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct DcCalEntry {
     /// Frequency in Hz at which the entry was measured.
     pub freq: u32,
@@ -55,19 +61,22 @@ impl From<&DcCalEntry> for AgcDcCorrection {
 }
 
 /// Collection of calibration entries and associated register values.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-#[serde(try_from = "RawDcCalTable")]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(try_from = "RawDcCalTable"))]
 pub struct DcCalTable {
     reg_vals: DcCals,
     entries: Vec<DcCalEntry>,
 }
 
+#[cfg(feature = "serde")]
 #[derive(serde::Deserialize)]
 struct RawDcCalTable {
     reg_vals: DcCals,
     entries: Vec<DcCalEntry>,
 }
 
+#[cfg(feature = "serde")]
 impl TryFrom<RawDcCalTable> for DcCalTable {
     type Error = Error;
 
@@ -102,12 +111,14 @@ impl DcCalTable {
     }
 
     /// Load the calibration table from a JSON file.
+    #[cfg(feature = "serde")]
     pub fn load(path: &Path) -> Result<Self> {
         let buf = std::fs::read_to_string(path)?;
         Ok(serde_json::from_str(&buf)?)
     }
 
     /// Serialize the calibration table to a JSON file.
+    #[cfg(feature = "serde")]
     pub fn save(&self, path: &Path) -> Result<()> {
         let json = serde_json::to_string_pretty(self)?;
         Ok(std::fs::write(path, json)?)

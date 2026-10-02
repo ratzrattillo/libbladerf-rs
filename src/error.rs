@@ -72,6 +72,7 @@ pub enum Error {
     Io(#[from] std::io::Error),
 
     /// A JSON deserialization error (e.g. malformed DC calibration table file).
+    #[cfg(feature = "serde")]
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
 
@@ -299,7 +300,9 @@ impl Error {
         match self {
             Self::OperationAndCleanup { operation, .. } => operation.kind(),
             Self::RestorationFailed(_) => ErrorKind::State,
-            Self::Io(_) | Self::Json(_) => ErrorKind::Io,
+            Self::Io(_) => ErrorKind::Io,
+            #[cfg(feature = "serde")]
+            Self::Json(_) => ErrorKind::Io,
             Self::Nusb(_)
             | Self::Transfer(_)
             | Self::Descriptor(_)
