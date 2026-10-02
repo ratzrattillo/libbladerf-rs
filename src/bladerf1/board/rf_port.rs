@@ -124,6 +124,13 @@ impl TryFrom<&str> for RfPort {
     }
 }
 
+impl core::str::FromStr for RfPort {
+    type Err = Error;
+    fn from_str(name: &str) -> Result<Self> {
+        RfPort::try_from(name)
+    }
+}
+
 /// Converts an `RfPort` to its lowercase string representation.
 impl From<RfPort> for &'static str {
     fn from(port: RfPort) -> Self {

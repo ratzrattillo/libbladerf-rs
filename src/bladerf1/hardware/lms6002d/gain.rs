@@ -354,6 +354,12 @@ impl TryFrom<&str> for GainStage {
         }
     }
 }
+impl core::str::FromStr for GainStage {
+    type Err = crate::error::Error;
+    fn from_str(name: &str) -> crate::error::Result<Self> {
+        GainStage::try_from(name)
+    }
+}
 impl<'a> Lms6002d<'a> {
     pub(crate) fn lna_set_gain(
         &mut self,
