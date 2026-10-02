@@ -18,71 +18,6 @@ pub(crate) enum StreamFormat {
     Packets,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn prepared_and_stopped_claims_block_reconfiguration_and_duplicates() {
-        let mut claims = StreamClaims::default();
-        let lease = claims.claim(Channel::Rx).unwrap();
-        assert!(matches!(
-            claims.claim(Channel::Rx),
-            Err(Error::StreamClaimed(Channel::Rx))
-        ));
-        assert!(matches!(claims.require_idle(), Err(Error::StreamsActive)));
-        assert!(matches!(
-            claims.require_no_live_streams(),
-            Err(Error::StreamsActive)
-        ));
-        claims
-            .reserve_format(&lease, StreamFormat::Timestamps)
-            .unwrap();
-        claims.release_format(&lease);
-        assert!(matches!(claims.require_idle(), Err(Error::StreamsActive)));
-        claims.release(&lease);
-        assert!(claims.require_idle().is_ok());
-    }
-
-    #[test]
-    fn abandoned_running_claim_requires_recovery_but_prepared_claim_is_reclaimable() {
-        let mut claims = StreamClaims::default();
-        drop(claims.claim(Channel::Rx).unwrap());
-        assert!(claims.require_idle().is_ok());
-        let lease = claims.claim(Channel::Rx).unwrap();
-        claims
-            .reserve_format(&lease, StreamFormat::Samples)
-            .unwrap();
-        drop(lease);
-        assert!(matches!(
-            claims.require_idle(),
-            Err(Error::RecoveryRequired)
-        ));
-        assert!(claims.require_no_live_streams().is_ok());
-    }
-
-    #[test]
-    fn capabilities_use_both_version_boundaries_and_stock_fpga_formats() {
-        let fpga = crate::SemanticVersion::new(0, 12, 0);
-        let firmware = "2.4.0-git-local".parse().unwrap();
-        assert!(StreamFormat::Packets.supports_versions(fpga, firmware));
-        assert!(
-            !StreamFormat::Packets
-                .supports_versions(crate::SemanticVersion::new(0, 11, 9), firmware)
-        );
-        assert!(
-            !StreamFormat::Packets.supports_versions(fpga, crate::SemanticVersion::new(2, 3, 9))
-        );
-        for format in [
-            SampleFormat::Sc8Q7,
-            SampleFormat::Sc8Q7Meta,
-            SampleFormat::Sc16Q11Packed,
-        ] {
-            assert!(StreamFormat::try_from(format).is_err());
-        }
-    }
-}
-
 impl TryFrom<SampleFormat> for StreamFormat {
     type Error = Error;
 
@@ -300,5 +235,70 @@ impl StreamClaims {
             .flatten()
             .filter(|registration| registration.format.is_some())
             .count()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn prepared_and_stopped_claims_block_reconfiguration_and_duplicates() {
+        let mut claims = StreamClaims::default();
+        let lease = claims.claim(Channel::Rx).unwrap();
+        assert!(matches!(
+            claims.claim(Channel::Rx),
+            Err(Error::StreamClaimed(Channel::Rx))
+        ));
+        assert!(matches!(claims.require_idle(), Err(Error::StreamsActive)));
+        assert!(matches!(
+            claims.require_no_live_streams(),
+            Err(Error::StreamsActive)
+        ));
+        claims
+            .reserve_format(&lease, StreamFormat::Timestamps)
+            .unwrap();
+        claims.release_format(&lease);
+        assert!(matches!(claims.require_idle(), Err(Error::StreamsActive)));
+        claims.release(&lease);
+        assert!(claims.require_idle().is_ok());
+    }
+
+    #[test]
+    fn abandoned_running_claim_requires_recovery_but_prepared_claim_is_reclaimable() {
+        let mut claims = StreamClaims::default();
+        drop(claims.claim(Channel::Rx).unwrap());
+        assert!(claims.require_idle().is_ok());
+        let lease = claims.claim(Channel::Rx).unwrap();
+        claims
+            .reserve_format(&lease, StreamFormat::Samples)
+            .unwrap();
+        drop(lease);
+        assert!(matches!(
+            claims.require_idle(),
+            Err(Error::RecoveryRequired)
+        ));
+        assert!(claims.require_no_live_streams().is_ok());
+    }
+
+    #[test]
+    fn capabilities_use_both_version_boundaries_and_stock_fpga_formats() {
+        let fpga = crate::SemanticVersion::new(0, 12, 0);
+        let firmware = "2.4.0-git-local".parse().unwrap();
+        assert!(StreamFormat::Packets.supports_versions(fpga, firmware));
+        assert!(
+            !StreamFormat::Packets
+                .supports_versions(crate::SemanticVersion::new(0, 11, 9), firmware)
+        );
+        assert!(
+            !StreamFormat::Packets.supports_versions(fpga, crate::SemanticVersion::new(2, 3, 9))
+        );
+        for format in [
+            SampleFormat::Sc8Q7,
+            SampleFormat::Sc8Q7Meta,
+            SampleFormat::Sc16Q11Packed,
+        ] {
+            assert!(StreamFormat::try_from(format).is_err());
+        }
     }
 }
