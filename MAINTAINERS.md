@@ -39,9 +39,10 @@ compiler compatibility; platform execution requires that platform's USB host.
 ## Local pre-flight
 
 `cargo install git-cliff`
-`scripts/check.sh` is the local pre-flight check. It pins the stable
-toolchain (attempting `rustup update stable` first so new default-warn lints
-are caught locally), checks formatting with nightly rustfmt, and runs clippy on
+`scripts/check.sh` is the local pre-flight check. It refreshes the stable and
+nightly toolchains first (nightly from `static.rust-lang.org`, matching CI's
+floating `dtolnay/rust-toolchain@nightly`, so newly-added nightly lints fail
+locally before CI), checks formatting with nightly rustfmt, and runs clippy on
 both stable (the CI gate) and nightly (early warning for lints about to land).
 There is no `cargo-release` pre-release hook. Run this script before triggering
 a release. It mirrors CI, with the additional hardware suite when `CI` is unset:

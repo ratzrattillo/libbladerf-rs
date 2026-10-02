@@ -47,7 +47,7 @@ Rust targets are installed automatically by `check.sh`. The
 
 ### scripts/check.sh vs CI
 
-`scripts/check.sh` mirrors the jobs in `.github/workflows/ci.yml` and adds local hardware tests when `CI` is unset. It pins stable, checks the explicit 1.88.0 MSRV, exercises the feature matrix, runs unit/protocol/API tests with default and tokio-only integrations, checks workspace Clippy on stable/nightly and root tokio-only Clippy, uses nightly rustfmt, checks wasm/Android/Windows public API contracts, cross-builds, validates Conventional Commits, builds docs/examples, and runs deny/audit. Nightly Clippy is a hard failure locally and advisory (`continue-on-error`) in CI. Fix or deliberately allow new lints. `ci.yml` is reusable (`workflow_call`) and is the sole release gate; no checks are duplicated in `release.yml`.
+`scripts/check.sh` mirrors the jobs in `.github/workflows/ci.yml` and adds local hardware tests when `CI` is unset. It refreshes both toolchains first — stable and `nightly` from `static.rust-lang.org`, matching CI's floating `dtolnay/rust-toolchain@stable`/`@nightly`, so newly-added nightly lints fail locally before CI — checks the explicit 1.88.0 MSRV, exercises the feature matrix, runs unit/protocol/API tests with default and tokio-only integrations, checks workspace Clippy on stable/nightly and root tokio-only Clippy, uses nightly rustfmt, checks wasm/Android/Windows public API contracts, cross-builds, validates Conventional Commits, builds docs/examples, and runs deny/audit. Nightly Clippy is a hard failure locally and advisory (`continue-on-error`) in CI. Fix or deliberately allow new lints. `ci.yml` is reusable (`workflow_call`) and is the sole release gate; no checks are duplicated in `release.yml`.
 
 ### Release pipeline
 

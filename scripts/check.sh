@@ -18,8 +18,16 @@ export RUSTUP_TOOLCHAIN=stable
 if ! rustup update stable; then
   echo "WARNING: could not update the stable toolchain; CI may run a newer stable with additional lints." >&2
 fi
+# Mirrors CI's dtolnay/rust-toolchain@nightly: refresh the nightly toolchain so
+# warn-by-default lints that CI would hit are caught here. CI installs from
+# static.rust-lang.org; a configured mirror can lag and miss newly-added lints,
+# so fetch the nightly from the official server too.
+if ! RUSTUP_DIST_SERVER=https://static.rust-lang.org rustup update nightly; then
+  echo "WARNING: could not update the nightly toolchain; CI may run a newer nightly with additional lints." >&2
+fi
 rustc --version
 cargo +nightly --version
+cargo +nightly clippy --version
 rustup toolchain install 1.88.0 --profile minimal --no-self-update
 
 # ci.yml env: neutralize the repo's target-cpu=native (see AGENTS.md): cargo
