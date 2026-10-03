@@ -1,3 +1,25 @@
+## [0.6.1] - 2026-10-03
+
+### 🚀 Features
+
+- Sync path does not require async runtime
+
+### 🐛 Bug Fixes
+
+- *(calibration)* Prime TX path with dummy burst in cal_tx_lpf
+- Cleanups
+- *(clippy)* Implement FromStr for RfPort and GainStage
+- *(clippy)* Move test module to the end of streams.rs
+- Strip dependencies and featuregate serde
+- Ci and doc fixes
+
+### 🧪 Testing
+
+- *(calibration)* Cover each DC calibration module separately
+
+### ⚙️ Miscellaneous Tasks
+
+- Refresh the nightly toolchain in check.sh
 ## [0.6.0] - 2026-09-24
 
 ### 🐛 Bug Fixes
