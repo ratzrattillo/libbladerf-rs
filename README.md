@@ -26,13 +26,15 @@ metadata remains 0.5.2 until release. See [MIGRATION.md](MIGRATION.md).
 | `xb100`     | yes     | XB-100 LED expansion board             |
 | `xb200`     | yes     | XB-200 transverter board               |
 | `xb300`     | yes     | XB-300 amplifier board                 |
-| `smol`      | yes     | nusb `smol` integration (`blocking` thread pool) |
+| `smol`      | no      | nusb `smol` integration (`blocking` thread pool) |
 | `tokio`     | no      | nusb `tokio` integration (`spawn_blocking`)     |
+| `serde`     | no      | DC calibration table JSON load/save and serde derives |
 
 Exactly like every nusb-based driver, one of `smol`/`tokio` is required on
-native targets: nusb resolves device open, interface claim, alternate-setting
-switches and clear-halt through the selected runtime's blocking pool. Neither
-is needed on wasm32. If both are enabled nusb uses `smol`.
+native targets to `.await`: nusb resolves device open, interface claim,
+alternate-setting switches and clear-halt through the selected runtime's
+blocking pool. Neither is a default feature, and neither is needed for the
+blocking `.wait()` path or on wasm32. If both are enabled nusb uses `smol`.
 
 \* Enabled implicitly by `xb100`, `xb200`, or `xb300`.
 
@@ -58,7 +60,9 @@ switching modes. An abandoned active stream requires connection recovery.
 
 Every I/O method returns an [`nusb::MaybeFuture`] (re-exported as
 `libbladerf_rs::MaybeFuture`). Call `.wait()` to block the current thread, or
-`.await` it from async code:
+`.await` it from async code. `.wait()` needs no runtime feature; `.await`
+requires enabling one of the `smol` or `tokio` features (neither is enabled by
+default):
 
 ```rust,ignore
 use libbladerf_rs::MaybeFuture;
@@ -92,10 +96,10 @@ dev.close().await?;
 The crate mirrors [nusb]'s semantics exactly: transfers are real futures
 completed by nusb's event thread, and the handful of blocking syscalls (device
 open, interface claim, alternate-setting switch, clear halt) are offloaded
-through nusb's `smol` or `tokio` integration. With the default `smol` feature
-both `.wait()` and `.await` work under any executor. With `tokio` instead,
-`.await` must run inside a tokio runtime; `.wait()` works anywhere (the crate
-enters a private runtime context for callers outside tokio).
+through nusb's `smol` or `tokio` integration (opt-in; neither is a default
+feature). With `smol` both `.wait()` and `.await` work under any executor.
+With `tokio` instead, `.await` must run inside a tokio runtime; `.wait()` works
+anywhere (the crate enters a private runtime context for callers outside tokio).
 
 Streaming timeouts (`RxStream::read`, `TxStream::get_buffer`,
 `TxStream::wait_completion`) apply to the blocking path only. The awaited
@@ -158,9 +162,10 @@ transfers. Dropping a stream does not prove that browser requests have stopped.
 
 Open with `BladeRf1::from_fd(OwnedFd)` or `from_device`; Android has no enumeration
 constructors. Duplicate the Java connection's FD before transferring ownership.
-Choose an application directory explicitly with `load_dc_cal_tables_from_dir`.
-For WebUSB, deserialize validated `DcCalTable` values and install them with
-`set_dc_cal_table`; filesystem helpers require an available native filesystem.
+Choose an application directory explicitly with `load_dc_cal_tables_from_dir`
+(requires the `serde` feature). For WebUSB, deserialize validated `DcCalTable`
+values and install them with `set_dc_cal_table`; filesystem helpers require an
+available native filesystem and the `serde` feature.
 
 ## Examples
 
@@ -190,8 +195,10 @@ cargo run -p rx-async
 - **Streaming**: zero-copy buffers (RX/TX), SC16 and timestamped SC16, version-gated
   `PacketMeta`, and pure packed-SC16 conversion helpers. Stock FPGA streaming
   rejects SC8 and packed SC16.
-- **DC calibration**: on-demand LMS6002D calibration, validated host JSON tables
-  with optional filesystem auto-load and frequency-specific apply
+- **DC calibration**: on-demand LMS6002D calibration and frequency-specific
+  apply. The validated host JSON tables, including filesystem auto-load, require
+  the opt-in `serde` feature; without it, tables can still be built and installed
+  in memory via `DcCalTable::new`/`set_dc_cal_table`
 - **Flash**: erase/write/verify, calibration region (DAC trim, FPGA size)
 - **FPGA**: host-based loading, flash autoload, source query, firmware log reading
 - **Expansion boards**: XB-100 (GPIO/LED), XB-200 (filter bank, upconverter, auto filter),

@@ -36,7 +36,7 @@ tokio = { version = "1", features = ["rt", "macros", "time"] }
 criterion = { version = "0.8", features = ["html_reports"] }
 
 [features]
-default = ["xb100", "xb200", "xb300", "smol"]
+default = ["xb100", "xb200", "xb300"]
 
 # BladeRF1 support (x40/x115)
 bladerf1 = []
@@ -57,14 +57,19 @@ xb300 = ["bladerf1"]
 # interface claim, alternate setting, clear halt), mirroring nusb's own
 # `smol`/`tokio` features. Needed only to `.await` on native targets; the
 # blocking `.wait()` path runs those syscalls inline and needs no runtime.
-# `smol` (the executor-agnostic `blocking` thread pool) is the default. If
-# both are enabled nusb uses `smol`. Neither is needed on wasm32.
+# Neither is a default feature: enable one only when you `.await`. `smol`
+# (the executor-agnostic `blocking` thread pool) works under any executor;
+# `tokio` uses `spawn_blocking` and requires a tokio runtime. If both are
+# enabled nusb uses `smol`. Neither is needed on wasm32.
 smol = ["nusb/smol"]
 tokio = ["nusb/tokio"]
 
-# Configure docs.rs to show all features
+# Configure docs.rs. `bladerf2` is intentionally excluded: it is a
+# compile_error! stub, and `--all-features` would fail the build. Default
+# features provide bladerf1 (via xb100/xb200/xb300); the opt-in `serde` and
+# runtime (`smol`/`tokio`) features are listed so their APIs appear in the docs.
 [package.metadata.docs.rs]
-all-features = true
+features = ["serde", "smol", "tokio"]
 rustdoc-args = ["--cfg", "docsrs"]
 
 [profile.prof]

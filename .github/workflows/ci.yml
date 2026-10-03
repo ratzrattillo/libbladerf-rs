@@ -26,6 +26,7 @@ jobs:
       - run: cargo check --no-default-features --features bladerf1,xb200,tokio --lib
       # Runtime-free sync path: no `smol`/`tokio`, so no async runtime is compiled in.
       - run: cargo check --no-default-features --features bladerf1 --lib
+      - run: cargo check --no-default-features --features bladerf1,serde --lib
 
   fmt:
     runs-on: ubuntu-latest
@@ -40,7 +41,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        features: [smol, tokio, bladerf1, "bladerf1,smol", "bladerf1,tokio", "xb100,smol", "xb200,smol", "xb300,smol", "bladerf1,smol,tokio"]
+        features: [smol, tokio, bladerf1, "bladerf1,smol", "bladerf1,tokio", "bladerf1,serde", "xb100,smol", "xb200,smol", "xb300,smol", "bladerf1,smol,tokio"]
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
@@ -55,6 +56,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --workspace --features bladerf1 --all-targets -- -D warnings
       - run: cargo clippy --no-default-features --features bladerf1,xb100,xb200,xb300,tokio --all-targets -- -D warnings
+      - run: cargo clippy --no-default-features --features bladerf1,serde --all-targets -- -D warnings
 
   clippy-nightly:
     name: Clippy (nightly, early warning)
@@ -68,6 +70,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --workspace --features bladerf1 --all-targets -- -D warnings
       - run: cargo clippy --no-default-features --features bladerf1,xb100,xb200,xb300,tokio --all-targets -- -D warnings
+      - run: cargo clippy --no-default-features --features bladerf1,serde --all-targets -- -D warnings
 
   audit:
     runs-on: ubuntu-latest
@@ -103,6 +106,7 @@ jobs:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --target wasm32-unknown-unknown --features bladerf1 --lib
+      - run: cargo check --target wasm32-unknown-unknown --no-default-features --features bladerf1,serde --lib
       - run: cargo check --target wasm32-unknown-unknown --no-default-features --features bladerf1,xb200 --test public_api
 
   build-examples:
@@ -158,6 +162,7 @@ jobs:
       - run: cargo test --test unit
       - run: cargo test --test public_api --features bladerf1
       - run: cargo test --no-default-features --features bladerf1,xb200,tokio --lib --test unit --test public_api
+      - run: cargo test --no-default-features --features bladerf1,serde --lib --test unit --test public_api
       - run: cargo test --no-default-features --features bladerf1 --test sync_no_runtime
 
   test-macos:
@@ -173,6 +178,7 @@ jobs:
       - run: cargo test --lib
       - run: cargo test --test unit
       - run: cargo test --test public_api --features bladerf1
+      - run: cargo test --no-default-features --features bladerf1,serde --lib --test unit --test public_api
       - run: cargo test --no-default-features --features bladerf1 --test sync_no_runtime
 
   test-windows:
@@ -188,4 +194,5 @@ jobs:
       - run: cargo test --lib
       - run: cargo test --test unit
       - run: cargo test --test public_api --features bladerf1
+      - run: cargo test --no-default-features --features bladerf1,serde --lib --test unit --test public_api
       - run: cargo test --no-default-features --features bladerf1 --test sync_no_runtime

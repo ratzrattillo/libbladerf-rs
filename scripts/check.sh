@@ -33,13 +33,14 @@ cargo +1.88.0 check --lib
 cargo +1.88.0 check --no-default-features --features bladerf1,xb200,tokio --lib
 # Runtime-free sync path: no `smol`/`tokio`, so no async runtime is compiled in.
 cargo +1.88.0 check --no-default-features --features bladerf1 --lib
+cargo +1.88.0 check --no-default-features --features bladerf1,serde --lib
 
 ###########################################################
 # BUILD (ci.yml: test-linux)
 ###########################################################
 cargo build --features bladerf1
 cargo build --no-default-features --features bladerf1,tokio
-for features in smol tokio bladerf1 bladerf1,smol bladerf1,tokio xb100,smol xb200,smol xb300,smol bladerf1,smol,tokio; do
+for features in smol tokio bladerf1 bladerf1,smol bladerf1,tokio bladerf1,serde xb100,smol xb200,smol xb300,smol bladerf1,smol,tokio; do
   cargo check --no-default-features --features "$features" --lib
 done
 
@@ -53,6 +54,8 @@ cargo test --test unit
 # Public API contract (no hardware)
 cargo test --test public_api --features bladerf1
 cargo test --no-default-features --features bladerf1,xb200,tokio --lib --test unit --test public_api
+# serde-gated DC calibration table JSON round-trip and deserialization tests
+cargo test --no-default-features --features bladerf1,serde --lib --test unit --test public_api
 # Runtime-free sync path (no `smol`/`tokio`), no hardware required
 cargo test --no-default-features --features bladerf1 --test sync_no_runtime
 # Hardware integration tests (single-threaded, shared device), default
@@ -69,11 +72,13 @@ fi
 # Stable is the gate CI enforces.
 cargo clippy --workspace --features bladerf1 --all-targets -- -D warnings
 cargo clippy --no-default-features --features bladerf1,xb100,xb200,xb300,tokio --all-targets -- -D warnings
+cargo clippy --no-default-features --features bladerf1,serde --all-targets -- -D warnings
 # Nightly clippy is the early warning (continue-on-error in CI): lints that
 # are warn-by-default on nightly today become CI failures on the next
 # stable. Fix them now or `#[allow]` them deliberately.
 cargo +nightly clippy --workspace --features bladerf1 --all-targets -- -D warnings
 cargo +nightly clippy --no-default-features --features bladerf1,xb100,xb200,xb300,tokio --all-targets -- -D warnings
+cargo +nightly clippy --no-default-features --features bladerf1,serde --all-targets -- -D warnings
 
 ###########################################################
 # FMT (ci.yml: fmt)
@@ -86,6 +91,7 @@ cargo +nightly fmt --all --check
 # WebUSB (needs --cfg=web_sys_unstable_apis, supplied by .cargo/config.toml)
 rustup target add wasm32-unknown-unknown
 cargo check --target wasm32-unknown-unknown --features bladerf1 --lib
+cargo check --target wasm32-unknown-unknown --no-default-features --features bladerf1,serde --lib
 cargo check --target wasm32-unknown-unknown --no-default-features --features bladerf1,xb200 --test public_api
 
 ###########################################################

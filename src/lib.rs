@@ -13,7 +13,7 @@
 //! | `xb100`     | yes     | XB-100 expansion board support         |
 //! | `xb200`     | yes     | XB-200 transverter board support       |
 //! | `xb300`     | yes     | XB-300 amplifier board support         |
-//! | `smol`      | yes     | nusb `smol` runtime integration         |
+//! | `smol`      | no      | nusb `smol` runtime integration         |
 //! | `tokio`     | no      | nusb `tokio` runtime integration        |
 //!
 //! \* Enabled implicitly by the `xb100`, `xb200`, or `xb300` features.
@@ -36,8 +36,8 @@
 //! Every I/O method returns a [`MaybeFuture`]: call `.wait()` to block the
 //! current thread (native targets only) or `.await` it from async code. The
 //! crate mirrors nusb's semantics: on native targets `.wait()` needs no async
-//! runtime, while `.await` requires nusb's `smol` (default) or `tokio`
-//! feature, selected through the features of the same name. Streaming
+//! runtime, while `.await` requires one of the opt-in `smol` or `tokio`
+//! features, selected through the features of the same name. Streaming
 //! timeouts apply to the blocking path only; awaited stream futures consume
 //! one USB completion per await and are cancel-safe.
 //!

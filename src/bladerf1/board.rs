@@ -121,7 +121,8 @@ fn is_bladerf1(dev: &DeviceInfo) -> bool {
 /// Every I/O method returns a [`MaybeFuture`]: call `.wait()` to block the
 /// current thread (native targets only) or `.await` it from async code.
 /// The blocking path needs no async runtime; the async path on native
-/// targets requires `smol` (default) or `tokio`, while WebUSB needs neither.
+/// targets requires the opt-in `smol` or `tokio` feature, while WebUSB needs
+/// neither.
 ///
 /// On construction the device waits for FX3 firmware readiness. With the
 /// opt-in `serde` feature, it also auto-loads DC calibration tables from

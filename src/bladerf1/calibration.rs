@@ -88,7 +88,8 @@ impl TryFrom<RawDcCalTable> for DcCalTable {
 impl DcCalTable {
     /// Constructs a calibration table with entries sorted by frequency.
     ///
-    /// Empty tables return zero corrections. Deserialization uses the same validation.
+    /// Empty tables return zero corrections. Deserialization, with the `serde`
+    /// feature enabled, uses the same validation.
     ///
     /// # Errors
     /// Returns an argument error if two entries have the same frequency.
