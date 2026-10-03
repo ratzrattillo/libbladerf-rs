@@ -49,6 +49,10 @@ impl RangeItem {
     }
 }
 
+fn nearly_equal(a: f64, b: f64) -> bool {
+    (a - b).abs() <= a.abs().max(b.abs()) * f64::EPSILON * 2.0
+}
+
 /// Collection of range items representing valid parameter values.
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub struct Range {
@@ -62,17 +66,11 @@ impl Range {
     }
     /// Returns the minimum value across all range items, or `None` if empty.
     pub fn min(&self) -> Option<f64> {
-        self.items
-            .iter()
-            .reduce(|a, b| if a.min() < b.min() { a } else { b })
-            .map(|item| item.min())
+        self.items.iter().map(RangeItem::min).reduce(f64::min)
     }
     /// Returns the maximum value across all range items, or `None` if empty.
     pub fn max(&self) -> Option<f64> {
-        self.items
-            .iter()
-            .reduce(|a, b| if a.max() > b.max() { a } else { b })
-            .map(|item| item.max())
+        self.items.iter().map(RangeItem::max).reduce(f64::max)
     }
     /// Returns the step value from the first range item, or `None` if not applicable.
     pub fn step(&self) -> Option<f64> {
@@ -107,192 +105,96 @@ impl Range {
     /// For stepped ranges, checks that the value aligns with the step grid.
     /// Uses epsilon-aware comparison for floating-point equality.
     pub fn contains(&self, value: f64) -> bool {
-        for item in &self.items {
-            match *item {
-                RangeItem::Interval(a, b) => {
-                    if a <= value && value <= b {
-                        return true;
-                    }
-                }
-                RangeItem::Value(v) => {
-                    if (v - value).abs() <= v.abs().max(value.abs()) * f64::EPSILON * 2.0 {
-                        return true;
-                    }
-                }
-                RangeItem::Step(min, max, step, _scale) => {
-                    if value < min {
-                        continue;
-                    }
-                    let mut v = min + ((value - min) / step).floor() * step;
-                    while v <= max && v <= value {
-                        if (v - value).abs() <= v.abs().max(value.abs()) * f64::EPSILON * 2.0 {
-                            return true;
-                        }
-                        v += step;
-                    }
-                }
-            }
+        if !value.is_finite() {
+            return false;
         }
-        false
+        self.items.iter().any(|item| match *item {
+            RangeItem::Interval(min, max) => min <= value && value <= max,
+            RangeItem::Value(allowed) => nearly_equal(allowed, value),
+            RangeItem::Step(min, max, step, _scale) => {
+                value >= min
+                    && value <= max
+                    && nearly_equal(min + ((value - min) / step).round() * step, value)
+            }
+        })
     }
     /// Finds the value within the range that is closest to the target.
     /// If the target is already within the range, returns it as-is.
+    /// Ties select the smaller value; a NaN target yields `None`.
     /// Returns the nearest valid value from all range items.
     pub fn closest(&self, value: f64) -> Option<f64> {
-        fn closer(target: f64, closest: Option<f64>, current: f64) -> f64 {
-            match closest {
-                Some(c) => {
-                    if (target - current).abs() < (c - target).abs() {
-                        current
-                    } else {
-                        c
-                    }
-                }
-                None => current,
-            }
-        }
-        if self.contains(value) {
-            Some(value)
-        } else {
-            let mut close = None;
-            for i in self.items.iter() {
-                match i {
-                    RangeItem::Interval(a, b) => {
-                        close = Some(closer(value, close, *a));
-                        close = Some(closer(value, close, *b));
-                    }
-                    RangeItem::Value(a) => {
-                        close = Some(closer(value, close, *a));
-                    }
-                    RangeItem::Step(min, max, step, _scale) => {
-                        if value <= *min {
-                            close = Some(closer(value, close, *min));
-                            continue;
-                        }
-                        if value >= *max {
-                            close = Some(closer(value, close, *max));
-                            continue;
-                        }
-                        let mut v = min + ((value - min) / step).floor() * step;
-                        while v <= *max && v <= value + step {
-                            close = Some(closer(value, close, v));
-                            v += step;
-                        }
-                    }
+        match (self.at_max(value), self.at_least(value)) {
+            (Some(lower), Some(upper)) => {
+                if value / 2.0 - lower / 2.0 <= upper / 2.0 - value / 2.0 {
+                    Some(lower)
+                } else {
+                    Some(upper)
                 }
             }
-            close
+            (Some(candidate), None) | (None, Some(candidate)) => Some(candidate),
+            (None, None) => None,
         }
     }
     /// Finds the smallest value within the range that is at least the target.
     /// If the target is already within the range, returns it as-is.
-    /// Returns `None` if no valid value meets or exceeds the target.
+    /// Returns `None` if no valid value meets or exceeds the target, or the target is NaN.
     pub fn at_least(&self, value: f64) -> Option<f64> {
-        fn closer_at_least(target: f64, closest: Option<f64>, current: f64) -> Option<f64> {
-            match closest {
-                Some(c) => {
-                    if (target - current).abs() < (c - target).abs() && current >= target {
-                        Some(current)
-                    } else {
-                        closest
-                    }
-                }
-                None => {
-                    if current >= target {
-                        Some(current)
-                    } else {
-                        None
-                    }
-                }
-            }
+        if value.is_nan() {
+            return None;
         }
-        if self.contains(value) {
-            Some(value)
-        } else {
-            let mut close = None;
-            for i in self.items.iter() {
-                match i {
-                    RangeItem::Interval(a, b) => {
-                        close = closer_at_least(value, close, *a);
-                        close = closer_at_least(value, close, *b);
-                    }
-                    RangeItem::Value(a) => {
-                        close = closer_at_least(value, close, *a);
-                    }
+        self.items
+            .iter()
+            .filter_map(|item| {
+                let candidate = match *item {
+                    RangeItem::Interval(min, max) => (value <= max).then_some(value.max(min)),
+                    RangeItem::Value(allowed) => (value <= allowed).then_some(allowed),
                     RangeItem::Step(min, max, step, _scale) => {
-                        if value <= *min {
-                            close = closer_at_least(value, close, *min);
-                            continue;
-                        }
-                        if value >= *max {
-                            close = closer_at_least(value, close, *max);
-                            continue;
-                        }
-                        let mut v = min + ((value - min) / step).floor() * step;
-                        while v <= *max && v <= value + step {
-                            close = closer_at_least(value, close, v);
-                            v += step;
+                        if value <= min {
+                            Some(min)
+                        } else if value > max {
+                            None
+                        } else {
+                            let index = ((value - min) / step).ceil();
+                            let mut candidate = min + index * step;
+                            if candidate < value {
+                                let next = (index + 1.0).max(index.next_up());
+                                candidate = min + next * step;
+                            }
+                            (candidate <= max).then_some(candidate)
                         }
                     }
-                }
-            }
-            close
-        }
+                };
+                candidate.filter(|candidate| *candidate >= value)
+            })
+            .reduce(f64::min)
     }
     /// Finds the largest value within the range that does not exceed the target.
     /// If the target is already within the range, returns it as-is.
-    /// Returns `None` if no valid value is at or below the target.
+    /// Returns `None` if no valid value is at or below the target, or the target is NaN.
     pub fn at_max(&self, value: f64) -> Option<f64> {
-        fn closer_at_max(target: f64, closest: Option<f64>, current: f64) -> Option<f64> {
-            match closest {
-                Some(c) => {
-                    if (target - current).abs() < (c - target).abs() && current <= target {
-                        Some(current)
-                    } else {
-                        closest
-                    }
-                }
-                None => {
-                    if current <= target {
-                        Some(current)
-                    } else {
-                        None
-                    }
-                }
-            }
+        if value.is_nan() {
+            return None;
         }
-        if self.contains(value) {
-            Some(value)
-        } else {
-            let mut close = None;
-            for i in self.items.iter() {
-                match i {
-                    RangeItem::Interval(a, b) => {
-                        close = closer_at_max(value, close, *a);
-                        close = closer_at_max(value, close, *b);
-                    }
-                    RangeItem::Value(a) => {
-                        close = closer_at_max(value, close, *a);
-                    }
-                    RangeItem::Step(min, max, step, _scale) => {
-                        if value <= *min {
-                            close = closer_at_max(value, close, *min);
-                            continue;
+        self.items
+            .iter()
+            .filter_map(|item| {
+                let candidate = match *item {
+                    RangeItem::Interval(min, max) => (value >= min).then_some(value.min(max)),
+                    RangeItem::Value(allowed) => (value >= allowed).then_some(allowed),
+                    RangeItem::Step(min, max, step, _scale) => (value >= min).then(|| {
+                        let limit = value.min(max);
+                        let index = ((limit - min) / step).floor();
+                        let mut candidate = min + index * step;
+                        if candidate > limit {
+                            let previous = (index - 1.0).min(index.next_down()).max(0.0);
+                            candidate = min + previous * step;
                         }
-                        if value >= *max {
-                            close = closer_at_max(value, close, *max);
-                            continue;
-                        }
-                        let mut v = min + ((value - min) / step).floor() * step;
-                        while v <= *max && v <= value + step {
-                            close = closer_at_max(value, close, v);
-                            v += step;
-                        }
-                    }
-                }
-            }
-            close
-        }
+                        candidate
+                    }),
+                };
+                candidate.filter(|candidate| *candidate <= value)
+            })
+            .reduce(f64::max)
     }
     /// Returns an iterator over the range items.
     pub fn iter(&self) -> impl Iterator<Item = &RangeItem> {
