@@ -1,10 +1,9 @@
-//! Sample layouts, format GPIO masks, and pure packed-SC16 conversions.
+//! Sample layouts and pure packed-SC16 conversions.
 //!
 //! Stock BladeRF1 streaming supports SC16, timestamped SC16, and packet
 //! metadata. The other enum variants describe data layouts for conversion;
 //! the stock FPGA cannot stream those formats.
 
-use crate::bladerf1::GpioFlags;
 use crate::{Error, Result};
 
 /// I/Q sample representation used by a stream or conversion helper.
@@ -23,17 +22,6 @@ pub enum SampleFormat {
     /// Packed 12-bit components; conversion-only on stock BladeRF1.
     Sc16Q11Packed = 5,
 }
-
-/// GPIO bit enabling packet metadata.
-pub const BLADERF_GPIO_PACKET: u32 = GpioFlags::PACKET.bits();
-/// GPIO bit enabling timestamp metadata in each FPGA message.
-pub const BLADERF_GPIO_TIMESTAMP: u32 = GpioFlags::TIMESTAMP.bits();
-/// GPIO bit dividing the timestamp clock for complex sample counting.
-pub const BLADERF_GPIO_TIMESTAMP_DIV2: u32 = GpioFlags::TIMESTAMP_DIV2.bits();
-/// GPIO bit enabling SC8 on FPGA designs implementing that mode.
-pub const BLADERF_GPIO_8BIT_MODE: u32 = GpioFlags::EIGHT_BIT_MODE.bits();
-/// GPIO bit enabling highly packed SC16 on FPGA designs implementing that mode.
-pub const BLADERF_GPIO_HIGHLY_PACKED_MODE: u32 = GpioFlags::HIGHLY_PACKED_MODE.bits();
 
 #[inline(always)]
 const fn sign_extend_12(val: u16) -> i16 {

@@ -2,6 +2,13 @@ use super::{Band, GainMode, RxMux};
 use crate::{Channel, Result};
 use nusb::Speed;
 
+const TX_BAND_SHIFT: u32 = 3;
+const RX_BAND_SHIFT: u32 = 5;
+const BAND_SELECT_MASK: u32 = 0b11;
+const TX_BAND_MASK: u32 = BAND_SELECT_MASK << TX_BAND_SHIFT;
+const RX_BAND_MASK: u32 = BAND_SELECT_MASK << RX_BAND_SHIFT;
+const RF_SWITCH_LOW_BAND: u32 = 0b10;
+const RF_SWITCH_HIGH_BAND: u32 = 0b01;
 const RX_MUX_SHIFT: u32 = 8;
 const RX_MUX_MASK: u32 = 7 << RX_MUX_SHIFT;
 
@@ -19,14 +26,20 @@ bitflags::bitflags! {
     /// ```
     /// use libbladerf_rs::bladerf1::GpioFlags;
     ///
-    /// let mut gpio = GpioFlags::from_bits_retain(0x8000_0057);
+    /// let mut gpio = GpioFlags::LMS_RESET_N | GpioFlags::LMS_RX_ENABLE;
     /// gpio.set(GpioFlags::AGC_ENABLE, true);
     /// assert!(gpio.contains(GpioFlags::AGC_ENABLE));
     /// gpio.remove(GpioFlags::AGC_ENABLE);
-    /// assert_eq!(gpio.bits(), 0x8000_0057);
+    /// assert_eq!(gpio, GpioFlags::LMS_RESET_N | GpioFlags::LMS_RX_ENABLE);
     /// ```
     #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
     pub struct GpioFlags: u32 {
+        /// Releases the LMS6002D's active-low hardware reset when set.
+        const LMS_RESET_N = 1 << 0;
+        /// Enables the LMS6002D receive path through its RX enable pin.
+        const LMS_RX_ENABLE = 1 << 1;
+        /// Enables the LMS6002D transmit path through its TX enable pin.
+        const LMS_TX_ENABLE = 1 << 2;
         /// Enables small DMA transfers for High-Speed USB.
         const SMALL_DMA_XFER = 1 << 7;
         /// Enables timestamp metadata.
@@ -46,8 +59,19 @@ bitflags::bitflags! {
 }
 
 impl GpioFlags {
+    pub(crate) const LMS_CONTROL: Self = Self::LMS_RESET_N
+        .union(Self::LMS_RX_ENABLE)
+        .union(Self::LMS_TX_ENABLE);
+
+    pub(crate) fn for_initialization() -> Self {
+        let mut gpio = Self::LMS_CONTROL;
+        gpio.set_band(Channel::Rx, Band::Low);
+        gpio.set_band(Channel::Tx, Band::Low);
+        gpio
+    }
+
     pub(crate) fn is_initialized(self) -> bool {
-        (self.bits() & 0x7f) != 0
+        (self.bits() & (Self::LMS_CONTROL.bits() | TX_BAND_MASK | RX_BAND_MASK)) != 0
     }
 
     pub(crate) fn apply_usb_speed(&mut self, speed: Speed) {
@@ -76,15 +100,24 @@ impl GpioFlags {
     }
 
     pub(crate) fn set_band(&mut self, channel: Channel, band: Band) {
-        let shift = match channel {
-            Channel::Tx => 3,
-            Channel::Rx => 5,
+        let (mask, shift) = match channel {
+            Channel::Tx => (TX_BAND_MASK, TX_BAND_SHIFT),
+            Channel::Rx => (RX_BAND_MASK, RX_BAND_SHIFT),
         };
         let value = match band {
-            Band::Low => 2,
-            Band::High => 1,
+            Band::Low => RF_SWITCH_LOW_BAND,
+            Band::High => RF_SWITCH_HIGH_BAND,
         };
-        *self = Self::from_bits_retain((self.bits() & !(3 << shift)) | (value << shift));
+        *self = Self::from_bits_retain((self.bits() & !mask) | (value << shift));
+    }
+
+    #[cfg(feature = "xb200")]
+    pub(crate) fn set_xb200_mode(&mut self) {
+        const XB_MODE_SHIFT: u32 = 30;
+        const XB_MODE_MASK: u32 = 0b11 << XB_MODE_SHIFT;
+        const XB_MODE_TRANSVERTER: u32 = 0b10 << XB_MODE_SHIFT;
+
+        *self = Self::from_bits_retain((self.bits() & !XB_MODE_MASK) | XB_MODE_TRANSVERTER);
     }
 }
 
@@ -161,12 +194,24 @@ mod tests {
 
     #[test]
     fn initialization_depends_only_on_the_lower_seven_bits() {
+        assert_eq!(GpioFlags::LMS_CONTROL.bits(), 0x07);
+        assert_eq!(GpioFlags::for_initialization().bits(), 0x57);
         assert!(GpioFlags::from_bits_retain(0x57).is_initialized());
         assert!(!GpioFlags::empty().is_initialized());
         assert!(!GpioFlags::from_bits_retain(0xffff_ff80).is_initialized());
         for bit in 0..32 {
             let gpio = GpioFlags::from_bits_retain(1 << bit);
             assert_eq!(gpio.is_initialized(), bit < 7);
+        }
+    }
+
+    #[cfg(feature = "xb200")]
+    #[test]
+    fn xb200_mode_replaces_the_selector_without_touching_other_bits() {
+        for raw in register_values() {
+            let mut gpio = GpioFlags::from_bits_retain(raw);
+            gpio.set_xb200_mode();
+            assert_eq!(gpio.bits(), (raw & 0x3fff_ffff) | 0x8000_0000);
         }
     }
 }

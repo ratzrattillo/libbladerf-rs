@@ -9,50 +9,28 @@ use crate::error::Result;
 use crate::maybe_future::Op;
 use nusb::MaybeFuture;
 
-macro_rules! bladerf_xb_gpio {
-    ($n:expr) => {
-        (1 << ($n - 1)) as u8
-    };
+bitflags::bitflags! {
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+    pub(crate) struct Xb100GpioFlags: u32 {
+        const LED_D1 = 1 << 23;
+        const LED_D2 = 1 << 31;
+        const LED_D3 = 1 << 29;
+        const LED_D4 = 1 << 27;
+        const LED_D5 = 1 << 22;
+        const LED_D6 = 1 << 24;
+        const LED_D7 = 1 << 30;
+        const LED_D8 = 1 << 28;
+        const TLED_RED = 1 << 21;
+        const TLED_GREEN = 1 << 20;
+        const TLED_BLUE = 1 << 19;
+    }
 }
 
-const BLADERF_XB_GPIO_20: u8 = bladerf_xb_gpio!(20);
-const BLADERF_XB_GPIO_21: u8 = bladerf_xb_gpio!(21);
-const BLADERF_XB_GPIO_22: u8 = bladerf_xb_gpio!(22);
-const BLADERF_XB_GPIO_23: u8 = bladerf_xb_gpio!(23);
-const BLADERF_XB_GPIO_24: u8 = bladerf_xb_gpio!(24);
-const BLADERF_XB_GPIO_25: u8 = bladerf_xb_gpio!(25);
-const BLADERF_XB_GPIO_28: u8 = bladerf_xb_gpio!(28);
-const BLADERF_XB_GPIO_29: u8 = bladerf_xb_gpio!(29);
-const BLADERF_XB_GPIO_30: u8 = bladerf_xb_gpio!(30);
-const BLADERF_XB_GPIO_31: u8 = bladerf_xb_gpio!(31);
-const BLADERF_XB_GPIO_32: u8 = bladerf_xb_gpio!(32);
-
-const BLADERF_XB100_LED_D1: u8 = BLADERF_XB_GPIO_24;
-const BLADERF_XB100_LED_D2: u8 = BLADERF_XB_GPIO_32;
-const BLADERF_XB100_LED_D3: u8 = BLADERF_XB_GPIO_30;
-const BLADERF_XB100_LED_D4: u8 = BLADERF_XB_GPIO_28;
-const BLADERF_XB100_LED_D5: u8 = BLADERF_XB_GPIO_23;
-const BLADERF_XB100_LED_D6: u8 = BLADERF_XB_GPIO_25;
-const BLADERF_XB100_LED_D7: u8 = BLADERF_XB_GPIO_31;
-const BLADERF_XB100_LED_D8: u8 = BLADERF_XB_GPIO_29;
-const BLADERF_XB100_TLED_RED: u8 = BLADERF_XB_GPIO_22;
-const BLADERF_XB100_TLED_GREEN: u8 = BLADERF_XB_GPIO_21;
-const BLADERF_XB100_TLED_BLUE: u8 = BLADERF_XB_GPIO_20;
-
-/// Bitmask for all XB-100 GPIO pins, used for board detection.
-pub(crate) const XB100_DETECT_MASK: u32 = (BLADERF_XB100_LED_D1
-    | BLADERF_XB100_LED_D2
-    | BLADERF_XB100_LED_D3
-    | BLADERF_XB100_LED_D4
-    | BLADERF_XB100_LED_D5
-    | BLADERF_XB100_LED_D6
-    | BLADERF_XB100_LED_D7
-    | BLADERF_XB100_LED_D8
-    | BLADERF_XB100_TLED_RED
-    | BLADERF_XB100_TLED_GREEN
-    | BLADERF_XB100_TLED_BLUE) as u32;
-
-const XB100_LED_MASK: u32 = XB100_DETECT_MASK;
+impl Xb100GpioFlags {
+    pub(crate) fn is_enabled(self) -> bool {
+        self.bits() != u32::MAX && self.contains(Self::all())
+    }
+}
 
 impl RfLinkSession<'_> {
     /// Prepares the XB-100 board. Currently a no-op placeholder.
@@ -68,11 +46,12 @@ impl RfLinkSession<'_> {
         Op::new(async move {
             self.require_initialized().await?;
             if enable {
+                let leds = Xb100GpioFlags::all();
                 self.nios
-                    .nios_expansion_gpio_dir_write(XB100_LED_MASK, XB100_LED_MASK)
+                    .nios_expansion_gpio_dir_write(leds.bits(), leds.bits())
                     .await?;
                 self.nios
-                    .nios_expansion_gpio_write(XB100_LED_MASK, XB100_LED_MASK)
+                    .nios_expansion_gpio_write(leds.bits(), leds.bits())
                     .await?;
             }
             Ok(())
@@ -84,5 +63,24 @@ impl RfLinkSession<'_> {
             self.require_initialized().await?;
             Ok(())
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn led_mask_covers_all_eleven_upper_gpio_pins() {
+        assert_eq!(Xb100GpioFlags::all().bits(), 0xf9f8_0000);
+        assert_eq!(Xb100GpioFlags::LED_D2.bits(), 0x8000_0000);
+    }
+
+    #[test]
+    fn detection_requires_the_full_led_pattern() {
+        assert!(Xb100GpioFlags::from_bits_retain(0xf9f8_0000).is_enabled());
+        for raw in [0, u32::MAX, 0x3c00_0800, 0x3c00_383e, 0x0005_0400] {
+            assert!(!Xb100GpioFlags::from_bits_retain(raw).is_enabled());
+        }
     }
 }

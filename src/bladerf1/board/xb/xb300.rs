@@ -9,19 +9,37 @@ use crate::bladerf1::board::RfLinkSession;
 use crate::error::Result;
 use crate::maybe_future::Op;
 use nusb::MaybeFuture;
-pub(crate) const BLADERF_XB_AUX_EN: u32 = 0x000002;
-pub(crate) const BLADERF_XB_TX_LED: u32 = 0x000010;
-pub(crate) const BLADERF_XB_RX_LED: u32 = 0x000020;
-pub(crate) const BLADERF_XB_TRX_TXN: u32 = 0x000040;
-pub(crate) const BLADERF_XB_TRX_RXN: u32 = 0x000080;
-pub(crate) const BLADERF_XB_TRX_MASK: u32 = 0x0000c0;
-pub(crate) const BLADERF_XB_PA_EN: u32 = 0x000200;
-pub(crate) const BLADERF_XB_LNA_EN: u32 = 0x000400;
-pub(crate) const BLADERF_XB_CS: u32 = 0x010000;
-pub(crate) const BLADERF_XB_CSEL: u32 = 0x040000;
-pub(crate) const BLADERF_XB_DOUT: u32 = 0x100000;
-pub(crate) const BLADERF_XB_SCLK: u32 = 0x400000;
-pub(crate) const XB300_DETECT_MASK: u32 = BLADERF_XB_CS | BLADERF_XB_CSEL | BLADERF_XB_LNA_EN;
+
+bitflags::bitflags! {
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+    pub(crate) struct Xb300GpioFlags: u32 {
+        const AUX_EN = 1 << 1;
+        const TX_LED = 1 << 4;
+        const RX_LED = 1 << 5;
+        const TRX_TXN = 1 << 6;
+        const TRX_RXN = 1 << 7;
+        const TRX = Self::TRX_TXN.bits() | Self::TRX_RXN.bits();
+        const PA_EN = 1 << 9;
+        const LNA_EN = 1 << 10;
+        const CS = 1 << 16;
+        const CSEL = 1 << 18;
+        const DOUT = 1 << 20;
+        const SCLK = 1 << 22;
+        const DETECT = Self::CS.bits() | Self::CSEL.bits() | Self::LNA_EN.bits();
+        const _ = !0;
+    }
+}
+
+impl Xb300GpioFlags {
+    fn power_detector_bit(self, clock: u32) -> u32 {
+        if (2..=11).contains(&clock) {
+            u32::from(self.contains(Self::DOUT)) << (11 - clock)
+        } else {
+            0
+        }
+    }
+}
+
 /// XB-300 transmit/receive switch position.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BladeRfXb300Trx {
@@ -48,19 +66,21 @@ impl RfLinkSession<'_> {
     pub fn xb300_attach(&mut self) -> impl MaybeFuture<Output = Result<()>> {
         Op::new(async move {
             self.require_initialized().await?;
-            let mut val = BLADERF_XB_TX_LED
-                | BLADERF_XB_RX_LED
-                | BLADERF_XB_TRX_MASK
-                | BLADERF_XB_PA_EN
-                | BLADERF_XB_LNA_EN
-                | BLADERF_XB_CSEL
-                | BLADERF_XB_SCLK
-                | BLADERF_XB_CS;
+            let mut val = Xb300GpioFlags::TX_LED
+                | Xb300GpioFlags::RX_LED
+                | Xb300GpioFlags::TRX
+                | Xb300GpioFlags::PA_EN
+                | Xb300GpioFlags::LNA_EN
+                | Xb300GpioFlags::CSEL
+                | Xb300GpioFlags::SCLK
+                | Xb300GpioFlags::CS;
             self.nios
-                .nios_expansion_gpio_dir_write(0xffffffff, val)
+                .nios_expansion_gpio_dir_write(0xffffffff, val.bits())
                 .await?;
-            val = BLADERF_XB_CS | BLADERF_XB_LNA_EN;
-            self.nios.nios_expansion_gpio_write(0xffffffff, val).await?;
+            val = Xb300GpioFlags::CS | Xb300GpioFlags::LNA_EN;
+            self.nios
+                .nios_expansion_gpio_write(0xffffffff, val.bits())
+                .await?;
             Ok(())
         })
     }
@@ -70,8 +90,9 @@ impl RfLinkSession<'_> {
     pub fn xb300_enable(&mut self, _enable: bool) -> impl MaybeFuture<Output = Result<()>> {
         Op::new(async move {
             self.require_initialized().await?;
-            let val = BLADERF_XB_CS | BLADERF_XB_CSEL | BLADERF_XB_LNA_EN;
-            self.nios.nios_expansion_gpio_write(0xffffffff, val).await?;
+            self.nios
+                .nios_expansion_gpio_write(0xffffffff, Xb300GpioFlags::DETECT.bits())
+                .await?;
             let _pwr = self.xb300_get_output_power().await?;
             Ok(())
         })
@@ -88,25 +109,28 @@ impl RfLinkSession<'_> {
     pub fn xb300_set_trx(&mut self, trx: BladeRfXb300Trx) -> impl MaybeFuture<Output = Result<()>> {
         Op::new(async move {
             self.require_initialized().await?;
-            let mut val = self.nios.nios_expansion_gpio_read().await?;
-            val &= !BLADERF_XB_TRX_MASK;
+            let mut val =
+                Xb300GpioFlags::from_bits_retain(self.nios.nios_expansion_gpio_read().await?);
+            val.remove(Xb300GpioFlags::TRX);
             match trx {
-                BladeRfXb300Trx::Rx => val |= BLADERF_XB_TRX_RXN,
-                BladeRfXb300Trx::Tx => val |= BLADERF_XB_TRX_TXN,
+                BladeRfXb300Trx::Rx => val.insert(Xb300GpioFlags::TRX_RXN),
+                BladeRfXb300Trx::Tx => val.insert(Xb300GpioFlags::TRX_TXN),
                 BladeRfXb300Trx::Unset => {}
             }
-            self.nios.nios_expansion_gpio_write(0xffffffff, val).await
+            self.nios
+                .nios_expansion_gpio_write(0xffffffff, val.bits())
+                .await
         })
     }
     /// Reads the transmit/receive switch position.
     pub fn xb300_get_trx(&mut self) -> impl MaybeFuture<Output = Result<BladeRfXb300Trx>> {
         Op::new(async move {
             self.require_initialized().await?;
-            let mut val = self.nios.nios_expansion_gpio_read().await?;
-            val &= BLADERF_XB_TRX_MASK;
-            let trx = if val == 0 {
+            let val = Xb300GpioFlags::from_bits_retain(self.nios.nios_expansion_gpio_read().await?)
+                & Xb300GpioFlags::TRX;
+            let trx = if val.is_empty() {
                 BladeRfXb300Trx::Unset
-            } else if (val & BLADERF_XB_TRX_RXN) != 0 {
+            } else if val.contains(Xb300GpioFlags::TRX_RXN) {
                 BladeRfXb300Trx::Rx
             } else {
                 BladeRfXb300Trx::Tx
@@ -122,35 +146,23 @@ impl RfLinkSession<'_> {
     ) -> impl MaybeFuture<Output = Result<()>> {
         Op::new(async move {
             self.require_initialized().await?;
-            let mut val = self.nios.nios_expansion_gpio_read().await?;
+            let mut val =
+                Xb300GpioFlags::from_bits_retain(self.nios.nios_expansion_gpio_read().await?);
             match amp {
                 BladeRfXb300Amplifier::Pa => {
-                    if enable {
-                        val |= BLADERF_XB_TX_LED;
-                        val |= BLADERF_XB_PA_EN;
-                    } else {
-                        val &= !BLADERF_XB_TX_LED;
-                        val &= !BLADERF_XB_PA_EN;
-                    }
+                    val.set(Xb300GpioFlags::TX_LED | Xb300GpioFlags::PA_EN, enable);
                 }
                 BladeRfXb300Amplifier::Lna => {
-                    if enable {
-                        val |= BLADERF_XB_RX_LED;
-                        val &= !BLADERF_XB_LNA_EN;
-                    } else {
-                        val &= !BLADERF_XB_RX_LED;
-                        val |= BLADERF_XB_LNA_EN;
-                    }
+                    val.set(Xb300GpioFlags::RX_LED, enable);
+                    val.set(Xb300GpioFlags::LNA_EN, !enable);
                 }
                 BladeRfXb300Amplifier::Aux => {
-                    if enable {
-                        val |= BLADERF_XB_AUX_EN;
-                    } else {
-                        val &= !BLADERF_XB_AUX_EN;
-                    }
+                    val.set(Xb300GpioFlags::AUX_EN, enable);
                 }
             }
-            self.nios.nios_expansion_gpio_write(0xffffffff, val).await
+            self.nios
+                .nios_expansion_gpio_write(0xffffffff, val.bits())
+                .await
         })
     }
     /// Returns whether the given amplifier stage is enabled.
@@ -160,11 +172,11 @@ impl RfLinkSession<'_> {
     ) -> impl MaybeFuture<Output = Result<bool>> {
         Op::new(async move {
             self.require_initialized().await?;
-            let val = self.nios.nios_expansion_gpio_read().await?;
+            let val = Xb300GpioFlags::from_bits_retain(self.nios.nios_expansion_gpio_read().await?);
             match amp {
-                BladeRfXb300Amplifier::Pa => Ok((val & BLADERF_XB_PA_EN) != 0),
-                BladeRfXb300Amplifier::Lna => Ok((val & BLADERF_XB_LNA_EN) != 0),
-                BladeRfXb300Amplifier::Aux => Ok((val & BLADERF_XB_AUX_EN) != 0),
+                BladeRfXb300Amplifier::Pa => Ok(val.contains(Xb300GpioFlags::PA_EN)),
+                BladeRfXb300Amplifier::Lna => Ok(val.contains(Xb300GpioFlags::LNA_EN)),
+                BladeRfXb300Amplifier::Aux => Ok(val.contains(Xb300GpioFlags::AUX_EN)),
             }
         })
     }
@@ -173,23 +185,28 @@ impl RfLinkSession<'_> {
         Op::new(async move {
             self.require_initialized().await?;
             let mut ret = 0;
-            let mut val = self.nios.nios_expansion_gpio_read().await?;
-            val &= !(BLADERF_XB_CS | BLADERF_XB_SCLK | BLADERF_XB_CSEL);
+            let mut val =
+                Xb300GpioFlags::from_bits_retain(self.nios.nios_expansion_gpio_read().await?);
+            val.remove(Xb300GpioFlags::CS | Xb300GpioFlags::SCLK | Xb300GpioFlags::CSEL);
             self.nios
-                .nios_expansion_gpio_write(0xffffffff, BLADERF_XB_SCLK | val)
+                .nios_expansion_gpio_write(0xffffffff, (Xb300GpioFlags::SCLK | val).bits())
                 .await?;
             self.nios
-                .nios_expansion_gpio_write(0xffffffff, BLADERF_XB_CS | BLADERF_XB_SCLK | val)
+                .nios_expansion_gpio_write(
+                    0xffffffff,
+                    (Xb300GpioFlags::CS | Xb300GpioFlags::SCLK | val).bits(),
+                )
                 .await?;
             for i in 1u32..=14u32 {
-                self.nios.nios_expansion_gpio_write(0xffffffff, val).await?;
                 self.nios
-                    .nios_expansion_gpio_write(0xffffffff, BLADERF_XB_SCLK | val)
+                    .nios_expansion_gpio_write(0xffffffff, val.bits())
                     .await?;
-                let rval = self.nios.nios_expansion_gpio_read().await?;
-                if (2..=11).contains(&i) {
-                    ret |= (!!(rval & BLADERF_XB_DOUT)) << (11 - i);
-                }
+                self.nios
+                    .nios_expansion_gpio_write(0xffffffff, (Xb300GpioFlags::SCLK | val).bits())
+                    .await?;
+                let rval =
+                    Xb300GpioFlags::from_bits_retain(self.nios.nios_expansion_gpio_read().await?);
+                ret |= rval.power_detector_bit(i);
             }
             let volt = (1.8f32 / 1_024.0f32) * ret as f32;
             let volt2 = volt * volt;
@@ -200,5 +217,32 @@ impl RfLinkSession<'_> {
                 - 114.7529f32;
             Ok(pwr)
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn power_detector_normalizes_gpio_into_a_ten_bit_adc_word() {
+        let high = Xb300GpioFlags::from_bits_retain(0xffff_ffff);
+        let low = Xb300GpioFlags::from_bits_retain(0xffef_ffff);
+        assert_eq!(
+            (1..=14)
+                .map(|clock| high.power_detector_bit(clock))
+                .sum::<u32>(),
+            1023
+        );
+        assert_eq!(
+            (1..=14)
+                .map(|clock| low.power_detector_bit(clock))
+                .sum::<u32>(),
+            0
+        );
+        assert_eq!(high.power_detector_bit(1), 0);
+        assert_eq!(high.power_detector_bit(2), 512);
+        assert_eq!(high.power_detector_bit(11), 1);
+        assert_eq!(high.power_detector_bit(12), 0);
     }
 }

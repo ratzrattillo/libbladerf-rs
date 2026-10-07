@@ -9,19 +9,40 @@ use crate::bladerf1::Band;
 use crate::bladerf1::hardware::lms6002d::Lms6002d;
 use crate::bladerf1::hardware::lms6002d::LmsPowerAmplifier;
 use crate::bladerf1::hardware::lms6002d::filters::LpfMode;
+use crate::bladerf1::hardware::lms6002d::frequency::PLL_OUTPUT_SELECT_MASK;
 use crate::bladerf1::hardware::lms6002d::gain::LmsLowNoiseAmplifier;
 use crate::maybe_future::Op;
 use crate::{Channel, Error};
 use nusb::MaybeFuture;
 
-/// LBEN register: output pin loopback.
-pub const LBEN_OPIN: u8 = 1 << 4;
-/// LBEN register: VGA2 input loopback.
-pub const LBEN_VGA2IN: u8 = 1 << 5;
-/// LBEN register: LPF input loopback.
-pub const LBEN_LPFIN: u8 = 1 << 6;
-/// LBEN register: combined loopback mask.
-pub const LBEN_MASK: u8 = LBEN_OPIN | LBEN_VGA2IN | LBEN_LPFIN;
+bitflags::bitflags! {
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+    pub(crate) struct LoopbackFlags: u8 {
+        const OUTPUT = 1 << 4;
+        const VGA2_INPUT = 1 << 5;
+        const LPF_INPUT = 1 << 6;
+        const BASEBAND = Self::OUTPUT.bits() | Self::VGA2_INPUT.bits() | Self::LPF_INPUT.bits();
+        const _ = !0;
+    }
+
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+    struct TopPowerFlags: u8 {
+        const RF_LOOPBACK = 1 << 0;
+        const _ = !0;
+    }
+}
+
+const LBRFEN_SELECT_MASK: u8 = 0x07;
+
+impl LoopbackFlags {
+    pub(crate) fn is_enabled(self, tx_source: u8) -> bool {
+        matches!(
+            self.bits() & LBRFEN_SELECT_MASK,
+            LBRFEN_LNA1 | LBRFEN_LNA2 | LBRFEN_LNA3
+        ) || (self.intersects(Self::BASEBAND) && (tx_source & LOOBBBEN_MASK) != 0)
+    }
+}
+
 /// LBRFEN register: LNA1 loopback.
 pub const LBRFEN_LNA1: u8 = 1;
 /// LBRFEN register: LNA2 loopback.
@@ -116,7 +137,7 @@ impl<'a> Lms6002d<'a> {
             let lben_lbrfen = self.read(0x08).await?;
             let loopbben = self.read(0x46).await?;
             let mut loopback = Loopback::None;
-            match lben_lbrfen & 0x7 {
+            match lben_lbrfen & LBRFEN_SELECT_MASK {
                 LBRFEN_LNA1 => {
                     loopback = Loopback::Lna1;
                 }
@@ -128,22 +149,19 @@ impl<'a> Lms6002d<'a> {
                 }
                 _ => {}
             }
-            match lben_lbrfen & LBEN_MASK {
-                LBEN_VGA2IN => {
-                    if (loopbben & LOOPBBEN_TXLPF) != 0 {
-                        loopback = Loopback::BbTxlpfRxvga2;
-                    } else if (loopbben & LOOPBBEN_TXVGA) != 0 {
-                        loopback = Loopback::BbTxvga1Rxvga2;
-                    }
+            let baseband = LoopbackFlags::from_bits_retain(lben_lbrfen) & LoopbackFlags::BASEBAND;
+            if baseband == LoopbackFlags::VGA2_INPUT {
+                if (loopbben & LOOPBBEN_TXLPF) != 0 {
+                    loopback = Loopback::BbTxlpfRxvga2;
+                } else if (loopbben & LOOPBBEN_TXVGA) != 0 {
+                    loopback = Loopback::BbTxvga1Rxvga2;
                 }
-                LBEN_LPFIN => {
-                    if (loopbben & LOOPBBEN_TXLPF) != 0 {
-                        loopback = Loopback::BbTxlpfRxlpf;
-                    } else if (loopbben & LOOPBBEN_TXVGA) != 0 {
-                        loopback = Loopback::BbTxvga1Rxlpf;
-                    }
+            } else if baseband == LoopbackFlags::LPF_INPUT {
+                if (loopbben & LOOPBBEN_TXLPF) != 0 {
+                    loopback = Loopback::BbTxlpfRxlpf;
+                } else if (loopbben & LOOPBBEN_TXVGA) != 0 {
+                    loopback = Loopback::BbTxvga1Rxlpf;
                 }
-                _ => {}
             }
             Ok(loopback)
         })
@@ -159,40 +177,41 @@ impl<'a> Lms6002d<'a> {
     fn loopback_path(&mut self, mode: &Loopback) -> impl MaybeFuture<Output = crate::Result<()>> {
         Op::new(async move {
             let mut loopbben = self.read(0x46).await?;
-            let mut lben_lbrf = self.read(0x08).await?;
+            let mut lben_lbrf = LoopbackFlags::from_bits_retain(self.read(0x08).await?);
             loopbben &= !LOOBBBEN_MASK;
-            lben_lbrf &= !(LBRFEN_MASK | LBEN_MASK);
+            lben_lbrf
+                .remove(LoopbackFlags::BASEBAND | LoopbackFlags::from_bits_retain(LBRFEN_MASK));
             match mode {
                 Loopback::None => {}
                 Loopback::BbTxlpfRxvga2 => {
                     loopbben |= LOOPBBEN_TXLPF;
-                    lben_lbrf |= LBEN_VGA2IN;
+                    lben_lbrf.insert(LoopbackFlags::VGA2_INPUT);
                 }
                 Loopback::BbTxvga1Rxvga2 => {
                     loopbben |= LOOPBBEN_TXVGA;
-                    lben_lbrf |= LBEN_VGA2IN;
+                    lben_lbrf.insert(LoopbackFlags::VGA2_INPUT);
                 }
                 Loopback::BbTxlpfRxlpf => {
                     loopbben |= LOOPBBEN_TXLPF;
-                    lben_lbrf |= LBEN_LPFIN;
+                    lben_lbrf.insert(LoopbackFlags::LPF_INPUT);
                 }
                 Loopback::BbTxvga1Rxlpf => {
                     loopbben |= LOOPBBEN_TXVGA;
-                    lben_lbrf |= LBEN_LPFIN;
+                    lben_lbrf.insert(LoopbackFlags::LPF_INPUT);
                 }
                 Loopback::Lna1 => {
-                    lben_lbrf |= LBRFEN_LNA1;
+                    lben_lbrf.insert(LoopbackFlags::from_bits_retain(LBRFEN_LNA1));
                 }
                 Loopback::Lna2 => {
-                    lben_lbrf |= LBRFEN_LNA2;
+                    lben_lbrf.insert(LoopbackFlags::from_bits_retain(LBRFEN_LNA2));
                 }
                 Loopback::Lna3 => {
-                    lben_lbrf |= LBRFEN_LNA3;
+                    lben_lbrf.insert(LoopbackFlags::from_bits_retain(LBRFEN_LNA3));
                 }
                 _ => Err(Error::Unsupported("loopback mode"))?,
             }
             self.write(0x46, loopbben).await?;
-            self.write(0x08, lben_lbrf).await
+            self.write(0x08, lben_lbrf.bits()).await
         })
     }
 
@@ -201,13 +220,9 @@ impl<'a> Lms6002d<'a> {
         enable: bool,
     ) -> impl MaybeFuture<Output = crate::Result<()>> {
         Op::new(async move {
-            let mut regval = self.read(0x0b).await?;
-            if enable {
-                regval |= 1;
-            } else {
-                regval &= !1;
-            }
-            self.write(0x0b, regval).await
+            let mut regval = TopPowerFlags::from_bits_retain(self.read(0x0b).await?);
+            regval.set(TopPowerFlags::RF_LOOPBACK, enable);
+            self.write(0x0b, regval.bits()).await
         })
     }
 
@@ -251,7 +266,7 @@ impl<'a> Lms6002d<'a> {
                     }
                     self.rxvga2_enable(true).await?;
                     let mut regval = self.read(0x25).await?;
-                    regval &= !0x03;
+                    regval &= !PLL_OUTPUT_SELECT_MASK;
                     regval |= u8::from(lms_lna);
                     self.write(0x25, regval).await?;
                     self.select_lna(lms_lna).await?;

@@ -36,6 +36,36 @@ fn response_requires_matching_family_direction_and_success() {
 }
 
 #[test]
+fn flags_preserve_unknown_bits_without_changing_response_validation() {
+    for (raw, write, success) in [
+        (0x00, false, false),
+        (0x01, true, false),
+        (0x02, false, true),
+        (0x03, true, true),
+        (0xfc, false, false),
+        (0xfd, true, false),
+        (0xfe, false, true),
+        (0xff, true, true),
+    ] {
+        let mut response = [
+            0x43, 1, raw, 0, 0x12, 0x78, 0x56, 0x34, 0x12, 0, 0, 0, 0, 0, 0, 0,
+        ];
+        let packet = NiosPkt::<u8, u32>::new(&mut response).unwrap();
+        assert_eq!(packet.flags().bits(), raw);
+        assert_eq!(packet.flags().contains(NiosPktFlags::WRITE), write);
+        assert_eq!(packet.is_success(), success);
+        assert_eq!(
+            nios_decode_read::<u8, u32>(&response).is_ok(),
+            !write && success
+        );
+        assert_eq!(
+            nios_decode_write::<u8, u32>(&response).is_ok(),
+            write && success
+        );
+    }
+}
+
+#[test]
 fn preparing_a_request_clears_stale_data_and_reserved_fields() {
     let mut bytes = [0xFF; 16];
     NiosPkt::<u8, u8>::new(&mut bytes)
@@ -68,7 +98,7 @@ fn packet_from_slice() {
     let packet = NiosPkt::<u8, u8>::new(&mut buf).unwrap();
 
     assert_eq!(0x0, packet.target());
-    assert_eq!(NiosPktFlags::Read, packet.flags());
+    assert_eq!(NiosPktFlags::empty(), packet.flags());
     assert_eq!(0x0, packet.addr());
     assert_eq!(0x0, packet.data());
 }
@@ -84,7 +114,7 @@ fn packet8x8_new() {
     packet.prepare_write(target_id, addr, data);
     let packet = NiosPkt::<u8, u8>::new(&mut buf).unwrap();
     assert_eq!(target_id, packet.target());
-    assert_eq!(NiosPktFlags::Write, packet.flags());
+    assert_eq!(NiosPktFlags::WRITE, packet.flags());
     assert_eq!(addr, packet.addr());
     assert_eq!(data, packet.data());
 }

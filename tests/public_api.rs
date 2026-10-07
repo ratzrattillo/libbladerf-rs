@@ -70,36 +70,26 @@ fn assert_send<T: Send>(_: &T) {}
 fn maybe_future<T>(_: &impl MaybeFuture<Output = T>) {}
 
 #[test]
-fn gpio_flags_and_numeric_aliases_are_public() {
-    use libbladerf_rs::bladerf1::board;
-    use libbladerf_rs::bladerf1::hardware::lms6002d;
+fn flag_types_are_public() {
+    use libbladerf_rs::protocol::nios::NiosPktFlags;
 
     fn flags<T: Copy + Default + Eq + std::hash::Hash + std::fmt::Debug + Send + Sync>() {}
     flags::<GpioFlags>();
+    flags::<NiosPktFlags>();
+    assert_eq!(NiosPktFlags::WRITE.bits(), 0x01);
+    assert_eq!(NiosPktFlags::SUCCESS.bits(), 0x02);
+    assert_eq!(NiosPktFlags::all().bits(), u8::MAX);
     assert_eq!(GpioFlags::all().bits(), u32::MAX);
-    let small_dma: u16 = board::BLADERF_GPIO_FEATURE_SMALL_DMA_XFER;
-    assert_eq!(u32::from(small_dma), GpioFlags::SMALL_DMA_XFER.bits());
-    let packet: u32 = board::sample_format::BLADERF_GPIO_PACKET;
-    assert_eq!(packet, GpioFlags::PACKET.bits());
-    assert_eq!(
-        board::stream::BLADERF_GPIO_TIMESTAMP,
-        GpioFlags::TIMESTAMP.bits()
-    );
-    assert_eq!(
-        board::BLADERF_GPIO_TIMESTAMP_DIV2,
-        GpioFlags::TIMESTAMP_DIV2.bits()
-    );
-    assert_eq!(
-        board::BLADERF_GPIO_8BIT_MODE,
-        GpioFlags::EIGHT_BIT_MODE.bits()
-    );
-    assert_eq!(
-        board::BLADERF_GPIO_HIGHLY_PACKED_MODE,
-        GpioFlags::HIGHLY_PACKED_MODE.bits()
-    );
-    let low_band: u8 = lms6002d::LMS_FREQ_FLAGS_LOW_BAND;
-    let force_vcocap: u8 = lms6002d::LMS_FREQ_FLAGS_FORCE_VCOCAP;
-    assert_eq!((low_band, force_vcocap), (1, 2));
+    assert_eq!(GpioFlags::LMS_RESET_N.bits(), 0x0000_0001);
+    assert_eq!(GpioFlags::LMS_RX_ENABLE.bits(), 0x0000_0002);
+    assert_eq!(GpioFlags::LMS_TX_ENABLE.bits(), 0x0000_0004);
+    assert_eq!(GpioFlags::SMALL_DMA_XFER.bits(), 0x0000_0080);
+    assert_eq!(GpioFlags::TIMESTAMP.bits(), 0x0001_0000);
+    assert_eq!(GpioFlags::TIMESTAMP_DIV2.bits(), 0x0002_0000);
+    assert_eq!(GpioFlags::AGC_ENABLE.bits(), 0x0004_0000);
+    assert_eq!(GpioFlags::PACKET.bits(), 0x0008_0000);
+    assert_eq!(GpioFlags::EIGHT_BIT_MODE.bits(), 0x0010_0000);
+    assert_eq!(GpioFlags::HIGHLY_PACKED_MODE.bits(), 0x0020_0000);
 }
 
 #[allow(dead_code)]

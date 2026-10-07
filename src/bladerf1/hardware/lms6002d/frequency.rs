@@ -8,11 +8,12 @@
 //! See the LMS6002D programming guide for register-level detail.
 
 use crate::bladerf1::hardware::lms6002d::Band;
+use crate::bladerf1::hardware::lms6002d::gain::TxPowerDownFlags;
+use crate::bladerf1::hardware::lms6002d::loopback::LoopbackFlags;
 use crate::bladerf1::hardware::lms6002d::{
-    LMS_FREQ_XB_200_ENABLE, LMS_FREQ_XB_200_FILTER_SW_SHIFT, LMS_FREQ_XB_200_MODULE_RX,
-    LMS_FREQ_XB_200_PATH_SHIFT, LmsFreqFlags, VCOCAP_EST_MIN, VCOCAP_EST_RANGE,
-    VCOCAP_MAX_LOW_HIGH, VCOCAP_MAX_VALUE, VTUNE_DELAY_LARGE, VTUNE_DELAY_SMALL,
-    VTUNE_MAX_ITERATIONS, VcoState,
+    ClockFlags, LMS_FREQ_XB_200_FILTER_SW_SHIFT, LMS_FREQ_XB_200_PATH_SHIFT, LmsFreqFlags,
+    VCOCAP_EST_MIN, VCOCAP_EST_RANGE, VCOCAP_MAX_LOW_HIGH, VCOCAP_MAX_VALUE, VTUNE_DELAY_LARGE,
+    VTUNE_DELAY_SMALL, VTUNE_MAX_ITERATIONS, VcoState, Xb200RetuneFlags,
 };
 use crate::channel::Channel;
 use crate::error::Error;
@@ -26,6 +27,48 @@ pub const BLADERF_FREQUENCY_MIN: u32 = 237_500_000;
 /// Maximum supported frequency in Hz.
 pub const BLADERF_FREQUENCY_MAX: u32 = 3_800_000_000;
 const LMS_REFERENCE_HZ: u32 = 38_400_000;
+const CHARGE_PUMP_CURRENT_MASK: u8 = 0x1f;
+const CHARGE_PUMP_CURRENT: u8 = 0x0c;
+const CHARGE_PUMP_OFFSET_CURRENT: u8 = 0x03;
+const PLL_FREQSEL_SHIFT: u8 = 2;
+const PLL_FREQSEL_MASK: u8 = 0b11_1111 << PLL_FREQSEL_SHIFT;
+pub(crate) const PLL_OUTPUT_SELECT_MASK: u8 = 0b11;
+const PLL_OUTPUT_LOW_BAND: u8 = 0b01;
+const PLL_OUTPUT_HIGH_BAND: u8 = 0b10;
+
+bitflags::bitflags! {
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+    struct PllAddressFlags: u8 {
+        const WRITE = 1 << 7;
+        const _ = !0;
+    }
+}
+
+impl Xb200RetuneFlags {
+    fn from_expansion_gpio(channel: Channel, gpio: u32) -> Self {
+        const RX_PATH_SHIFT: u32 = 4;
+        const TX_PATH_SHIFT: u32 = 2;
+        const RX_FILTER_SHIFT: u32 = 28;
+        const TX_FILTER_SHIFT: u32 = 26;
+        const SELECT_MASK: u32 = 0b11;
+
+        let mut flags = Self::ENABLE;
+        let fields = match channel {
+            Channel::Rx => {
+                flags.insert(Self::MODULE_RX);
+                (((gpio >> RX_PATH_SHIFT) & SELECT_MASK) << LMS_FREQ_XB_200_PATH_SHIFT)
+                    | (((gpio >> RX_FILTER_SHIFT) & SELECT_MASK) << LMS_FREQ_XB_200_FILTER_SW_SHIFT)
+            }
+            Channel::Tx => {
+                (((gpio >> TX_PATH_SHIFT) & SELECT_MASK) << LMS_FREQ_XB_200_FILTER_SW_SHIFT)
+                    | (((gpio >> TX_FILTER_SHIFT) & SELECT_MASK) << LMS_FREQ_XB_200_PATH_SHIFT)
+            }
+        };
+        flags.insert(Self::from_bits_retain(fields as u8));
+        flags
+    }
+}
+
 /// Pre-calculated PLL tuning parameters for fast frequency retuning.
 ///
 /// Contains the NINT/NFRAC divider values, VCOCAP estimate, and XB-200 GPIO settings
@@ -330,16 +373,16 @@ impl<'a> Lms6002d<'a> {
         Op::new(async move {
             let base: u8 = if channel == Channel::Rx { 0x20 } else { 0x10 };
             let mut data = self.read(base + 6).await?;
-            data &= !0x1f;
-            data |= 0x0c;
+            data &= !CHARGE_PUMP_CURRENT_MASK;
+            data |= CHARGE_PUMP_CURRENT;
             self.write(base + 6, data).await?;
             let mut data = self.read(base + 7).await?;
-            data &= !0x1f;
-            data |= 0x03;
+            data &= !CHARGE_PUMP_CURRENT_MASK;
+            data |= CHARGE_PUMP_OFFSET_CURRENT;
             self.write(base + 7, data).await?;
             let mut data = self.read(base + 8).await?;
-            data &= !0x1f;
-            data |= 0x03;
+            data &= !CHARGE_PUMP_CURRENT_MASK;
+            data |= CHARGE_PUMP_OFFSET_CURRENT;
             self.write(base + 8, data).await
         })
     }
@@ -392,19 +435,18 @@ impl<'a> Lms6002d<'a> {
     ) -> impl MaybeFuture<Output = crate::Result<()>> {
         Op::new(async move {
             let base: u8 = if channel == Channel::Rx { 0x20 } else { 0x10 };
-            let pll_base: u8 = base | 0x80;
+            let pll_base = base | PllAddressFlags::WRITE.bits();
             f.vcocap_result = 0xff;
-            let mut data = self.read(0x09).await?;
-            data |= 0x05;
-            self.write(0x09, data).await?;
+            let mut data = ClockFlags::from_bits_retain(self.read(0x09).await?);
+            data.insert(ClockFlags::TX_DSM | ClockFlags::RX_DSM);
+            self.write(0x09, data.bits()).await?;
             let vcocap_reg_state = self.read(base + 9).await?;
-            let vcocap_reg_state = vcocap_reg_state & !0x3f;
+            let vcocap_reg_state = vcocap_reg_state & !VCOCAP_MAX_VALUE;
             self.write_vcocap(base, f.vcocap, vcocap_reg_state).await?;
             let low_band = f.flags.contains(LmsFreqFlags::LOW_BAND);
             let lben_lbrfen = self.read(0x08).await?;
             let loopbben = self.read(0x46).await?;
-            let lb_enabled = matches!(lben_lbrfen & 0x7, 1..=3)
-                || ((lben_lbrfen & 0x70) != 0 && (loopbben & 0x0c) != 0);
+            let lb_enabled = LoopbackFlags::from_bits_retain(lben_lbrfen).is_enabled(loopbben);
             self.write_pll_config(channel, f.freqsel.bits(), low_band, lb_enabled)
                 .await?;
             let mut freq_data = [0u8; 4];
@@ -453,17 +495,17 @@ impl<'a> Lms6002d<'a> {
             let data = self.read(base + 3).await?;
             nfrac |= data as u32;
             let data = self.read(base + 5).await?;
-            if ((data >> 2) & 7) < 4 {
+            if ((data >> PLL_FREQSEL_SHIFT) & 7) < 4 {
                 return Err(crate::error::Error::NotInitialized);
             }
-            let freqsel = FrequencySelect::try_from(data >> 2)
+            let freqsel = FrequencySelect::try_from(data >> PLL_FREQSEL_SHIFT)
                 .map_err(|_| Error::BoardState("invalid PLL frequency selector"))?;
             let data = self.read(base + 9).await?;
             Ok(LmsFreq {
                 freqsel,
                 nint,
                 nfrac,
-                vcocap: data & 0x3f,
+                vcocap: data & VCOCAP_MAX_VALUE,
                 flags: LmsFreqFlags::empty(),
                 xb_gpio: 0,
                 vcocap_result: 0,
@@ -477,13 +519,9 @@ impl<'a> Lms6002d<'a> {
         enable: bool,
     ) -> impl MaybeFuture<Output = crate::Result<()>> {
         Op::new(async move {
-            let mut data = self.read(0x44).await?;
-            if enable {
-                data &= !(1 << 0);
-            } else {
-                data |= 1;
-            }
-            self.write(0x44, data).await
+            let mut data = TxPowerDownFlags::from_bits_retain(self.read(0x44).await?);
+            data.set(TxPowerDownFlags::PEAK_DETECTOR, !enable);
+            self.write(0x44, data.bits()).await
         })
     }
 
@@ -496,20 +534,7 @@ impl<'a> Lms6002d<'a> {
             let f = &self.get_frequency(channel).await?;
             let xb_gpio = if xb200_enabled {
                 let val = self.read_expansion_gpio().await?;
-                let mut gpio = LMS_FREQ_XB_200_ENABLE;
-                match channel {
-                    Channel::Rx => {
-                        gpio |= LMS_FREQ_XB_200_MODULE_RX;
-                        gpio |= (((val & 0x30) >> 4) << LMS_FREQ_XB_200_PATH_SHIFT) as u8;
-                        gpio |=
-                            (((val & 0x30000000) >> 28) << LMS_FREQ_XB_200_FILTER_SW_SHIFT) as u8;
-                    }
-                    Channel::Tx => {
-                        gpio |= (((val & 0x0C) >> 2) << LMS_FREQ_XB_200_FILTER_SW_SHIFT) as u8;
-                        gpio |= (((val & 0x0C000000) >> 26) << LMS_FREQ_XB_200_PATH_SHIFT) as u8;
-                    }
-                }
-                gpio
+                Xb200RetuneFlags::from_expansion_gpio(channel, val).bits()
             } else {
                 0
             };
@@ -538,10 +563,14 @@ impl<'a> Lms6002d<'a> {
             let addr = if channel == Channel::Tx { 0x15 } else { 0x25 };
             let mut regval = self.read(addr).await?;
             if !lb_enabled {
-                let selout = if low_band { 1 } else { 2 };
-                regval = (freqsel << 2) | selout;
+                let selout = if low_band {
+                    PLL_OUTPUT_LOW_BAND
+                } else {
+                    PLL_OUTPUT_HIGH_BAND
+                };
+                regval = (freqsel << PLL_FREQSEL_SHIFT) | selout;
             } else {
-                regval = (regval & !0xfc) | (freqsel << 2);
+                regval = (regval & !PLL_FREQSEL_MASK) | (freqsel << PLL_FREQSEL_SHIFT);
             }
             self.write(addr, regval).await
         })
@@ -771,6 +800,23 @@ impl<'a> Lms6002d<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn xb200_retune_flags_pack_the_channel_specific_switch_fields() {
+        for (channel, gpio, expected) in [
+            (Channel::Rx, 0, 0xc0),
+            (Channel::Tx, 0, 0x80),
+            (Channel::Rx, 0x2000_0010, 0xe4),
+            (Channel::Tx, 0x0400_0008, 0xa4),
+            (Channel::Rx, u32::MAX, 0xfc),
+            (Channel::Tx, u32::MAX, 0xbc),
+        ] {
+            assert_eq!(
+                Xb200RetuneFlags::from_expansion_gpio(channel, gpio).bits(),
+                expected
+            );
+        }
+    }
 
     #[test]
     fn quick_tunes_reject_every_unknown_flag_combination() {

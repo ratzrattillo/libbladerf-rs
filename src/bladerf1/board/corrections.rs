@@ -22,6 +22,16 @@ use crate::error::Result;
 use crate::maybe_future::Op;
 use nusb::MaybeFuture;
 use std::time::Duration;
+
+bitflags::bitflags! {
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+    struct TxMetadataFlags: u32 {
+        const BURST_START = 1 << 0;
+        const BURST_END = 1 << 1;
+        const NOW = 1 << 2;
+    }
+}
+
 /// Converts a duration in milliseconds to a sample count at the given sample rate.
 #[macro_export]
 macro_rules! ms_to_samples {
@@ -96,9 +106,6 @@ impl RfLinkSession<'_> {
     /// Sample rate applied to the TX channel for the dummy burst that primes
     /// the LMS6002D TX path before TX LPF DC calibration.
     const TX_LPF_DUMMY_TX_RATE: u32 = 3_000_000;
-    /// Metadata flags for the one-shot dummy TX burst: burst start, burst
-    /// end, and transmit immediately.
-    const TX_LPF_DUMMY_TX_FLAGS: u32 = (1 << 0) | (1 << 1) | (1 << 2);
     /// Deadline for the dummy TX transfer to complete.
     const TX_LPF_DUMMY_TX_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -147,9 +154,10 @@ impl RfLinkSession<'_> {
             tx.start(self).await?;
             let mut buffer = tx.get_buffer(Some(Self::TX_LPF_DUMMY_TX_TIMEOUT)).await?;
             buffer.extend_fill(message_size, 0);
-            buffer[..METADATA_HEADER_SIZE].copy_from_slice(
-                &MetadataHeader::new(0, 0, 0, Self::TX_LPF_DUMMY_TX_FLAGS).to_bytes(),
-            );
+            let flags =
+                TxMetadataFlags::BURST_START | TxMetadataFlags::BURST_END | TxMetadataFlags::NOW;
+            buffer[..METADATA_HEADER_SIZE]
+                .copy_from_slice(&MetadataHeader::new(0, 0, 0, flags.bits()).to_bytes());
             tx.submit(buffer, message_size)?;
             tx.wait_completion(Some(Self::TX_LPF_DUMMY_TX_TIMEOUT))
                 .await

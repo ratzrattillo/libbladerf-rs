@@ -10,31 +10,29 @@ use crate::protocol::nios::NiosPacketError;
 use std::fmt::Debug;
 use std::marker::PhantomData;
 
-/// NIOS packet read/write flag.
-#[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NiosPktFlags {
-    /// Read operation.
-    Read = 0x0,
-    /// Write operation.
-    Write = 0x1,
-}
-impl From<u8> for NiosPktFlags {
-    fn from(v: u8) -> Self {
-        if (v & 0x01) != 0 {
-            NiosPktFlags::Write
-        } else {
-            NiosPktFlags::Read
-        }
+bitflags::bitflags! {
+    /// NIOS packet operation and response-status flags.
+    ///
+    /// A clear [`Self::WRITE`] bit denotes a read. Unnamed wire bits are retained.
+    /// [`Self::all`] covers the entire byte, including unnamed bits.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use libbladerf_rs::protocol::nios::NiosPktFlags;
+    ///
+    /// let response = NiosPktFlags::from_bits_retain(0x83);
+    /// assert!(response.contains(NiosPktFlags::WRITE | NiosPktFlags::SUCCESS));
+    /// assert_eq!(response.bits(), 0x83);
+    /// ```
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+    pub struct NiosPktFlags: u8 {
+        /// Selects a write operation; a clear bit selects a read.
+        const WRITE = 1 << 0;
+        /// Indicates a successful response.
+        const SUCCESS = 1 << 1;
+        const _ = !0;
     }
-}
-
-/// NIOS packet status flag.
-#[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NiosPktStatus {
-    /// The operation completed successfully.
-    Success = 0x02,
 }
 
 /// A numeric type supported as a NIOS packet address or data field.
@@ -158,12 +156,12 @@ impl<'a, A: NiosNum, D: NiosNum> NiosPkt<'a, A, D> {
     }
     /// Populates the packet as a read request.
     ///
-    /// Sets the magic byte, target, read flag, and address field.
+    /// Sets the magic byte, target, and address, and clears the flags byte.
     pub fn prepare_read(&mut self, target: u8, addr: A) {
         self.buf.fill(0);
         self.set_magic();
         self.set_target(target);
-        self.set_flags(NiosPktFlags::Read);
+        self.set_flags(NiosPktFlags::empty());
         self.set_addr(addr);
     }
     /// Populates the packet as a write request.
@@ -173,7 +171,7 @@ impl<'a, A: NiosNum, D: NiosNum> NiosPkt<'a, A, D> {
         self.buf.fill(0);
         self.set_magic();
         self.set_target(target);
-        self.set_flags(NiosPktFlags::Write);
+        self.set_flags(NiosPktFlags::WRITE);
         self.set_addr(addr);
         self.set_data(data);
     }
@@ -184,7 +182,7 @@ impl<'a, A: NiosNum, D: NiosNum> NiosPkt<'a, A, D> {
         self.buf[Self::IDX_TARGET] = target;
     }
     fn set_flags(&mut self, flags: NiosPktFlags) {
-        self.buf[Self::IDX_FLAGS] = flags as u8;
+        self.buf[Self::IDX_FLAGS] = flags.bits();
     }
     fn set_addr(&mut self, addr: A) {
         self.buf[Self::IDX_ADDR..Self::IDX_ADDR + A::SIZE]
@@ -198,9 +196,9 @@ impl<'a, A: NiosNum, D: NiosNum> NiosPkt<'a, A, D> {
     pub fn target(&self) -> u8 {
         self.buf[Self::IDX_TARGET]
     }
-    /// Returns the read/write flags of the packet.
+    /// Returns all operation and status flags, retaining unnamed wire bits.
     pub fn flags(&self) -> NiosPktFlags {
-        self.buf[Self::IDX_FLAGS].into()
+        NiosPktFlags::from_bits_retain(self.buf[Self::IDX_FLAGS])
     }
     /// Returns the address field of the packet.
     pub fn addr(&self) -> A {
@@ -221,7 +219,7 @@ impl<'a, A: NiosNum, D: NiosNum> NiosPkt<'a, A, D> {
     }
     /// Returns `true` if the success status flag is set in the packet.
     pub fn is_success(&self) -> bool {
-        (self.buf[Self::IDX_FLAGS] & (NiosPktStatus::Success as u8)) != 0
+        self.flags().contains(NiosPktFlags::SUCCESS)
     }
 
     pub(crate) fn validate_response(buf: &[u8], flags: NiosPktFlags) -> Result<()> {
@@ -236,13 +234,15 @@ impl<'a, A: NiosNum, D: NiosNum> NiosPkt<'a, A, D> {
             }
             .into());
         }
-        if NiosPktFlags::from(buf[Self::IDX_FLAGS]) != flags {
+        let response = NiosPktFlags::from_bits_retain(buf[Self::IDX_FLAGS]);
+        if response.contains(NiosPktFlags::WRITE) != flags.contains(NiosPktFlags::WRITE) {
             return Err(NiosPacketError::ResponseMismatch.into());
         }
-        if (buf[Self::IDX_FLAGS] & NiosPktStatus::Success as u8) == 0 {
-            return Err(match flags {
-                NiosPktFlags::Read => NiosPacketError::ReadFailed,
-                NiosPktFlags::Write => NiosPacketError::WriteFailed,
+        if !response.contains(NiosPktFlags::SUCCESS) {
+            return Err(if flags.contains(NiosPktFlags::WRITE) {
+                NiosPacketError::WriteFailed
+            } else {
+                NiosPacketError::ReadFailed
             }
             .into());
         }

@@ -14,6 +14,27 @@ use crate::protocol::nios::packet_generic::NiosPacket;
 /// Magic byte identifying a retune packet.
 pub const NIOS_PKT_RETUNE_MAGIC: u8 = 0x54;
 
+bitflags::bitflags! {
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+    struct RetuneChannelFlags: u8 {
+        const RX = 1 << 6;
+        const TX = 1 << 7;
+    }
+
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+    struct RetuneTuneFlags: u8 {
+        const QUICK_TUNE = 1 << 6;
+        const LOW_BAND = 1 << 7;
+        const _ = !0;
+    }
+
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+    struct RetuneResponseFlags: u8 {
+        const DURATION_VCOCAP_VALID = 1 << 0;
+        const SUCCESS = 1 << 1;
+    }
+}
+
 /// Builder for a NIOS retune request packet.
 ///
 /// Wraps a 16-byte buffer and provides `prepare()` to populate all
@@ -40,10 +61,6 @@ impl<'a> NiosPktRetuneRequest<'a> {
     const IDX_FREQSEL: usize = 13;
     const IDX_BANDSEL: usize = 14;
     const IDX_XB_GPIO: usize = 15;
-    const FLAG_RX: u8 = 1 << 6;
-    const FLAG_TX: u8 = 1 << 7;
-    const FLAG_QUICK_TUNE: u8 = 1 << 6;
-    const FLAG_LOW_BAND: u8 = 1 << 7;
     const MASK_NFRAC: u32 = 0x7fffff;
     const MASK_FREQSEL: u8 = 0x3f;
     const MASK_VCOCAP: u8 = 0x3f;
@@ -116,11 +133,11 @@ impl<'a> NiosPktRetuneRequest<'a> {
         if freqsel > Self::MASK_FREQSEL {
             return Err(NiosPacketError::FreqselOverflow(freqsel, Self::MASK_FREQSEL).into());
         }
-        self.buf[Self::IDX_FREQSEL] = freqsel
-            | match channel {
-                Channel::Rx => Self::FLAG_RX,
-                Channel::Tx => Self::FLAG_TX,
-            };
+        let flags = match channel {
+            Channel::Rx => RetuneChannelFlags::RX,
+            Channel::Tx => RetuneChannelFlags::TX,
+        };
+        self.buf[Self::IDX_FREQSEL] = freqsel | flags.bits();
         Ok(())
     }
     fn set_vcocap(&mut self, vcocap: u8) -> Result<()> {
@@ -132,16 +149,14 @@ impl<'a> NiosPktRetuneRequest<'a> {
         Ok(())
     }
     fn set_band(&mut self, band: Band) {
-        match band {
-            Band::Low => self.buf[Self::IDX_BANDSEL] |= Self::FLAG_LOW_BAND,
-            Band::High => self.buf[Self::IDX_BANDSEL] &= !Self::FLAG_LOW_BAND,
-        }
+        let mut flags = RetuneTuneFlags::from_bits_retain(self.buf[Self::IDX_BANDSEL]);
+        flags.set(RetuneTuneFlags::LOW_BAND, band == Band::Low);
+        self.buf[Self::IDX_BANDSEL] = flags.bits();
     }
     fn set_tune(&mut self, tune: Tune) {
-        match tune {
-            Tune::Quick => self.buf[Self::IDX_BANDSEL] |= Self::FLAG_QUICK_TUNE,
-            Tune::Normal => self.buf[Self::IDX_BANDSEL] &= !Self::FLAG_QUICK_TUNE,
-        }
+        let mut flags = RetuneTuneFlags::from_bits_retain(self.buf[Self::IDX_BANDSEL]);
+        flags.set(RetuneTuneFlags::QUICK_TUNE, tune == Tune::Quick);
+        self.buf[Self::IDX_BANDSEL] = flags.bits();
     }
     fn set_xb_gpio(&mut self, xb_gpio: u8) {
         self.buf[Self::IDX_XB_GPIO] = xb_gpio;
@@ -173,18 +188,22 @@ impl<'a> NiosPktRetuneRequest<'a> {
     }
     /// Returns the band (high/low) selection of the packet.
     pub fn band(&self) -> Band {
-        if (self.buf[Self::IDX_BANDSEL] & Self::FLAG_LOW_BAND) == 0 {
-            Band::High
-        } else {
+        if RetuneTuneFlags::from_bits_retain(self.buf[Self::IDX_BANDSEL])
+            .contains(RetuneTuneFlags::LOW_BAND)
+        {
             Band::Low
+        } else {
+            Band::High
         }
     }
     /// Returns the tune mode (quick/normal) of the packet.
     pub fn tune(&self) -> Tune {
-        if (self.buf[Self::IDX_BANDSEL] & Self::FLAG_QUICK_TUNE) == 0 {
-            Tune::Normal
-        } else {
+        if RetuneTuneFlags::from_bits_retain(self.buf[Self::IDX_BANDSEL])
+            .contains(RetuneTuneFlags::QUICK_TUNE)
+        {
             Tune::Quick
+        } else {
+            Tune::Normal
         }
     }
     /// Returns the expansion board GPIO value of the packet.
@@ -207,8 +226,6 @@ impl<'a> NiosPktRetuneResponse<'a> {
     const IDX_VCOCAP: usize = 9;
     const IDX_FLAGS: usize = 10;
     const MASK_VCOCAP: u8 = 0x3f;
-    const FLAG_DURATION_VCOCAP_VALID: u8 = 0x1;
-    const FLAG_SUCCESS: u8 = 0x2;
     /// Creates a new retune response decoder from a buffer.
     ///
     /// Requires exactly 16 bytes and the retune packet magic.
@@ -235,7 +252,8 @@ impl<'a> NiosPktRetuneResponse<'a> {
     }
     /// Returns `true` if the duration and vcocap fields are valid.
     pub fn vcocap_valid(&self) -> bool {
-        (self.buf[Self::IDX_FLAGS] & Self::FLAG_DURATION_VCOCAP_VALID) != 0
+        RetuneResponseFlags::from_bits_retain(self.buf[Self::IDX_FLAGS])
+            .contains(RetuneResponseFlags::DURATION_VCOCAP_VALID)
     }
     /// Returns the VCO capacitor value from the retune response.
     pub fn vcocap(&self) -> u8 {
@@ -243,6 +261,7 @@ impl<'a> NiosPktRetuneResponse<'a> {
     }
     /// Returns `true` if the retune operation succeeded.
     pub fn is_success(&self) -> bool {
-        (self.buf[Self::IDX_FLAGS] & Self::FLAG_SUCCESS) != 0
+        RetuneResponseFlags::from_bits_retain(self.buf[Self::IDX_FLAGS])
+            .contains(RetuneResponseFlags::SUCCESS)
     }
 }

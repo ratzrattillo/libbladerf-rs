@@ -17,6 +17,43 @@ use crate::protocol::nios::NiosPkt8x8Target;
 pub use filters::LpfMode;
 use gain::{LmsLowNoiseAmplifier, LmsPowerAmplifier};
 use nusb::MaybeFuture;
+
+bitflags::bitflags! {
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+    pub(crate) struct TopControlFlags: u8 {
+        const FOUR_WIRE = 1 << 1;
+        const RX_ENABLE = 1 << 2;
+        const TX_ENABLE = 1 << 3;
+        const ENABLE = 1 << 4;
+        const RESET_N = 1 << 5;
+        const _ = !0;
+    }
+
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+    pub(crate) struct ClockFlags: u8 {
+        const TX_DSM = 1 << 0;
+        const TX_LPF_CAL = 1 << 1;
+        const RX_DSM = 1 << 2;
+        const RX_LPF_CAL = 1 << 3;
+        const RX_VGA2_CAL = 1 << 4;
+        const LPF_CAL = 1 << 5;
+        const _ = !0;
+    }
+
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+    pub(crate) struct RxFrontEndFlags: u8 {
+        const ENABLE = 1 << 0;
+        const TEST_MODE = 1 << 1;
+        const _ = !0;
+    }
+
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+    struct TxFrontEndFlags: u8 {
+        const ENABLE = 1 << 1;
+        const _ = !0;
+    }
+}
+
 /// Frequency band: Low (<1.5 GHz) or High (>=1.5 GHz).
 #[derive(PartialEq, Eq, Debug, Clone, Copy)]
 pub enum Band {
@@ -95,14 +132,15 @@ impl LmsFreqFlags {
     }
 }
 
-/// Frequency flag indicating low band operation.
-pub const LMS_FREQ_FLAGS_LOW_BAND: u8 = LmsFreqFlags::LOW_BAND.bits();
-/// Frequency flag to force use of estimated VCOCAP without searching.
-pub const LMS_FREQ_FLAGS_FORCE_VCOCAP: u8 = LmsFreqFlags::FORCE_VCOCAP.bits();
-/// XB-200 expansion GPIO: enable bit.
-pub const LMS_FREQ_XB_200_ENABLE: u8 = 1 << 7;
-/// XB-200 expansion GPIO: RX module bit.
-pub const LMS_FREQ_XB_200_MODULE_RX: u8 = 1 << 6;
+bitflags::bitflags! {
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+    pub(crate) struct Xb200RetuneFlags: u8 {
+        const ENABLE = 1 << 7;
+        const MODULE_RX = 1 << 6;
+        const _ = !0;
+    }
+}
+
 /// XB-200 expansion GPIO: filter switch mask.
 pub const LMS_FREQ_XB_200_FILTER_SW: u8 = 3 << 4;
 /// XB-200 expansion GPIO: filter switch bit shift.
@@ -175,8 +213,10 @@ impl<'a> Lms6002d<'a> {
     #[allow(dead_code)]
     pub(crate) fn soft_reset(&mut self) -> impl MaybeFuture<Output = Result<()>> {
         Op::new(async move {
-            self.write(0x05, 0x12).await?;
-            self.write(0x05, 0x32).await
+            let mut control = TopControlFlags::ENABLE | TopControlFlags::FOUR_WIRE;
+            self.write(0x05, control.bits()).await?;
+            control.insert(TopControlFlags::RESET_N);
+            self.write(0x05, control.bits()).await
         })
     }
 
@@ -186,18 +226,18 @@ impl<'a> Lms6002d<'a> {
         enable: bool,
     ) -> impl MaybeFuture<Output = Result<()>> {
         Op::new(async move {
-            let (addr, shift) = if channel == Channel::Tx {
-                (0x40u8, 1u8)
-            } else {
-                (0x70u8, 0u8)
-            };
-            let mut data = self.read(addr).await?;
-            if enable {
-                data |= 1 << shift;
-            } else {
-                data &= !(1 << shift);
+            match channel {
+                Channel::Tx => {
+                    let mut data = TxFrontEndFlags::from_bits_retain(self.read(0x40).await?);
+                    data.set(TxFrontEndFlags::ENABLE, enable);
+                    self.write(0x40, data.bits()).await
+                }
+                Channel::Rx => {
+                    let mut data = RxFrontEndFlags::from_bits_retain(self.read(0x70).await?);
+                    data.set(RxFrontEndFlags::ENABLE, enable);
+                    self.write(0x70, data.bits()).await
+                }
             }
-            self.write(addr, data).await
         })
     }
 

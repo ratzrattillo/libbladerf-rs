@@ -42,8 +42,11 @@ pub mod xb;
 use crate::bladerf1::GpioFlags;
 use crate::bladerf1::calibration::DcCalTable;
 use crate::bladerf1::hardware::dac161s055::Dac161s055;
-use crate::bladerf1::hardware::lms6002d::dc_calibration::DcCals;
-use crate::bladerf1::hardware::lms6002d::{Band, Lms6002d};
+use crate::bladerf1::hardware::lms6002d::dc_calibration::{
+    DcCals, LpfComparatorPowerDownFlags, RxVga2ComparatorPowerDownFlags,
+};
+use crate::bladerf1::hardware::lms6002d::gain::RxVga2Flags;
+use crate::bladerf1::hardware::lms6002d::{Band, Lms6002d, TopControlFlags};
 use crate::bladerf1::hardware::si5338::Si5338;
 use crate::bladerf1::hardware::spi_flash::FlashMeta;
 use crate::channel::Channel;
@@ -90,9 +93,8 @@ use nusb::DeviceInfo;
 use nusb::{Device, MaybeFuture, Speed};
 pub use rx_mux::RxMux;
 pub use stream::{
-    BLADERF_GPIO_8BIT_MODE, BLADERF_GPIO_HIGHLY_PACKED_MODE, BLADERF_GPIO_PACKET,
-    BLADERF_GPIO_TIMESTAMP, BLADERF_GPIO_TIMESTAMP_DIV2, METADATA_HEADER_SIZE, MetadataHeader,
-    RxStream, RxStreamBuilder, SampleFormat, TxStream, TxStreamBuilder,
+    METADATA_HEADER_SIZE, MetadataHeader, RxStream, RxStreamBuilder, SampleFormat, TxStream,
+    TxStreamBuilder,
 };
 
 /// Nuand BladeRF1 USB Vendor ID.
@@ -100,9 +102,6 @@ pub const BLADERF1_USB_VID: u16 = 0x2CF0;
 
 /// Nuand BladeRF1 USB Product ID.
 pub const BLADERF1_USB_PID: u16 = 0x5246;
-
-/// GPIO bit that enables small DMA transfers on Hi-Speed USB.
-pub const BLADERF_GPIO_FEATURE_SMALL_DMA_XFER: u16 = GpioFlags::SMALL_DMA_XFER.bits() as u16;
 
 #[cfg(not(target_os = "android"))]
 fn is_bladerf1(dev: &DeviceInfo) -> bool {
@@ -720,18 +719,35 @@ impl RfLinkSession<'_> {
                     "[*] Init - {}initializing device (GPIO={cfg:#04x})",
                     if force { "Force " } else { "" }
                 );
-                self.config_gpio_write(GpioFlags::from_bits_retain(0x57))
+                self.config_gpio_write(GpioFlags::for_initialization())
                     .await?;
                 self.lms().enable_rffe(Channel::Tx, false).await?;
                 self.lms().enable_rffe(Channel::Rx, false).await?;
-                self.lms().write(0x05, 0x3e).await?;
-                self.lms().write(0x47, 0x40).await?;
-                self.lms().write(0x59, 0x29).await?;
-                self.lms().write(0x64, 0x36).await?;
-                self.lms().write(0x79, 0x37).await?;
-                self.lms().set(0x3f, 0x80).await?;
-                self.lms().set(0x5f, 0x80).await?;
-                self.lms().set(0x6e, 0xc0).await?;
+                let control = TopControlFlags::RESET_N
+                    | TopControlFlags::ENABLE
+                    | TopControlFlags::TX_ENABLE
+                    | TopControlFlags::RX_ENABLE
+                    | TopControlFlags::FOUR_WIRE;
+                self.lms().write(0x05, control.bits()).await?;
+                const TX_SPURIOUS_EMISSIONS_CONFIG: u8 = 0x40;
+                const ADC_PERFORMANCE_CONFIG: u8 = 0x29;
+                const RX_VGA2_ADC_COMMON_MODE: u8 = 0b1101 << 2;
+                const LNA_HIGH_GAIN_CONFIG: u8 = 0x37;
+                self.lms().write(0x47, TX_SPURIOUS_EMISSIONS_CONFIG).await?;
+                self.lms().write(0x59, ADC_PERFORMANCE_CONFIG).await?;
+                self.lms()
+                    .write(0x64, RxVga2Flags::ENABLE.bits() | RX_VGA2_ADC_COMMON_MODE)
+                    .await?;
+                self.lms().write(0x79, LNA_HIGH_GAIN_CONFIG).await?;
+                self.lms()
+                    .set(0x3f, LpfComparatorPowerDownFlags::COMPARATOR.bits())
+                    .await?;
+                self.lms()
+                    .set(0x5f, LpfComparatorPowerDownFlags::COMPARATOR.bits())
+                    .await?;
+                self.lms()
+                    .set(0x6e, RxVga2ComparatorPowerDownFlags::BOTH.bits())
+                    .await?;
                 self.lms().config_charge_pumps(Channel::Tx).await?;
                 self.lms().config_charge_pumps(Channel::Rx).await?;
                 {

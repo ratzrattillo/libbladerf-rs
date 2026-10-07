@@ -1,6 +1,6 @@
 use super::{BulkEndpoint, require_length};
 use crate::error::{Error, Result};
-use crate::protocol::nios::NiosPacketError;
+use crate::protocol::nios::{NiosPacketError, NiosPktFlags};
 use nusb::transfer::Buffer;
 use std::time::Duration;
 
@@ -118,8 +118,9 @@ fn validate_reply(request: &[u8], response: &[u8]) -> Result<()> {
         0x54 => return Ok(()),
         _ => return Err(NiosPacketError::InvalidTypeCombination.into()),
     };
+    let changed_flags = NiosPktFlags::from_bits_retain(request[2] ^ response[2]);
     if request[1] != response[1]
-        || ((request[2] ^ response[2]) & 1) != 0
+        || changed_flags.contains(NiosPktFlags::WRITE)
         || request[4..4 + address_size] != response[4..4 + address_size]
     {
         return Err(NiosPacketError::ResponseMismatch.into());

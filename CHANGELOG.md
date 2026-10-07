@@ -2,8 +2,16 @@
 
 ### 🚜 Refactor
 
-- *(gpio)* [**breaking**] Use `bladerf1::GpioFlags` for config GPIO reads and writes. `config_gpio_modify` now accepts `FnOnce(&mut GpioFlags)`; mutate flags with `insert`, `remove`, or `set`. Use `from_bits_retain` and `bits` for raw register access.
-- *(tuning)* Represent validated LMS tuning flags with `bitflags`, preserving strict quick-tune validation and retune packet encoding.
+- *(gpio)* [**breaking**] Use `bladerf1::GpioFlags` for config GPIO reads and writes and remove the numeric `BLADERF_GPIO_*` aliases. `config_gpio_modify` now accepts `FnOnce(&mut GpioFlags)`; mutate flags with `insert`, `remove`, or `set`. Use `from_bits_retain` and `bits` for raw register access. Name the LMS reset/RX/TX bits and express initialization, band selection, and XB-200 mode through typed register operations.
+- *(tuning)* [**breaking**] Replace `LMS_FREQ_FLAGS_*`, `LMS_FREQ_XB_200_ENABLE`, and `LMS_FREQ_XB_200_MODULE_RX` with internal bitflags, preserving strict quick-tune validation and retune packet encoding.
+- *(protocol)* [**breaking**] Combine NIOS operation and success bits in `NiosPktFlags::{WRITE, SUCCESS}`; remove `NiosPktStatus`. Read requests use `NiosPktFlags::empty()`, and `flags()` retains the complete response byte. Retune packet flags also use internal bitflags.
+- *(hardware)* [**breaking**] Replace `LBEN_*` constants with internal loopback flags. Use typed flags for trigger registers, clock outputs, calibration bursts, expansion-board GPIO, and LMS clock/power/filter/calibration controls. Name encoded selector masks, charge-pump currents, and initialization presets from the hardware documentation.
+
+### 🐛 Bug Fixes
+
+- *(xb100)* Preserve all 32 GPIO bits in LED masks and require the full enabled LED pattern during detection, avoiding XB-200 filter-pin overlap.
+- *(xb200)* Reject automatic modes in direct filter-mux writes so they cannot overwrite adjacent GPIO fields. Replace the complete config GPIO expansion-mode selector when attaching.
+- *(xb300)* Normalize the power-detector GPIO bit to zero or one before assembling its ten-bit ADC word.
 
 ## [0.6.1] - 2026-10-03
 

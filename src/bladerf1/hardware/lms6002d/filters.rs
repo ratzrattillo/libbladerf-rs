@@ -8,6 +8,20 @@ use crate::maybe_future::Op;
 use crate::{Channel, Error};
 use nusb::MaybeFuture;
 
+bitflags::bitflags! {
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+    struct LpfControlFlags: u8 {
+        const ENABLE = 1 << 1;
+        const _ = !0;
+    }
+
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+    struct LpfTuningFlags: u8 {
+        const BYPASS = 1 << 6;
+        const _ = !0;
+    }
+}
+
 /// LPF operating mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LpfMode {
@@ -26,17 +40,13 @@ impl<'a> Lms6002d<'a> {
     ) -> impl MaybeFuture<Output = crate::Result<()>> {
         Op::new(async move {
             let addr = if channel == Channel::Rx { 0x54 } else { 0x34 };
-            let mut data = self.read(addr).await?;
-            if enable {
-                data |= 1 << 1;
-            } else {
-                data &= !(1 << 1);
-            }
-            self.write(addr, data).await?;
-            let mut data = self.read(addr + 1).await?;
-            if (data & (1 << 6)) != 0 {
-                data &= !(1 << 6);
-                self.write(addr + 1, data).await?;
+            let mut data = LpfControlFlags::from_bits_retain(self.read(addr).await?);
+            data.set(LpfControlFlags::ENABLE, enable);
+            self.write(addr, data.bits()).await?;
+            let mut data = LpfTuningFlags::from_bits_retain(self.read(addr + 1).await?);
+            if data.contains(LpfTuningFlags::BYPASS) {
+                data.remove(LpfTuningFlags::BYPASS);
+                self.write(addr + 1, data.bits()).await?;
             }
             Ok(())
         })
@@ -48,10 +58,10 @@ impl<'a> Lms6002d<'a> {
     ) -> impl MaybeFuture<Output = crate::Result<LpfMode>> {
         Op::new(async move {
             let reg: u8 = if channel == Channel::Rx { 0x54 } else { 0x34 };
-            let data_l = self.read(reg).await?;
-            let data_h = self.read(reg + 1).await?;
-            let lpf_enabled = (data_l & (1 << 1)) != 0;
-            let lpf_bypassed = (data_h & (1 << 6)) != 0;
+            let data_l = LpfControlFlags::from_bits_retain(self.read(reg).await?);
+            let data_h = LpfTuningFlags::from_bits_retain(self.read(reg + 1).await?);
+            let lpf_enabled = data_l.contains(LpfControlFlags::ENABLE);
+            let lpf_bypassed = data_h.contains(LpfTuningFlags::BYPASS);
             match (lpf_enabled, lpf_bypassed) {
                 (true, false) => Ok(LpfMode::Normal),
                 (false, true) => Ok(LpfMode::Bypassed),
@@ -71,24 +81,12 @@ impl<'a> Lms6002d<'a> {
     ) -> impl MaybeFuture<Output = crate::Result<()>> {
         Op::new(async move {
             let reg: u8 = if channel == Channel::Rx { 0x54 } else { 0x34 };
-            let mut data_l = self.read(reg).await?;
-            let mut data_h = self.read(reg + 1).await?;
-            match mode {
-                LpfMode::Normal => {
-                    data_l |= 1 << 1;
-                    data_h &= !(1 << 6);
-                }
-                LpfMode::Bypassed => {
-                    data_l &= !(1 << 1);
-                    data_h |= 1 << 6;
-                }
-                LpfMode::Disabled => {
-                    data_l &= !(1 << 1);
-                    data_h &= !(1 << 6);
-                }
-            }
-            self.write(reg, data_l).await?;
-            self.write(reg + 1, data_h).await
+            let mut data_l = LpfControlFlags::from_bits_retain(self.read(reg).await?);
+            let mut data_h = LpfTuningFlags::from_bits_retain(self.read(reg + 1).await?);
+            data_l.set(LpfControlFlags::ENABLE, mode == LpfMode::Normal);
+            data_h.set(LpfTuningFlags::BYPASS, mode == LpfMode::Bypassed);
+            self.write(reg, data_l.bits()).await?;
+            self.write(reg + 1, data_h.bits()).await
         })
     }
 }

@@ -56,10 +56,16 @@ impl TriggerState {
     }
 }
 
-const REG_ARM: u8 = 1 << 0;
-const REG_FIRE: u8 = 1 << 1;
-const REG_MASTER: u8 = 1 << 2;
-const REG_LINE: u8 = 1 << 3;
+bitflags::bitflags! {
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+    struct TriggerFlags: u8 {
+        const ARM = 1 << 0;
+        const FIRE = 1 << 1;
+        const MASTER = 1 << 2;
+        const LINE = 1 << 3;
+        const _ = !0;
+    }
+}
 
 fn trigger_target(channel: Channel) -> NiosPkt8x8Target {
     match channel {
@@ -69,17 +75,22 @@ fn trigger_target(channel: Channel) -> NiosPkt8x8Target {
 }
 
 impl RfLinkSession<'_> {
-    fn trigger_read(&mut self, channel: Channel) -> impl MaybeFuture<Output = Result<u8>> {
-        self.nios.nios_read::<u8, u8>(trigger_target(channel), 0)
+    fn trigger_read(
+        &mut self,
+        channel: Channel,
+    ) -> impl MaybeFuture<Output = Result<TriggerFlags>> {
+        self.nios
+            .nios_read::<u8, u8>(trigger_target(channel), 0)
+            .map_ok(TriggerFlags::from_bits_retain)
     }
 
     fn trigger_write(
         &mut self,
         channel: Channel,
-        value: u8,
+        value: TriggerFlags,
     ) -> impl MaybeFuture<Output = Result<()>> {
         self.nios
-            .nios_write::<u8, u8>(trigger_target(channel), 0, value)
+            .nios_write::<u8, u8>(trigger_target(channel), 0, value.bits())
     }
 
     /// Arms the trigger for a channel with the given role.
@@ -96,14 +107,11 @@ impl RfLinkSession<'_> {
     ) -> impl MaybeFuture<Output = Result<()>> {
         Op::new(async move {
             self.require_initialized().await?;
-            let reg = self.trigger_read(channel).await?;
-            let new_reg = (reg & !(REG_FIRE | REG_MASTER))
-                | REG_ARM
-                | match role {
-                    TriggerRole::Master => REG_MASTER,
-                    TriggerRole::Slave => 0,
-                };
-            self.trigger_write(channel, new_reg).await
+            let mut reg = self.trigger_read(channel).await?;
+            reg.remove(TriggerFlags::FIRE);
+            reg.insert(TriggerFlags::ARM);
+            reg.set(TriggerFlags::MASTER, role == TriggerRole::Master);
+            self.trigger_write(channel, reg).await
         })
     }
 
@@ -118,13 +126,13 @@ impl RfLinkSession<'_> {
         Op::new(async move {
             self.require_initialized().await?;
             let reg = self.trigger_read(channel).await?;
-            if (reg & REG_ARM) == 0 {
+            if !reg.contains(TriggerFlags::ARM) {
                 return Err(Error::TriggerNotArmed);
             }
-            if (reg & REG_MASTER) == 0 {
+            if !reg.contains(TriggerFlags::MASTER) {
                 return Err(Error::TriggerNotMaster);
             }
-            self.trigger_write(channel, reg | REG_FIRE).await
+            self.trigger_write(channel, reg | TriggerFlags::FIRE).await
         })
     }
 
@@ -137,9 +145,9 @@ impl RfLinkSession<'_> {
     pub fn disarm_trigger(&mut self, channel: Channel) -> impl MaybeFuture<Output = Result<()>> {
         Op::new(async move {
             self.require_initialized().await?;
-            let reg = self.trigger_read(channel).await?;
-            self.trigger_write(channel, reg & !(REG_ARM | REG_FIRE | REG_MASTER))
-                .await
+            let mut reg = self.trigger_read(channel).await?;
+            reg.remove(TriggerFlags::ARM | TriggerFlags::FIRE | TriggerFlags::MASTER);
+            self.trigger_write(channel, reg).await
         })
     }
 
@@ -156,8 +164,8 @@ impl RfLinkSession<'_> {
         Op::new(async move {
             self.require_initialized().await?;
             let reg = self.trigger_read(channel).await?;
-            let role = if (reg & REG_ARM) != 0 {
-                Some(if (reg & REG_MASTER) != 0 {
+            let role = if reg.contains(TriggerFlags::ARM) {
+                Some(if reg.contains(TriggerFlags::MASTER) {
                     TriggerRole::Master
                 } else {
                     TriggerRole::Slave
@@ -167,8 +175,8 @@ impl RfLinkSession<'_> {
             };
             Ok(TriggerState::new(
                 role,
-                (reg & REG_LINE) == 0,
-                (reg & REG_FIRE) != 0,
+                !reg.contains(TriggerFlags::LINE),
+                reg.contains(TriggerFlags::FIRE),
             ))
         })
     }

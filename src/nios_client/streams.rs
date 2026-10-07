@@ -7,7 +7,7 @@ const FORMAT_MASK: GpioFlags = GpioFlags::PACKET
     .union(GpioFlags::TIMESTAMP_DIV2)
     .union(GpioFlags::EIGHT_BIT_MODE)
     .union(GpioFlags::HIGHLY_PACKED_MODE);
-const STREAM_OWNED_GPIO_MASK: GpioFlags = FORMAT_MASK.union(GpioFlags::from_bits_retain(0x07));
+const STREAM_OWNED_GPIO_MASK: GpioFlags = FORMAT_MASK.union(GpioFlags::LMS_CONTROL);
 
 impl GpioFlags {
     pub(crate) fn set_stream_format(&mut self, format: Option<StreamFormat>) {

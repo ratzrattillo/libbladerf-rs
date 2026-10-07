@@ -5,10 +5,44 @@
 //! Each stage has its own programmable gain range and step size.
 
 use crate::Error;
-use crate::bladerf1::hardware::lms6002d::Lms6002d;
+use crate::bladerf1::hardware::lms6002d::{Lms6002d, RxFrontEndFlags};
 use crate::maybe_future::Op;
 use crate::range::{Range, RangeItem};
 use nusb::MaybeFuture;
+
+const PA_SELECT_SHIFT: u8 = 2;
+const PA_SELECT_MASK: u8 = 0b111 << PA_SELECT_SHIFT;
+const PA1_SELECT: u8 = 0b010 << PA_SELECT_SHIFT;
+const PA2_SELECT: u8 = 0b100 << PA_SELECT_SHIFT;
+const LNA_GAIN_SHIFT: u8 = 6;
+const LNA_GAIN_MASK: u8 = 0b11 << LNA_GAIN_SHIFT;
+const LNA_SELECT_SHIFT: u8 = 4;
+const LNA_SELECT_MASK: u8 = 0b11 << LNA_SELECT_SHIFT;
+const RX_VGA1_GAIN_MASK: u8 = 0x7f;
+const TX_VGA2_GAIN_MASK: u8 = 0x1f << 3;
+
+bitflags::bitflags! {
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+    pub(crate) struct TxPowerDownFlags: u8 {
+        const PEAK_DETECTOR = 1 << 0;
+        const AUX_PA = 1 << 1;
+        const _ = !0;
+    }
+
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+    struct RxPowerDownFlags: u8 {
+        const LNA = 1 << 0;
+        const VGA1 = 1 << 3;
+        const _ = !0;
+    }
+
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+    pub(crate) struct RxVga2Flags: u8 {
+        const TEST_MODE = 1 << 0;
+        const ENABLE = 1 << 1;
+        const _ = !0;
+    }
+}
 
 /// RX gain offset applied when converting between dB FS and dBm.
 pub const BLADERF1_RX_GAIN_OFFSET: i8 = -6;
@@ -367,19 +401,17 @@ impl<'a> Lms6002d<'a> {
     ) -> impl MaybeFuture<Output = crate::Result<()>> {
         Op::new(async move {
             let mut data = self.read(0x75).await?;
-            data &= !(3 << 6);
+            data &= !LNA_GAIN_MASK;
             let lna_gain_code: LnaGainCode = gain_db.into();
             let lna_gain_code_u8: u8 = lna_gain_code.into();
-            data |= (lna_gain_code_u8 & 3) << 6;
+            data |= (lna_gain_code_u8 << LNA_GAIN_SHIFT) & LNA_GAIN_MASK;
             self.write(0x75, data).await
         })
     }
 
     pub(crate) fn lna_get_gain(&mut self) -> impl MaybeFuture<Output = crate::Result<GainDb>> {
         Op::new(async move {
-            let mut data = self.read(0x75).await?;
-            data >>= 6;
-            data &= 3;
+            let data = (self.read(0x75).await? & LNA_GAIN_MASK) >> LNA_GAIN_SHIFT;
             let lna_gain_code: LnaGainCode = data
                 .try_into()
                 .map_err(|_| Error::BoardState("invalid LNA gain code from hardware"))?;
@@ -392,17 +424,17 @@ impl<'a> Lms6002d<'a> {
     ) -> impl MaybeFuture<Output = crate::Result<LmsLowNoiseAmplifier>> {
         Op::new(async move {
             let data = self.read(0x75).await?;
-            LmsLowNoiseAmplifier::try_from((data >> 4) & 0x3)
+            LmsLowNoiseAmplifier::try_from((data & LNA_SELECT_MASK) >> LNA_SELECT_SHIFT)
         })
     }
 
     pub(crate) fn get_pa(&mut self) -> impl MaybeFuture<Output = crate::Result<LmsPowerAmplifier>> {
         Op::new(async move {
-            let data = self.read(0x44).await?;
-            if (data & (1 << 1)) == 0 {
+            let data = TxPowerDownFlags::from_bits_retain(self.read(0x44).await?);
+            if !data.contains(TxPowerDownFlags::AUX_PA) {
                 return Ok(LmsPowerAmplifier::PaAux);
             }
-            LmsPowerAmplifier::try_from((data >> 2) & 7)
+            LmsPowerAmplifier::try_from((data.bits() & PA_SELECT_MASK) >> PA_SELECT_SHIFT)
         })
     }
 
@@ -411,13 +443,9 @@ impl<'a> Lms6002d<'a> {
         enable: bool,
     ) -> impl MaybeFuture<Output = crate::Result<()>> {
         Op::new(async move {
-            let mut data = self.read(0x7d).await?;
-            if enable {
-                data &= !(1 << 3);
-            } else {
-                data |= 1 << 3;
-            }
-            self.write(0x7d, data).await
+            let mut data = RxPowerDownFlags::from_bits_retain(self.read(0x7d).await?);
+            data.set(RxPowerDownFlags::VGA1, !enable);
+            self.write(0x7d, data.bits()).await
         })
     }
 
@@ -434,7 +462,7 @@ impl<'a> Lms6002d<'a> {
     pub(crate) fn rxvga1_get_gain(&mut self) -> impl MaybeFuture<Output = crate::Result<GainDb>> {
         Op::new(async move {
             let mut data = self.read(0x76).await?;
-            data &= 0x7f;
+            data &= RX_VGA1_GAIN_MASK;
             let rxvga1_gain_code = Rxvga1GainCode::from(data.clamp(0, 120));
             Ok(rxvga1_gain_code.into())
         })
@@ -445,13 +473,9 @@ impl<'a> Lms6002d<'a> {
         enable: bool,
     ) -> impl MaybeFuture<Output = crate::Result<()>> {
         Op::new(async move {
-            let mut data = self.read(0x64).await?;
-            if enable {
-                data |= 1 << 1;
-            } else {
-                data &= !(1 << 1);
-            }
-            self.write(0x64, data).await
+            let mut data = RxVga2Flags::from_bits_retain(self.read(0x64).await?);
+            data.set(RxVga2Flags::ENABLE, enable);
+            self.write(0x64, data.bits()).await
         })
     }
 
@@ -502,7 +526,7 @@ impl<'a> Lms6002d<'a> {
     ) -> impl MaybeFuture<Output = crate::Result<()>> {
         Op::new(async move {
             let mut data = self.read(0x45).await?;
-            data &= !(0x1f << 3);
+            data &= !TX_VGA2_GAIN_MASK;
             let txvga2_gain_code: Txvga2GainCode = gain_db.into();
             data |= txvga2_gain_code.code;
             self.write(0x45, data).await
@@ -514,20 +538,12 @@ impl<'a> Lms6002d<'a> {
         enable: bool,
     ) -> impl MaybeFuture<Output = crate::Result<()>> {
         Op::new(async move {
-            let mut regval = self.read(0x7d).await?;
-            if enable {
-                regval &= !(1 << 0);
-            } else {
-                regval |= 1 << 0;
-            }
-            self.write(0x7d, regval).await?;
-            let mut regval = self.read(0x70).await?;
-            if enable {
-                regval &= !(1 << 1);
-            } else {
-                regval |= 1 << 1;
-            }
-            self.write(0x70, regval).await
+            let mut regval = RxPowerDownFlags::from_bits_retain(self.read(0x7d).await?);
+            regval.set(RxPowerDownFlags::LNA, !enable);
+            self.write(0x7d, regval.bits()).await?;
+            let mut regval = RxFrontEndFlags::from_bits_retain(self.read(0x70).await?);
+            regval.set(RxFrontEndFlags::TEST_MODE, !enable);
+            self.write(0x70, regval.bits()).await
         })
     }
 
@@ -536,22 +552,16 @@ impl<'a> Lms6002d<'a> {
         pa: LmsPowerAmplifier,
     ) -> impl MaybeFuture<Output = crate::Result<()>> {
         Op::new(async move {
-            let mut data = self.read(0x44).await?;
-            data &= !0x1C;
-            data |= 1 << 1;
-            match pa {
-                LmsPowerAmplifier::PaAux => {
-                    data &= !(1 << 1);
-                }
-                LmsPowerAmplifier::Pa1 => {
-                    data |= 2 << 2;
-                }
-                LmsPowerAmplifier::Pa2 => {
-                    data |= 4 << 2;
-                }
-                LmsPowerAmplifier::PaNone => {}
-            }
-            self.write(0x44, data).await
+            let mut data = TxPowerDownFlags::from_bits_retain(self.read(0x44).await?);
+            data.remove(TxPowerDownFlags::from_bits_retain(PA_SELECT_MASK));
+            data.set(TxPowerDownFlags::AUX_PA, pa != LmsPowerAmplifier::PaAux);
+            let selection = match pa {
+                LmsPowerAmplifier::Pa1 => PA1_SELECT,
+                LmsPowerAmplifier::Pa2 => PA2_SELECT,
+                LmsPowerAmplifier::PaAux | LmsPowerAmplifier::PaNone => 0,
+            };
+            data.insert(TxPowerDownFlags::from_bits_retain(selection));
+            self.write(0x44, data.bits()).await
         })
     }
 
@@ -561,8 +571,8 @@ impl<'a> Lms6002d<'a> {
     ) -> impl MaybeFuture<Output = crate::Result<()>> {
         Op::new(async move {
             let mut data = self.read(0x75).await?;
-            data &= !(3 << 4);
-            data |= (u8::from(lna) & 3) << 4;
+            data &= !LNA_SELECT_MASK;
+            data |= (u8::from(lna) << LNA_SELECT_SHIFT) & LNA_SELECT_MASK;
             self.write(0x75, data).await
         })
     }

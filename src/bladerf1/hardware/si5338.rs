@@ -46,8 +46,21 @@ impl RationalRate {
 }
 
 const SI5338_F_VCO: u64 = 38_400_000 * 66;
-const SI5338_EN_A: u8 = 0x01;
-const SI5338_EN_B: u8 = 0x02;
+const DRIVE_FORMAT_MASK: u8 = 0b111;
+const P2DIV_INPUT_SELECT_LSB: u8 = 1 << 5;
+const RDIV_INPUT_MULTISYNTH: u8 = 0b110 << 5;
+const RDIV_SHIFT: u8 = 2;
+const RDIV_MASK: u8 = 0b111 << RDIV_SHIFT;
+
+bitflags::bitflags! {
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+    pub(crate) struct OutputFlags: u8 {
+        const A = 1 << 0;
+        const B = 1 << 1;
+        const _ = !0;
+    }
+}
+
 /// Minimum supported sample rate in Hz.
 pub const BLADERF_SAMPLERATE_MIN: u32 = 80_000;
 /// Recommended maximum sample rate in Hz.
@@ -97,7 +110,7 @@ const OUTPUT_CONFIG: &[(u8, u8)] = &[(34, 0x22)];
 pub(crate) struct Multisynth {
     index: u8,
     base: u16,
-    enable: u8,
+    enable: OutputFlags,
     a: u32,
     b: u32,
     c: u32,
@@ -127,13 +140,13 @@ impl<'a> Si5338<'a> {
     fn read_multisynth(&mut self, ms: &mut Multisynth) -> impl MaybeFuture<Output = Result<()>> {
         Op::new(async move {
             let val = self.read(36 + ms.index).await?;
-            ms.enable = val & 7;
+            ms.enable = OutputFlags::from_bits_retain(val & DRIVE_FORMAT_MASK);
             log::trace!("Read enable register: {val:x}");
             for i in 0..ms.regs.len() {
                 ms.regs[i] = self.read(ms.base as u8 + i as u8).await?
             }
             let mut val = self.read(31 + ms.index).await?;
-            val = (val >> 2) & 7;
+            val = (val & RDIV_MASK) >> RDIV_SHIFT;
             ms.r = 1 << val;
             ms.unpack_regs()?;
             Ok(())
@@ -142,17 +155,16 @@ impl<'a> Si5338<'a> {
 
     fn write_multisynth(&mut self, ms: &Multisynth) -> impl MaybeFuture<Output = Result<()>> {
         Op::new(async move {
-            let mut val = self.read(36 + ms.index).await?;
-            val |= ms.enable;
+            let mut val = OutputFlags::from_bits_retain(self.read(36 + ms.index).await?);
+            val.insert(ms.enable);
             log::trace!("Wrote enable register: {val:x}");
-            self.write(36 + ms.index, val).await?;
+            self.write(36 + ms.index, val.bits()).await?;
             for i in 0..ms.regs.len() {
                 self.write((ms.base + i as u16) as u8, ms.regs[i]).await?;
                 log::trace!("Wrote regs[{i}]: {}", ms.regs[i]);
             }
             let r_power = ms.r.checked_ilog2().unwrap_or(0) as u8;
-            let mut val = 0xc0;
-            val |= r_power << 2;
+            let val = RDIV_INPUT_MULTISYNTH | (r_power << RDIV_SHIFT);
             log::trace!("Wrote r register: {val:x}");
             self.write(ms.index + 31, val).await
         })
@@ -235,10 +247,8 @@ impl<'a> Si5338<'a> {
                 return Err(Error::InvalidSampleRate("sample rate below minimum"));
             }
             let index: u8 = if channel == Channel::Rx { 0x1 } else { 0x2 };
-            let mut si_channel: u8 = SI5338_EN_A;
-            if channel == Channel::Tx {
-                si_channel |= SI5338_EN_B;
-            }
+            let mut si_channel = OutputFlags::A;
+            si_channel.set(OutputFlags::B, channel == Channel::Tx);
             self.rational_multisynth(index, si_channel, rate).await
         })
     }
@@ -277,7 +287,7 @@ impl<'a> Si5338<'a> {
                 log::error!("provided SMB freq violates maximum");
                 return Err(Error::Argument("SMB frequency above maximum".into()));
             }
-            self.rational_multisynth(3, SI5338_EN_A, &mut rate).await
+            self.rational_multisynth(3, OutputFlags::A, &mut rate).await
         })
     }
 
@@ -356,9 +366,9 @@ impl<'a> Si5338<'a> {
             match mode {
                 SmbMode::Disabled => Ok(()),
                 SmbMode::Output => {
-                    let mut val = self.read(39).await?;
-                    val |= 1;
-                    self.write(39, val).await?;
+                    let mut val = OutputFlags::from_bits_retain(self.read(39).await?);
+                    val.insert(OutputFlags::A);
+                    self.write(39, val.bits()).await?;
                     for &(addr, data) in OUTPUT_CONFIG {
                         self.write(addr, data).await?;
                     }
@@ -368,9 +378,9 @@ impl<'a> Si5338<'a> {
                     for &(addr, data) in INPUT_CONFIG {
                         self.write(addr, data).await?;
                     }
-                    let mut val = self.read(39).await?;
-                    val &= !1;
-                    self.write(39, val).await
+                    let mut val = OutputFlags::from_bits_retain(self.read(39).await?);
+                    val.remove(OutputFlags::A);
+                    self.write(39, val.bits()).await
                 }
                 SmbMode::Unavailable => unreachable!(),
             }
@@ -382,16 +392,19 @@ impl<'a> Si5338<'a> {
     /// Returns `Error::Unsupported` if an unexpected register value is read.
     pub(crate) fn get_smb_mode(&mut self) -> impl MaybeFuture<Output = Result<SmbMode>> {
         Op::new(async move {
-            let val = self.read(39).await?;
-            match val & 0x7 {
-                0x00 => {}
-                0x01 => return Ok(SmbMode::Output),
-                0x02 => return Ok(SmbMode::Unavailable),
-                _ => return Err(Error::Unsupported("unexpected Si5338 register 39 value")),
+            let format = OutputFlags::from_bits_retain(self.read(39).await? & DRIVE_FORMAT_MASK);
+            if format == OutputFlags::A {
+                return Ok(SmbMode::Output);
+            }
+            if format == OutputFlags::B {
+                return Ok(SmbMode::Unavailable);
+            }
+            if !format.is_empty() {
+                return Err(Error::Unsupported("unexpected Si5338 register 39 value"));
             }
 
             let val = self.read(28).await?;
-            if (val & (1 << 5)) != 0 {
+            if (val & P2DIV_INPUT_SELECT_LSB) != 0 {
                 Ok(SmbMode::Input)
             } else {
                 Ok(SmbMode::Disabled)
@@ -402,7 +415,7 @@ impl<'a> Si5338<'a> {
     fn rational_multisynth(
         &mut self,
         index: u8,
-        channel: u8,
+        channel: OutputFlags,
         rate: &mut RationalRate,
     ) -> impl MaybeFuture<Output = Result<RationalRate>> {
         Op::new(async move {

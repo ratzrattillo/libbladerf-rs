@@ -9,15 +9,71 @@
 //! is retried until convergence or the minimum gain is reached.
 
 use crate::Channel;
-use crate::bladerf1::hardware::lms6002d::Lms6002d;
 use crate::bladerf1::hardware::lms6002d::gain::{
-    GAIN_SPEC_LNA, GAIN_SPEC_RXVGA1, GAIN_SPEC_RXVGA2,
+    GAIN_SPEC_LNA, GAIN_SPEC_RXVGA1, GAIN_SPEC_RXVGA2, RxVga2Flags,
 };
+use crate::bladerf1::hardware::lms6002d::{ClockFlags, Lms6002d};
 use crate::error::{Error, Result};
 use crate::maybe_future::Op;
 use nusb::MaybeFuture;
 use std::cmp::PartialEq;
 use std::fmt::{Display, Formatter};
+
+const DC_ADDRESS_MASK: u8 = 0b111;
+const DC_VALUE_MASK: u8 = 0b11_1111;
+const RX_DC_OFFSET_MASK: u8 = 0b111_1111;
+const RX_VGA2_REFERENCE_GAIN: u8 = 1;
+const RX_VGA2_CAL_GAIN: u8 = 6;
+const RX_VGA2_STAGE_B_SHIFT: u8 = 4;
+
+bitflags::bitflags! {
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+    struct DcControlFlags: u8 {
+        const RESET_N = 1 << 3;
+        const LOAD = 1 << 4;
+        const START = 1 << 5;
+        const _ = !0;
+    }
+
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+    struct DcStatusFlags: u8 {
+        const BUSY = 1 << 1;
+        const _ = !0;
+    }
+
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+    struct TxLpfPowerDownFlags: u8 {
+        const DAC_BUFFER = 1 << 7;
+        const _ = !0;
+    }
+
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+    pub(crate) struct LpfComparatorPowerDownFlags: u8 {
+        const COMPARATOR = 1 << 7;
+        const _ = !0;
+    }
+
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+    pub(crate) struct RxVga2ComparatorPowerDownFlags: u8 {
+        const A = 1 << 6;
+        const B = 1 << 7;
+        const BOTH = Self::A.bits() | Self::B.bits();
+        const _ = !0;
+    }
+
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+    struct RxLnaFlags: u8 {
+        const INTERNAL_LOAD = 1 << 7;
+        const _ = !0;
+    }
+}
+
+impl DcControlFlags {
+    fn set_address(&mut self, address: u8) {
+        *self =
+            Self::from_bits_retain((self.bits() & !DC_ADDRESS_MASK) | (address & DC_ADDRESS_MASK));
+    }
+}
 
 /// I/Q DC calibration pair with support for linear interpolation between samples.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -186,8 +242,8 @@ impl Display for DcCals {
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct DcCalState {
-    clk_en: u8,
-    reg0x72: u8,
+    clk_en: ClockFlags,
+    rx_lna: RxLnaFlags,
     rxvga1_curr_gain: i32,
     rxvga2_curr_gain: i32,
 }
@@ -254,13 +310,13 @@ impl DcCalModule {
         }
     }
 
-    /// Bit mask in register 0x09 to enable the calibration clock for this module.
-    pub(crate) const fn cal_clock_mask(self) -> u8 {
+    /// Flags in register 0x09 enabling the calibration clock for this module.
+    pub(crate) const fn cal_clock_flags(self) -> ClockFlags {
         match self {
-            Self::LpfTuning => 1 << 5,
-            Self::TxLpf => 1 << 1,
-            Self::RxLpf => 1 << 3,
-            Self::RxVga2 => 1 << 4,
+            Self::LpfTuning => ClockFlags::LPF_CAL,
+            Self::TxLpf => ClockFlags::TX_LPF_CAL,
+            Self::RxLpf => ClockFlags::RX_LPF_CAL,
+            Self::RxVga2 => ClockFlags::RX_VGA2_CAL,
             Self::Invalid => unreachable!(),
         }
     }
@@ -460,14 +516,14 @@ impl<'a> Lms6002d<'a> {
                 if values.iter().all(Option::is_none) {
                     continue;
                 }
-                self.set(0x09, module.cal_clock_mask()).await?;
+                self.set(0x09, module.cal_clock_flags().bits()).await?;
                 for (index, value) in values.into_iter().enumerate() {
                     if let Some(value) = value {
                         self.set_dc_cal_value(module.base_addr(), index as u8, value.get())
                             .await?;
                     }
                 }
-                self.clear(0x09, module.cal_clock_mask()).await?;
+                self.clear(0x09, module.cal_clock_flags().bits()).await?;
             }
             Ok(())
         })
@@ -539,23 +595,22 @@ impl<'a> Lms6002d<'a> {
     ) -> impl MaybeFuture<Output = Result<Measurement>> {
         Op::new(async move {
             log::debug!("Calibrating module {base:#x}:{cal_address:#x}");
-            let mut val = self.read(base + 0x03).await?;
-            val &= !0x07;
-            val |= cal_address & 0x07;
-            self.write(base + 0x03, val).await?;
+            let mut val = DcControlFlags::from_bits_retain(self.read(base + 0x03).await?);
+            val.set_address(cal_address);
+            self.write(base + 0x03, val.bits()).await?;
             self.write(base + 0x02, dc_cntval).await?;
-            val |= 1 << 4;
-            self.write(base + 0x03, val).await?;
-            val &= !(1 << 4);
-            self.write(base + 0x03, val).await?;
-            val |= 1 << 5;
-            self.write(base + 0x03, val).await?;
-            val &= !(1 << 5);
-            self.write(base + 0x03, val).await?;
+            val.insert(DcControlFlags::LOAD);
+            self.write(base + 0x03, val.bits()).await?;
+            val.remove(DcControlFlags::LOAD);
+            self.write(base + 0x03, val.bits()).await?;
+            val.insert(DcControlFlags::START);
+            self.write(base + 0x03, val.bits()).await?;
+            val.remove(DcControlFlags::START);
+            self.write(base + 0x03, val.bits()).await?;
             for _ in 0..25 {
-                let val = self.read(base + 0x01).await?;
-                if ((val >> 1) & 1) == 0 {
-                    let dc_regval = self.read(base).await? & 0x3f;
+                let val = DcStatusFlags::from_bits_retain(self.read(base + 0x01).await?);
+                if !val.contains(DcStatusFlags::BUSY) {
+                    let dc_regval = self.read(base).await? & DC_VALUE_MASK;
                     log::debug!("DC_REGVAL: {dc_regval}");
                     return Ok(Measurement::Value(dc_regval));
                 }
@@ -571,13 +626,13 @@ impl<'a> Lms6002d<'a> {
     ) -> impl MaybeFuture<Output = Result<DcCalState>> {
         Op::new(async move {
             let mut state = DcCalState {
-                clk_en: self.read(0x09).await?,
-                reg0x72: 0,
+                clk_en: ClockFlags::from_bits_retain(self.read(0x09).await?),
+                rx_lna: RxLnaFlags::empty(),
                 rxvga1_curr_gain: 0,
                 rxvga2_curr_gain: 0,
             };
             if module == DcCalModule::RxLpf || module == DcCalModule::RxVga2 {
-                state.reg0x72 = self.read(0x72).await?;
+                state.rx_lna = RxLnaFlags::from_bits_retain(self.read(0x72).await?);
             }
             Ok(state)
         })
@@ -591,20 +646,27 @@ impl<'a> Lms6002d<'a> {
         Op::new(async move {
             match module {
                 DcCalModule::LpfTuning => {
-                    self.write(0x09, state.clk_en | module.cal_clock_mask())
+                    self.write(0x09, (state.clk_en | module.cal_clock_flags()).bits())
                         .await?;
                 }
                 DcCalModule::TxLpf => {
-                    self.write(0x09, state.clk_en | module.cal_clock_mask())
+                    self.write(0x09, (state.clk_en | module.cal_clock_flags()).bits())
                         .await?;
-                    self.set(0x36, 1 << 7).await?;
-                    self.clear(0x3f, 1 << 7).await?;
+                    self.set(0x36, TxLpfPowerDownFlags::DAC_BUFFER.bits())
+                        .await?;
+                    self.clear(0x3f, LpfComparatorPowerDownFlags::COMPARATOR.bits())
+                        .await?;
                 }
                 DcCalModule::RxLpf => {
-                    self.write(0x09, state.clk_en | module.cal_clock_mask())
+                    self.write(0x09, (state.clk_en | module.cal_clock_flags()).bits())
                         .await?;
-                    self.clear(0x5f, 1 << 7).await?;
-                    self.write(0x72, state.reg0x72 & !(1 << 7)).await?;
+                    self.clear(0x5f, LpfComparatorPowerDownFlags::COMPARATOR.bits())
+                        .await?;
+                    self.write(
+                        0x72,
+                        state.rx_lna.difference(RxLnaFlags::INTERNAL_LOAD).bits(),
+                    )
+                    .await?;
                     self.lna_set_gain(GAIN_SPEC_LNA.max.into()).await?;
                     state.rxvga1_curr_gain = GAIN_SPEC_RXVGA1.max as i32;
                     self.rxvga1_set_gain((state.rxvga1_curr_gain as i8).into())
@@ -614,10 +676,15 @@ impl<'a> Lms6002d<'a> {
                         .await?;
                 }
                 DcCalModule::RxVga2 => {
-                    self.write(0x09, state.clk_en | module.cal_clock_mask())
+                    self.write(0x09, (state.clk_en | module.cal_clock_flags()).bits())
                         .await?;
-                    self.clear(0x6e, 3 << 6).await?;
-                    self.write(0x72, state.reg0x72 & !(1 << 7)).await?;
+                    self.clear(0x6e, RxVga2ComparatorPowerDownFlags::BOTH.bits())
+                        .await?;
+                    self.write(
+                        0x72,
+                        state.rx_lna.difference(RxLnaFlags::INTERNAL_LOAD).bits(),
+                    )
+                    .await?;
                     self.lna_set_gain(GAIN_SPEC_LNA.max.into()).await?;
                     state.rxvga1_curr_gain = GAIN_SPEC_RXVGA1.max as i32;
                     self.rxvga1_set_gain((state.rxvga1_curr_gain as i8).into())
@@ -642,16 +709,17 @@ impl<'a> Lms6002d<'a> {
             if module == DcCalModule::RxVga2 {
                 match submodule {
                     0 => {
-                        self.clear(0x64, 0x01).await?;
-                        self.write(0x68, 0x01).await?;
+                        self.clear(0x64, RxVga2Flags::TEST_MODE.bits()).await?;
+                        self.write(0x68, RX_VGA2_REFERENCE_GAIN).await?;
                     }
                     1 => {
-                        self.set(0x64, 0x01).await?;
-                        self.write(0x68, 0x06).await?;
+                        self.set(0x64, RxVga2Flags::TEST_MODE.bits()).await?;
+                        self.write(0x68, RX_VGA2_CAL_GAIN).await?;
                     }
                     2 => {}
                     3 => {
-                        self.write(0x68, 0x60).await?;
+                        self.write(0x68, RX_VGA2_CAL_GAIN << RX_VGA2_STAGE_B_SHIFT)
+                            .await?;
                     }
                     4 => {}
                     _ => {
@@ -671,11 +739,11 @@ impl<'a> Lms6002d<'a> {
             };
             if module == DcCalModule::LpfTuning {
                 let mut val = self.read(0x35).await?;
-                val &= !0x3f;
+                val &= !DC_VALUE_MASK;
                 val |= dc_regval;
                 self.write(0x35, val).await?;
                 let mut val = self.read(0x55).await?;
-                val &= !0x3f;
+                val &= !DC_VALUE_MASK;
                 val |= dc_regval;
                 self.write(0x55, val).await?;
             }
@@ -754,13 +822,14 @@ impl<'a> Lms6002d<'a> {
         value: u8,
     ) -> impl MaybeFuture<Output = Result<u8>> {
         Op::new(async move {
-            let mut regval: u8 = 0x08 | dc_addr;
-            self.write(base + 3, regval).await?;
+            let mut regval = DcControlFlags::RESET_N;
+            regval.set_address(dc_addr);
+            self.write(base + 3, regval.bits()).await?;
             self.write(base + 2, value).await?;
-            regval |= 1 << 4;
-            self.write(base + 3, regval).await?;
-            regval &= !(1 << 4);
-            self.write(base + 3, regval).await?;
+            regval.insert(DcControlFlags::LOAD);
+            self.write(base + 3, regval.bits()).await?;
+            regval.remove(DcControlFlags::LOAD);
+            self.write(base + 3, regval.bits()).await?;
             self.read(base).await
         })
     }
@@ -771,8 +840,10 @@ impl<'a> Lms6002d<'a> {
         dc_addr: u8,
     ) -> impl MaybeFuture<Output = Result<DcCalValue>> {
         Op::new(async move {
-            self.write(base + 3, 0x08 | dc_addr).await?;
-            Ok(DcCalValue(self.read(base).await? & 0x3f))
+            let mut regval = DcControlFlags::RESET_N;
+            regval.set_address(dc_addr);
+            self.write(base + 3, regval.bits()).await?;
+            Ok(DcCalValue(self.read(base).await? & DC_VALUE_MASK))
         })
     }
 
@@ -786,7 +857,7 @@ impl<'a> Lms6002d<'a> {
             let regval = match channel {
                 Channel::Rx => {
                     let tmp = self.read(addr).await?;
-                    tmp & (1 << 7) | scale_dc_offset(channel, value)
+                    (tmp & !RX_DC_OFFSET_MASK) | scale_dc_offset(channel, value)
                 }
                 Channel::Tx => scale_dc_offset(channel, value),
             };
@@ -809,6 +880,17 @@ impl<'a> Lms6002d<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn calibration_address_preserves_commands_and_reserved_bits() {
+        for raw in u8::MIN..=u8::MAX {
+            for address in 0..8 {
+                let mut control = DcControlFlags::from_bits_retain(raw);
+                control.set_address(address);
+                assert_eq!(control.bits(), (raw & 0xf8) | address);
+            }
+        }
+    }
 
     #[cfg(feature = "serde")]
     #[test]

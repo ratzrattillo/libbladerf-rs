@@ -14,7 +14,7 @@ mod xb300;
 use crate::bladerf1::board::RfLinkSession;
 use crate::error::{Error, Result};
 use crate::maybe_future::Op;
-#[cfg(any(feature = "xb100", feature = "xb200", feature = "xb300"))]
+#[cfg(any(feature = "xb200", feature = "xb300"))]
 use crate::nios_client::NiosCore;
 use nusb::MaybeFuture;
 
@@ -34,7 +34,7 @@ pub enum ExpansionBoard {
     Xb300,
 }
 
-#[cfg(any(feature = "xb100", feature = "xb200"))]
+#[cfg(feature = "xb200")]
 impl NiosCore {
     /// Reads the expansion GPIO and checks if `check_mask` bits are set.
     /// Returns `false` if all GPIO bits read as 1 (no board present).
@@ -70,7 +70,7 @@ impl NiosCore {
 impl NiosCore {
     /// Returns `true` if the XB-200 board is currently enabled (RF_ON bit set).
     pub(crate) fn xb200_is_enabled(&mut self) -> impl MaybeFuture<Output = Result<bool>> {
-        self.detect_xb_board(xb200::BLADERF_XB_RF_ON)
+        self.detect_xb_board(xb200::Xb200GpioFlags::RF_ON.bits())
     }
 }
 
@@ -122,17 +122,23 @@ impl RfLinkSession<'_> {
                 return Ok(ExpansionBoard::XbNone);
             }
             #[cfg(feature = "xb100")]
-            if self.nios.detect_xb_board(xb100::XB100_DETECT_MASK).await? {
+            if xb100::Xb100GpioFlags::from_bits_retain(self.nios.nios_expansion_gpio_read().await?)
+                .is_enabled()
+            {
                 return Ok(ExpansionBoard::Xb100);
             }
             #[cfg(feature = "xb200")]
-            if self.nios.detect_xb_board(xb200::BLADERF_XB_RF_ON).await? {
+            if self
+                .nios
+                .detect_xb_board(xb200::Xb200GpioFlags::RF_ON.bits())
+                .await?
+            {
                 return Ok(ExpansionBoard::Xb200);
             }
             #[cfg(feature = "xb300")]
             if self
                 .nios
-                .detect_xb_board_by_dir(xb300::XB300_DETECT_MASK)
+                .detect_xb_board_by_dir(xb300::Xb300GpioFlags::DETECT.bits())
                 .await?
             {
                 return Ok(ExpansionBoard::Xb300);

@@ -128,6 +128,56 @@ and read the underlying word with `.bits()`. The type retains all 32 bits,
 including unnamed bits and selector fields. The session normalizes the DMA bit
 for the USB speed and checks stream claims before writing.
 
+The numeric GPIO aliases have been removed:
+
+| Removed constant | Replacement |
+|---|---|
+| `BLADERF_GPIO_FEATURE_SMALL_DMA_XFER` | `GpioFlags::SMALL_DMA_XFER` |
+| `BLADERF_GPIO_PACKET` | `GpioFlags::PACKET` |
+| `BLADERF_GPIO_TIMESTAMP` | `GpioFlags::TIMESTAMP` |
+| `BLADERF_GPIO_TIMESTAMP_DIV2` | `GpioFlags::TIMESTAMP_DIV2` |
+| `BLADERF_GPIO_8BIT_MODE` | `GpioFlags::EIGHT_BIT_MODE` |
+| `BLADERF_GPIO_HIGHLY_PACKED_MODE` | `GpioFlags::HIGHLY_PACKED_MODE` |
+
+The low GPIO bits are `LMS_RESET_N`, `LMS_RX_ENABLE`, and `LMS_TX_ENABLE`.
+Their combination is `0x07`; setting `LMS_RESET_N` releases active-low reset.
+The initialization value `0x57` also selects `Band::Low` for RX and TX.
+These assignments follow the hosted FPGA's `nios_gpo_t` packing in
+`resources/bladeRF/hdl/fpga/platforms/bladerf/vhdl/bladerf_p.vhd`.
+
+### Flags and encoded selections
+
+`protocol::nios::NiosPktFlags` combines operation and response-status bits.
+Replace `NiosPktFlags::Write` with `NiosPktFlags::WRITE` and
+`NiosPktStatus::Success` with `NiosPktFlags::SUCCESS`. Read requests use
+`NiosPktFlags::empty()`. `NiosPkt::flags()` returns the complete flag byte,
+including status and unnamed bits: test direction with `.contains(NiosPktFlags::WRITE)`.
+Use `from_bits_retain` and `bits` for raw byte conversion.
+
+`RxMux`, `SampleFormat`, `Band`, `Tune`, `TriggerRole`, `Xb200Filter`,
+`Xb200Path`, `LpfMode`, amplifier selections, and `SmbMode` represent mutually
+exclusive choices. Even the power-of-two `RxMux` values select one source;
+combining them is invalid.
+Register fields for these selections use named masks and typed operations.
+Direct `set_filterbank_mux` calls accept physical filter selections; use
+`xb200_set_filterbank` for automatic modes.
+
+The legacy `LMS_FREQ_FLAGS_*`, `LMS_FREQ_XB_200_ENABLE`,
+`LMS_FREQ_XB_200_MODULE_RX`, and `LBEN_*` constants have also been removed.
+Use the board tuning and loopback APIs with `QuickTune`, `Band`, `Tune`, and
+`Loopback`; their register flags are internal.
+
+LMS clock enables, module power controls, filter enable/bypass, and DC
+calibration reset/load/start/status bits use internal register-specific flags.
+Their names follow the register maps in
+`resources/bladerf1_hardware_datasheets/markdown/lms6002d/LMS6002Dr2-Programming-and-Calibration-Guide-1_1r5.md`.
+For example, register `0x09`'s `0x05` enables the TX and RX DSM clocks;
+calibration-control `0x08` releases reset, while `0x10` loads a value and
+`0x20` starts calibration. Charge-pump currents, gain codes, and bandwidth
+settings are encoded numeric fields, with named masks and preset values.
+Si5338 input and divider selections likewise follow `Si5338-RM.md`; the
+P2 input selector spans registers 28 and 30, so register 28 bit 5 is a field fragment.
+
 ### Stream lifecycle and recovery
 
 - `build()` validates/claims an endpoint, clears halt, and allocates the pool.

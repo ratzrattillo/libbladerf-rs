@@ -9,7 +9,7 @@ pub mod packet_generic;
 pub mod targets;
 use crate::error::Error;
 use crate::protocol::nios::packet_generic::{NiosNum, NiosPktDecoder};
-pub use packet_generic::{NiosPacket, NiosPkt, NiosPktFlags, NiosPktStatus};
+pub use packet_generic::{NiosPacket, NiosPkt, NiosPktFlags};
 pub use targets::{
     NiosPkt8x8Target, NiosPkt8x16AddrIqCorr, NiosPkt8x16Target, NiosPkt8x32Target,
     NiosPkt8x64Target, NiosPkt8x64TimestampAddr, NiosPkt32x32Target,
@@ -87,7 +87,7 @@ pub fn nios_encode_write<A: NiosNum, D: NiosNum>(
 /// Extracts the response data from the packet at the offset determined
 /// by the address-type width `A` and data-type width `D`.
 pub fn nios_decode_read<A: NiosNum, D: NiosNum>(response: &[u8]) -> Result<D, Error> {
-    NiosPkt::<A, D>::validate_response(response, NiosPktFlags::Read)?;
+    NiosPkt::<A, D>::validate_response(response, NiosPktFlags::empty())?;
     NiosPktDecoder::decode_data::<A, D>(response)
 }
 
@@ -95,7 +95,7 @@ pub fn nios_decode_read<A: NiosNum, D: NiosNum>(response: &[u8]) -> Result<D, Er
 ///
 /// Returns `Ok(())` if the success flag is set, or `WriteFailed` otherwise.
 pub fn nios_decode_write<A: NiosNum, D: NiosNum>(response: &[u8]) -> Result<(), Error> {
-    NiosPkt::<A, D>::validate_response(response, NiosPktFlags::Write)
+    NiosPkt::<A, D>::validate_response(response, NiosPktFlags::WRITE)
 }
 
 #[cfg(feature = "bladerf1")]

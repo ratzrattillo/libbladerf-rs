@@ -11,28 +11,118 @@
 
 use crate::bladerf1::GpioFlags;
 use crate::bladerf1::board::RfLinkSession;
+use crate::bladerf1::hardware::si5338::OutputFlags;
 use crate::channel::Channel;
 use crate::error::{Error, Result};
 use crate::maybe_future::Op;
 use nusb::MaybeFuture;
 use std::ops::RangeInclusive;
-pub(crate) const BLADERF_XB_CONFIG_TX_PATH_MIX: u32 = 0x04;
-pub(crate) const BLADERF_XB_CONFIG_TX_PATH_BYPASS: u32 = 0x08;
-pub(crate) const BLADERF_XB_CONFIG_TX_BYPASS: u32 = 0x04;
-pub(crate) const BLADERF_XB_CONFIG_TX_BYPASS_MASK: u32 = 0x0C;
-pub(crate) const BLADERF_XB_CONFIG_RX_PATH_MIX: u32 = 0x10;
-pub(crate) const BLADERF_XB_CONFIG_RX_PATH_BYPASS: u32 = 0x20;
-pub(crate) const BLADERF_XB_CONFIG_RX_BYPASS: u32 = 0x10;
-pub(crate) const BLADERF_XB_CONFIG_RX_BYPASS_MASK: u32 = 0x30;
-pub(crate) const BLADERF_XB_RF_ON: u32 = 0x0800;
-pub(crate) const BLADERF_XB_TX_ENABLE: u32 = 0x1000;
-pub(crate) const BLADERF_XB_RX_ENABLE: u32 = 0x2000;
-pub(crate) const BLADERF_XB_TX_MASK: u32 = 0x0C000000;
-pub(crate) const BLADERF_XB_TX_SHIFT: u32 = 26;
-pub(crate) const BLADERF_XB_RX_MASK: u32 = 0x30000000;
-pub(crate) const BLADERF_XB_RX_SHIFT: u32 = 28;
-pub(crate) const LMS_RX_SWAP: u8 = 0x40;
-pub(crate) const LMS_TX_SWAP: u8 = 0x08;
+
+const TX_FILTER_SHIFT: u32 = 26;
+const RX_FILTER_SHIFT: u32 = 28;
+const SYNTH_REGISTER2_CONFIG: u32 = 0x6000_8e42;
+const SYNTH_MUXOUT_DIGITAL_LOCK_DETECT: u32 = 0b110 << 26;
+
+bitflags::bitflags! {
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+    pub(crate) struct Xb200GpioFlags: u32 {
+        const MUXOUT = 1 << 0;
+        const SYNTH_CS = 1 << 1;
+        const TX_PATH_MIX = 1 << 2;
+        const TX_PATH_BYPASS = 1 << 3;
+        const TX_PATH = Self::TX_PATH_MIX.bits() | Self::TX_PATH_BYPASS.bits();
+        const RX_PATH_MIX = 1 << 4;
+        const RX_PATH_BYPASS = 1 << 5;
+        const RX_PATH = Self::RX_PATH_MIX.bits() | Self::RX_PATH_BYPASS.bits();
+        const RF_ON = 1 << 11;
+        const TX_ENABLE = 1 << 12;
+        const RX_ENABLE = 1 << 13;
+        const TX_RF_SW2 = 1 << TX_FILTER_SHIFT;
+        const TX_RF_SW1 = 1 << (TX_FILTER_SHIFT + 1);
+        const TX_FILTER = Self::TX_RF_SW1.bits() | Self::TX_RF_SW2.bits();
+        const RX_RF_SW2 = 1 << RX_FILTER_SHIFT;
+        const RX_RF_SW1 = 1 << (RX_FILTER_SHIFT + 1);
+        const RX_FILTER = Self::RX_RF_SW1.bits() | Self::RX_RF_SW2.bits();
+        const OUTPUTS = Self::SYNTH_CS.bits() | Self::TX_PATH.bits() | Self::RX_PATH.bits()
+            | Self::RF_ON.bits() | Self::TX_ENABLE.bits() | Self::RX_ENABLE.bits()
+            | Self::TX_FILTER.bits() | Self::RX_FILTER.bits();
+        const _ = !0;
+    }
+
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+    struct IqSwapFlags: u8 {
+        const RX = 1 << 6;
+        const TX = 1 << 3;
+        const _ = !0;
+    }
+
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+    struct SynthControlFlags: u32 {
+        const INTEGER_N_LOCK_DETECT = 1 << 8;
+        const _ = !0;
+    }
+}
+
+impl Xb200GpioFlags {
+    fn filter(self, channel: Channel) -> Result<Xb200Filter> {
+        let (mask, shift) = match channel {
+            Channel::Rx => (Self::RX_FILTER, RX_FILTER_SHIFT),
+            Channel::Tx => (Self::TX_FILTER, TX_FILTER_SHIFT),
+        };
+        Xb200Filter::try_from((self & mask).bits() >> shift)
+    }
+
+    fn set_filter(&mut self, channel: Channel, filter: Xb200Filter) -> Result<()> {
+        if matches!(filter, Xb200Filter::Auto1db | Xb200Filter::Auto3db) {
+            return Err(Error::Argument(
+                "automatic XB200 filter mode is not a mux selection".into(),
+            ));
+        }
+        let (mask, shift) = match channel {
+            Channel::Rx => (Self::RX_FILTER, RX_FILTER_SHIFT),
+            Channel::Tx => (Self::TX_FILTER, TX_FILTER_SHIFT),
+        };
+        self.remove(mask);
+        self.insert(Self::from_bits_retain((filter as u32) << shift));
+        Ok(())
+    }
+
+    fn set_path(&mut self, channel: Channel, path: Xb200Path) {
+        let (paths, enable, mix, bypass) = match channel {
+            Channel::Rx => (
+                Self::RX_PATH,
+                Self::RX_ENABLE,
+                Self::RX_PATH_MIX,
+                Self::RX_PATH_BYPASS,
+            ),
+            Channel::Tx => (
+                Self::TX_PATH,
+                Self::TX_ENABLE,
+                Self::TX_PATH_MIX,
+                Self::TX_PATH_BYPASS,
+            ),
+        };
+        self.insert(Self::RF_ON);
+        self.remove(paths | enable);
+        self.insert(match path {
+            Xb200Path::Mix => enable | mix,
+            Xb200Path::Bypass => bypass,
+        });
+    }
+
+    fn path(self, channel: Channel) -> Xb200Path {
+        let mix = match channel {
+            Channel::Rx => Self::RX_PATH_MIX,
+            Channel::Tx => Self::TX_PATH_MIX,
+        };
+        if self.contains(mix) {
+            Xb200Path::Mix
+        } else {
+            Xb200Path::Bypass
+        }
+    }
+}
+
 type FilterEntry = (RangeInclusive<u64>, Xb200Filter);
 /// Frequency ranges mapped to filter banks for automatic 1 dB loss selection.
 pub(crate) const AUTO_1DB_FILTERS: &[FilterEntry] = &[
@@ -103,48 +193,43 @@ impl RfLinkSession<'_> {
     pub fn xb200_attach(&mut self) -> impl MaybeFuture<Output = Result<()>> {
         Op::new(async move {
             self.require_initialized().await?;
-            let muxout: usize = 6;
-            let mux_lut = [
-                "THREE-STATE OUTPUT",
-                "DVdd",
-                "DGND",
-                "R COUNTER OUTPUT",
-                "N DIVIDER OUTPUT",
-                "ANALOG LOCK DETECT",
-                "DIGITAL LOCK DETECT",
-                "RESERVED",
-            ];
             log::trace!("Attaching XB200 transverter board");
-            let mut val8 = self.si().read(39).await?;
-            log::trace!("[xb200_attach] si5338_read: {val8}");
-            val8 |= 2;
-            self.si().write(39, val8).await?;
+            let mut val8 = OutputFlags::from_bits_retain(self.si().read(39).await?);
+            log::trace!("[xb200_attach] si5338_read: {val8:?}");
+            val8.insert(OutputFlags::B);
+            self.si().write(39, val8.bits()).await?;
             self.si().write(34, 0x22).await?;
-            self.config_gpio_modify(|gpio| gpio.insert(GpioFlags::from_bits_retain(0x80000000)))
+            self.config_gpio_modify(GpioFlags::set_xb200_mode).await?;
+            self.nios
+                .nios_expansion_gpio_dir_write(u32::MAX, Xb200GpioFlags::OUTPUTS.bits())
                 .await?;
             self.nios
-                .nios_expansion_gpio_dir_write(0xffffffff, 0x3C00383E)
-                .await?;
-            self.nios
-                .nios_expansion_gpio_write(0xffffffff, 0x800)
+                .nios_expansion_gpio_write(0xffffffff, Xb200GpioFlags::RF_ON.bits())
                 .await?;
             self.nios.nios_xb200_synth_write(0x580005).await?;
             self.nios.nios_xb200_synth_write(0x99A16C).await?;
             self.nios.nios_xb200_synth_write(0xC004B3).await?;
-            log::trace!("MUXOUT: {}", mux_lut[muxout]);
-            let value = 0x60008E42 | (1 << 8) | ((muxout as u32) << 26);
-            self.nios.nios_xb200_synth_write(value).await?;
+            log::trace!("MUXOUT: DIGITAL LOCK DETECT");
+            let mut value = SynthControlFlags::from_bits_retain(
+                SYNTH_REGISTER2_CONFIG | SYNTH_MUXOUT_DIGITAL_LOCK_DETECT,
+            );
+            value.insert(SynthControlFlags::INTEGER_N_LOCK_DETECT);
+            self.nios.nios_xb200_synth_write(value.bits()).await?;
             self.nios.nios_xb200_synth_write(0x08008011).await?;
             self.nios.nios_xb200_synth_write(0x00410000).await?;
-            let val = self.nios.nios_expansion_gpio_read().await?;
-            log::trace!("[xb200_attach] expansion_gpio_read: {val}");
-            if (val & 0x1) != 0 {
+            let val = Xb200GpioFlags::from_bits_retain(self.nios.nios_expansion_gpio_read().await?);
+            log::trace!("[xb200_attach] expansion_gpio_read: {val:?}");
+            if val.contains(Xb200GpioFlags::MUXOUT) {
                 log::debug!("MUXOUT Bit set: OK")
             } else {
                 log::debug!("MUXOUT Bit not set: FAIL");
             }
             self.nios
-                .nios_expansion_gpio_write(0xffffffff, 0x3C000800)
+                .nios_expansion_gpio_write(
+                    u32::MAX,
+                    (Xb200GpioFlags::RF_ON | Xb200GpioFlags::TX_FILTER | Xb200GpioFlags::RX_FILTER)
+                        .bits(),
+                )
                 .await?;
             Ok(())
         })
@@ -154,18 +239,17 @@ impl RfLinkSession<'_> {
     pub fn xb200_enable(&mut self, enable: bool) -> impl MaybeFuture<Output = Result<()>> {
         Op::new(async move {
             self.require_initialized().await?;
-            let orig = self.nios.nios_expansion_gpio_read().await?;
-            log::trace!("[xb200_enable] expansion_gpio_read: {orig}");
+            let orig =
+                Xb200GpioFlags::from_bits_retain(self.nios.nios_expansion_gpio_read().await?);
+            log::trace!("[xb200_enable] expansion_gpio_read: {orig:?}");
             let mut val = orig;
-            if enable {
-                val |= BLADERF_XB_RF_ON;
-            } else {
-                val &= !BLADERF_XB_RF_ON;
-            }
+            val.set(Xb200GpioFlags::RF_ON, enable);
             if val == orig {
                 Ok(())
             } else {
-                self.nios.nios_expansion_gpio_write(0xffffffff, val).await
+                self.nios
+                    .nios_expansion_gpio_write(0xffffffff, val.bits())
+                    .await
             }
         })
     }
@@ -193,17 +277,16 @@ impl RfLinkSession<'_> {
     ) -> impl MaybeFuture<Output = Result<Xb200Filter>> {
         Op::new(async move {
             self.require_initialized().await?;
-            let val = self.nios.nios_expansion_gpio_read().await?;
-            log::trace!("[xb200_get_filterbank] expansion_gpio_read: {val}");
-            let shift = if ch == Channel::Rx {
-                BLADERF_XB_RX_SHIFT
-            } else {
-                BLADERF_XB_TX_SHIFT
-            };
-            Xb200Filter::try_from((val >> shift) & 3)
+            let val = Xb200GpioFlags::from_bits_retain(self.nios.nios_expansion_gpio_read().await?);
+            log::trace!("[xb200_get_filterbank] expansion_gpio_read: {val:?}");
+            val.filter(ch)
         })
     }
     /// Directly sets the filter bank mux for the given channel without auto-selection.
+    ///
+    /// # Errors
+    /// Returns an argument error for automatic filter modes. Device state and
+    /// USB errors are propagated.
     pub fn set_filterbank_mux(
         &mut self,
         ch: Channel,
@@ -211,23 +294,17 @@ impl RfLinkSession<'_> {
     ) -> impl MaybeFuture<Output = Result<()>> {
         Op::new(async move {
             self.require_initialized().await?;
-            let (mask, shift) = if ch == Channel::Rx {
-                (BLADERF_XB_RX_MASK, BLADERF_XB_RX_SHIFT)
-            } else {
-                (BLADERF_XB_TX_MASK, BLADERF_XB_TX_SHIFT)
-            };
-            let orig = self.nios.nios_expansion_gpio_read().await?;
-            log::trace!("[set_filterbank_mux] expansion_gpio_read: {orig}");
-            let mut val = orig & !mask;
-            val |= (filter as u32) << shift;
+            let orig =
+                Xb200GpioFlags::from_bits_retain(self.nios.nios_expansion_gpio_read().await?);
+            log::trace!("[set_filterbank_mux] expansion_gpio_read: {orig:?}");
+            let mut val = orig;
+            val.set_filter(ch, filter)?;
             if orig != val {
-                let dir = if mask == BLADERF_XB_TX_MASK {
-                    "TX"
-                } else {
-                    "RX"
-                };
+                let dir = if ch == Channel::Tx { "TX" } else { "RX" };
                 log::trace!("Engaging {filter:?} band XB-200 {dir} filter");
-                self.nios.nios_expansion_gpio_write(0xffffffff, val).await?;
+                self.nios
+                    .nios_expansion_gpio_write(u32::MAX, val.bits())
+                    .await?;
             }
             Ok(())
         })
@@ -294,42 +371,24 @@ impl RfLinkSession<'_> {
     ) -> impl MaybeFuture<Output = Result<()>> {
         Op::new(async move {
             self.require_initialized().await?;
-            let mut lval = self.lms().read(0x5A).await?;
+            let mut lval = IqSwapFlags::from_bits_retain(self.lms().read(0x5A).await?);
             let swap_mask = if ch == Channel::Rx {
-                LMS_RX_SWAP
+                IqSwapFlags::RX
             } else {
-                LMS_TX_SWAP
+                IqSwapFlags::TX
             };
-            if path == Xb200Path::Mix {
-                lval |= swap_mask;
-            } else {
-                lval &= !swap_mask;
-            }
-            self.lms().write(0x5A, lval).await?;
-            let mut val = self.nios.nios_expansion_gpio_read().await?;
-            log::trace!("[xb200_set_path] expansion_gpio_read: {val}");
-            if (val & BLADERF_XB_RF_ON) == 0 {
+            lval.set(swap_mask, path == Xb200Path::Mix);
+            self.lms().write(0x5A, lval.bits()).await?;
+            let mut val =
+                Xb200GpioFlags::from_bits_retain(self.nios.nios_expansion_gpio_read().await?);
+            log::trace!("[xb200_set_path] expansion_gpio_read: {val:?}");
+            if !val.contains(Xb200GpioFlags::RF_ON) {
                 self.xb200_attach().await?;
             }
-            let mask = if ch == Channel::Rx {
-                BLADERF_XB_CONFIG_RX_BYPASS_MASK | BLADERF_XB_RX_ENABLE
-            } else {
-                BLADERF_XB_CONFIG_TX_BYPASS_MASK | BLADERF_XB_TX_ENABLE
-            };
-            val |= BLADERF_XB_RF_ON;
-            val &= !mask;
-            if ch == Channel::Rx {
-                if path == Xb200Path::Mix {
-                    val |= BLADERF_XB_RX_ENABLE | BLADERF_XB_CONFIG_RX_PATH_MIX;
-                } else {
-                    val |= BLADERF_XB_CONFIG_RX_PATH_BYPASS;
-                }
-            } else if path == Xb200Path::Mix {
-                val |= BLADERF_XB_TX_ENABLE | BLADERF_XB_CONFIG_TX_PATH_MIX;
-            } else {
-                val |= BLADERF_XB_CONFIG_TX_PATH_BYPASS;
-            }
-            self.nios.nios_expansion_gpio_write(0xffffffff, val).await
+            val.set_path(ch, path);
+            self.nios
+                .nios_expansion_gpio_write(0xffffffff, val.bits())
+                .await
         })
     }
     /// Writes a raw SPI register value to the ADF4351 synthesizer on the XB-200.
@@ -343,24 +402,11 @@ impl RfLinkSession<'_> {
     pub fn xb200_get_path(&mut self, ch: Channel) -> impl MaybeFuture<Output = Result<Xb200Path>> {
         Op::new(async move {
             self.require_initialized().await?;
-            let val = self.nios.nios_expansion_gpio_read().await?;
+            let val = Xb200GpioFlags::from_bits_retain(self.nios.nios_expansion_gpio_read().await?);
             log::trace!("[xb200_get_path] expansion_gpio_read: {val:#010x}");
-            let bypass_bit = if ch == Channel::Rx {
-                BLADERF_XB_CONFIG_RX_BYPASS
-            } else {
-                BLADERF_XB_CONFIG_TX_BYPASS
-            };
-            log::trace!(
-                "[xb200_get_path] bypass_bit={bypass_bit:#x}, val & bypass_bit = {:#x}",
-                val & bypass_bit
-            );
-            if (val & bypass_bit) != 0 {
-                log::trace!("[xb200_get_path] returning Mix");
-                Ok(Xb200Path::Mix)
-            } else {
-                log::trace!("[xb200_get_path] returning Bypass");
-                Ok(Xb200Path::Bypass)
-            }
+            let path = val.path(ch);
+            log::trace!("[xb200_get_path] returning {path:?}");
+            Ok(path)
         })
     }
 }
@@ -373,4 +419,62 @@ pub(crate) fn select_filter_from_table(frequency: u64, table: &[FilterEntry]) ->
         }
     }
     Xb200Filter::Custom
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn paths_and_filters_preserve_other_gpio_fields() {
+        assert_eq!(Xb200GpioFlags::OUTPUTS.bits(), 0x3c00_383e);
+        for raw in [0, u32::MAX, 0xc345_6789, 0x3c00_0800] {
+            for (channel, path, mask, expected) in [
+                (Channel::Rx, Xb200Path::Mix, 0x2830, 0x2810),
+                (Channel::Rx, Xb200Path::Bypass, 0x2830, 0x0820),
+                (Channel::Tx, Xb200Path::Mix, 0x180c, 0x1804),
+                (Channel::Tx, Xb200Path::Bypass, 0x180c, 0x0808),
+            ] {
+                let mut gpio = Xb200GpioFlags::from_bits_retain(raw);
+                gpio.set_path(channel, path);
+                assert_eq!(gpio.bits(), (raw & !mask) | expected);
+                assert_eq!(gpio.path(channel), path);
+            }
+            for (channel, mask, selections) in [
+                (
+                    Channel::Rx,
+                    0x3000_0000,
+                    [0, 0x1000_0000, 0x2000_0000, 0x3000_0000],
+                ),
+                (
+                    Channel::Tx,
+                    0x0c00_0000,
+                    [0, 0x0400_0000, 0x0800_0000, 0x0c00_0000],
+                ),
+            ] {
+                for (filter, expected) in [
+                    Xb200Filter::_50M,
+                    Xb200Filter::_144M,
+                    Xb200Filter::_222M,
+                    Xb200Filter::Custom,
+                ]
+                .into_iter()
+                .zip(selections)
+                {
+                    let mut gpio = Xb200GpioFlags::from_bits_retain(raw);
+                    gpio.set_filter(channel, filter).unwrap();
+                    assert_eq!(gpio.bits(), (raw & !mask) | expected);
+                    assert_eq!(gpio.filter(channel).unwrap(), filter);
+                }
+                for filter in [Xb200Filter::Auto1db, Xb200Filter::Auto3db] {
+                    let mut gpio = Xb200GpioFlags::from_bits_retain(raw);
+                    assert!(matches!(
+                        gpio.set_filter(channel, filter),
+                        Err(Error::Argument(_))
+                    ));
+                    assert_eq!(gpio.bits(), raw);
+                }
+            }
+        }
+    }
 }

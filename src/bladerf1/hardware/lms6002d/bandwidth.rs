@@ -11,6 +11,9 @@ use crate::range::{Range, RangeItem};
 use crate::{Channel, khz, mhz};
 use nusb::MaybeFuture;
 
+const LPF_BANDWIDTH_SHIFT: u8 = 2;
+const LPF_BANDWIDTH_MASK: u8 = 0b1111 << LPF_BANDWIDTH_SHIFT;
+
 /// Band split frequency in Hz: frequencies below use low band, at or above use high band.
 pub const BLADERF1_BAND_HIGH: u32 = 1_500_000_000;
 
@@ -144,8 +147,8 @@ impl<'a> Lms6002d<'a> {
         Op::new(async move {
             let addr = if channel == Channel::Rx { 0x54 } else { 0x34 };
             let mut data = self.read(addr).await?;
-            data &= !0x3c;
-            data |= bw.to_index() << 2;
+            data &= !LPF_BANDWIDTH_MASK;
+            data |= bw.to_index() << LPF_BANDWIDTH_SHIFT;
             self.write(addr, data).await
         })
     }
@@ -156,9 +159,7 @@ impl<'a> Lms6002d<'a> {
     ) -> impl MaybeFuture<Output = crate::Result<LmsBandwidth>> {
         Op::new(async move {
             let addr = if channel == Channel::Rx { 0x54 } else { 0x34 };
-            let mut data = self.read(addr).await?;
-            data >>= 2;
-            data &= 0xf;
+            let data = (self.read(addr).await? & LPF_BANDWIDTH_MASK) >> LPF_BANDWIDTH_SHIFT;
             Ok(LmsBandwidth::from_index(data))
         })
     }

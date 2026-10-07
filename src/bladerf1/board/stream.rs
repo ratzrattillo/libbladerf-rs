@@ -898,10 +898,7 @@ pub struct TxStream {
 
 pub use super::metadata::{METADATA_HEADER_SIZE, MetadataHeader};
 use super::metadata::{MetadataLayout, MetadataPacket};
-pub use super::sample_format::{
-    BLADERF_GPIO_8BIT_MODE, BLADERF_GPIO_HIGHLY_PACKED_MODE, BLADERF_GPIO_PACKET,
-    BLADERF_GPIO_TIMESTAMP, BLADERF_GPIO_TIMESTAMP_DIV2, SampleFormat,
-};
+pub use super::sample_format::SampleFormat;
 
 impl RfLinkSession<'_> {
     /// Checks format support against the loaded FPGA and firmware.
