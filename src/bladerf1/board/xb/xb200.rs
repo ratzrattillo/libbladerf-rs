@@ -9,6 +9,7 @@
 //! * Spectral inversion correction via I/Q swap on the LMS6002D (Mix path).
 //! * Bypass mode for direct passthrough without downconversion.
 
+use crate::bladerf1::GpioFlags;
 use crate::bladerf1::board::RfLinkSession;
 use crate::channel::Channel;
 use crate::error::{Error, Result};
@@ -119,7 +120,8 @@ impl RfLinkSession<'_> {
             val8 |= 2;
             self.si().write(39, val8).await?;
             self.si().write(34, 0x22).await?;
-            self.config_gpio_modify(|gpio| gpio | 0x80000000).await?;
+            self.config_gpio_modify(|gpio| gpio.insert(GpioFlags::from_bits_retain(0x80000000)))
+                .await?;
             self.nios
                 .nios_expansion_gpio_dir_write(0xffffffff, 0x3C00383E)
                 .await?;

@@ -69,10 +69,36 @@ pub const VCOCAP_EST_MAX: u8 = 55;
 pub const VCOCAP_EST_RANGE: u8 = VCOCAP_EST_MAX - VCOCAP_EST_MIN;
 /// VCOCAP estimation threshold for convergence.
 pub const VCOCAP_EST_THRESH: u8 = 7;
+bitflags::bitflags! {
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+    pub(crate) struct LmsFreqFlags: u8 {
+        const LOW_BAND = 1 << 0;
+        const FORCE_VCOCAP = 1 << 1;
+    }
+}
+
+impl LmsFreqFlags {
+    pub(crate) fn band(self) -> Band {
+        if self.contains(Self::LOW_BAND) {
+            Band::Low
+        } else {
+            Band::High
+        }
+    }
+
+    pub(crate) fn tune(self) -> Tune {
+        if self.contains(Self::FORCE_VCOCAP) {
+            Tune::Quick
+        } else {
+            Tune::Normal
+        }
+    }
+}
+
 /// Frequency flag indicating low band operation.
-pub const LMS_FREQ_FLAGS_LOW_BAND: u8 = 1 << 0;
+pub const LMS_FREQ_FLAGS_LOW_BAND: u8 = LmsFreqFlags::LOW_BAND.bits();
 /// Frequency flag to force use of estimated VCOCAP without searching.
-pub const LMS_FREQ_FLAGS_FORCE_VCOCAP: u8 = 1 << 1;
+pub const LMS_FREQ_FLAGS_FORCE_VCOCAP: u8 = LmsFreqFlags::FORCE_VCOCAP.bits();
 /// XB-200 expansion GPIO: enable bit.
 pub const LMS_FREQ_XB_200_ENABLE: u8 = 1 << 7;
 /// XB-200 expansion GPIO: RX module bit.

@@ -19,9 +19,6 @@ use crate::maybe_future::Op;
 use crate::range::{Range, RangeItem};
 use nusb::MaybeFuture;
 
-/// GPIO bit that enables automatic gain control on the RX channel.
-pub const BLADERF_GPIO_AGC_ENABLE: u32 = 1 << 18;
-
 /// Gain control mode for the RX channel.
 #[derive(PartialEq, Eq, Debug, Clone, Copy)]
 pub enum GainMode {
@@ -94,11 +91,8 @@ impl RfLinkSession<'_> {
                 log::error!("Setting gain mode for TX is not supported");
                 return Err(Error::Unsupported("TX gain modes"));
             }
-            self.config_gpio_modify(|gpio| match mode {
-                GainMode::Default => gpio | BLADERF_GPIO_AGC_ENABLE,
-                GainMode::Mgc => gpio & !BLADERF_GPIO_AGC_ENABLE,
-            })
-            .await
+            self.config_gpio_modify(|gpio| gpio.set_gain_mode(mode))
+                .await
         })
     }
     /// Returns the current RX gain mode by reading the AGC enable bit from config GPIO.
@@ -108,12 +102,7 @@ impl RfLinkSession<'_> {
         Op::new(async move {
             self.require_initialized().await?;
             let data = self.config_gpio_read().await?;
-            let gain_mode = if (data & BLADERF_GPIO_AGC_ENABLE) != 0 {
-                GainMode::Default
-            } else {
-                GainMode::Mgc
-            };
-            Ok(gain_mode)
+            Ok(data.gain_mode())
         })
     }
     /// Returns the current gain of an individual amplifier stage in dB.

@@ -1,3 +1,10 @@
+## [unreleased]
+
+### 🚜 Refactor
+
+- *(gpio)* [**breaking**] Use `bladerf1::GpioFlags` for config GPIO reads and writes. `config_gpio_modify` now accepts `FnOnce(&mut GpioFlags)`; mutate flags with `insert`, `remove`, or `set`. Use `from_bits_retain` and `bits` for raw register access.
+- *(tuning)* Represent validated LMS tuning flags with `bitflags`, preserving strict quick-tune validation and retune packet encoding.
+
 ## [0.6.1] - 2026-10-03
 
 ### 🚀 Features

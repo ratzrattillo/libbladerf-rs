@@ -9,10 +9,10 @@
 
 use crate::bladerf1::hardware::lms6002d::Band;
 use crate::bladerf1::hardware::lms6002d::{
-    LMS_FREQ_FLAGS_FORCE_VCOCAP, LMS_FREQ_FLAGS_LOW_BAND, LMS_FREQ_XB_200_ENABLE,
-    LMS_FREQ_XB_200_FILTER_SW_SHIFT, LMS_FREQ_XB_200_MODULE_RX, LMS_FREQ_XB_200_PATH_SHIFT,
-    VCOCAP_EST_MIN, VCOCAP_EST_RANGE, VCOCAP_MAX_LOW_HIGH, VCOCAP_MAX_VALUE, VTUNE_DELAY_LARGE,
-    VTUNE_DELAY_SMALL, VTUNE_MAX_ITERATIONS, VcoState,
+    LMS_FREQ_XB_200_ENABLE, LMS_FREQ_XB_200_FILTER_SW_SHIFT, LMS_FREQ_XB_200_MODULE_RX,
+    LMS_FREQ_XB_200_PATH_SHIFT, LmsFreqFlags, VCOCAP_EST_MIN, VCOCAP_EST_RANGE,
+    VCOCAP_MAX_LOW_HIGH, VCOCAP_MAX_VALUE, VTUNE_DELAY_LARGE, VTUNE_DELAY_SMALL,
+    VTUNE_MAX_ITERATIONS, VcoState,
 };
 use crate::channel::Channel;
 use crate::error::Error;
@@ -53,7 +53,7 @@ impl From<&LmsFreq> for QuickTune {
             vcocap: f.vcocap,
             nint: f.nint,
             nfrac: f.nfrac,
-            flags: f.flags,
+            flags: f.flags.bits(),
             xb_gpio: f.xb_gpio,
         }
     }
@@ -63,19 +63,17 @@ impl TryFrom<QuickTune> for LmsFreq {
     type Error = Error;
 
     fn try_from(qt: QuickTune) -> crate::Result<Self> {
-        if qt.nint > 0x1ff
-            || qt.nfrac > 0x7f_ffff
-            || qt.vcocap > VCOCAP_MAX_VALUE
-            || (qt.flags & !(LMS_FREQ_FLAGS_LOW_BAND | LMS_FREQ_FLAGS_FORCE_VCOCAP)) != 0
-        {
+        if qt.nint > 0x1ff || qt.nfrac > 0x7f_ffff || qt.vcocap > VCOCAP_MAX_VALUE {
             return Err(Error::Argument("invalid quick-tune PLL parameters".into()));
         }
+        let flags = LmsFreqFlags::from_bits(qt.flags)
+            .ok_or_else(|| Error::Argument("invalid quick-tune PLL parameters".into()))?;
         Ok(Self {
             freqsel: FrequencySelect::try_from(qt.freqsel)?,
             vcocap: qt.vcocap,
             nint: qt.nint,
             nfrac: qt.nfrac,
-            flags: qt.flags,
+            flags,
             xb_gpio: qt.xb_gpio,
             vcocap_result: 0,
         })
@@ -243,7 +241,7 @@ pub struct LmsFreq {
     /// Fractional portion of the PLL divider (23-bit resolution).
     pub(crate) nfrac: u32,
     /// Tuning flags (low band, force VCOCAP).
-    pub(crate) flags: u8,
+    pub(crate) flags: LmsFreqFlags,
     /// XB-200 expansion GPIO configuration for filter and path routing.
     pub(crate) xb_gpio: u8,
     /// Final VCOCAP value after VTUNE convergence search.
@@ -298,12 +296,9 @@ impl TryFrom<u64> for LmsFreq {
         log::trace!("nint: {nint}");
         let nfrac = (coefficient & 0x7f_ffff) as u32;
         log::trace!("nfrac: {nfrac}");
-        let flags = if Band::from(freq) == Band::Low {
-            LMS_FREQ_FLAGS_LOW_BAND
-        } else {
-            0
-        };
-        log::trace!("flags: {flags}");
+        let mut flags = LmsFreqFlags::empty();
+        flags.set(LmsFreqFlags::LOW_BAND, Band::from(freq) == Band::Low);
+        log::trace!("flags: {flags:?}");
         Ok(LmsFreq {
             freqsel,
             vcocap,
@@ -405,7 +400,7 @@ impl<'a> Lms6002d<'a> {
             let vcocap_reg_state = self.read(base + 9).await?;
             let vcocap_reg_state = vcocap_reg_state & !0x3f;
             self.write_vcocap(base, f.vcocap, vcocap_reg_state).await?;
-            let low_band = (f.flags & LMS_FREQ_FLAGS_LOW_BAND) != 0;
+            let low_band = f.flags.contains(LmsFreqFlags::LOW_BAND);
             let lben_lbrfen = self.read(0x08).await?;
             let loopbben = self.read(0x46).await?;
             let lb_enabled = matches!(lben_lbrfen & 0x7, 1..=3)
@@ -420,7 +415,7 @@ impl<'a> Lms6002d<'a> {
             for (idx, value) in freq_data.iter().enumerate() {
                 self.write(pll_base + idx as u8, *value).await?;
             }
-            if (f.flags & LMS_FREQ_FLAGS_FORCE_VCOCAP) != 0 {
+            if f.flags.contains(LmsFreqFlags::FORCE_VCOCAP) {
                 f.vcocap_result = f.vcocap;
             } else {
                 log::trace!("Tuning VCOCAP...");
@@ -469,7 +464,7 @@ impl<'a> Lms6002d<'a> {
                 nint,
                 nfrac,
                 vcocap: data & 0x3f,
-                flags: 0,
+                flags: LmsFreqFlags::empty(),
                 xb_gpio: 0,
                 vcocap_result: 0,
             })
@@ -518,17 +513,15 @@ impl<'a> Lms6002d<'a> {
             } else {
                 0
             };
-            let mut flags = LMS_FREQ_FLAGS_FORCE_VCOCAP;
+            let mut flags = LmsFreqFlags::FORCE_VCOCAP;
             let f_hz: u64 = f.into();
-            if Band::from(f_hz) == Band::Low {
-                flags |= LMS_FREQ_FLAGS_LOW_BAND;
-            }
+            flags.set(LmsFreqFlags::LOW_BAND, Band::from(f_hz) == Band::Low);
             Ok(QuickTune {
                 freqsel: f.freqsel.bits(),
                 vcocap: f.vcocap,
                 nint: f.nint,
                 nfrac: f.nfrac,
-                flags,
+                flags: flags.bits(),
                 xb_gpio,
             })
         })
@@ -778,6 +771,82 @@ impl<'a> Lms6002d<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn quick_tunes_reject_every_unknown_flag_combination() {
+        let pll = LmsFreq::try_from(915_000_000).unwrap();
+        for flags in 0..=u8::MAX {
+            let quick = QuickTune {
+                flags,
+                ..QuickTune::from(&pll)
+            };
+            match LmsFreq::try_from(quick) {
+                Ok(frequency) => {
+                    assert!(flags < 4);
+                    assert_eq!(frequency.flags.bits(), flags);
+                    assert_eq!(QuickTune::from(&frequency), quick);
+                }
+                Err(Error::Argument(_)) => assert!(flags >= 4),
+                Err(error) => panic!("unexpected validation error: {error}"),
+            }
+        }
+    }
+
+    #[test]
+    fn quick_tune_flags_match_exact_retune_wire_bytes() {
+        use crate::bladerf1::protocol::{RetuneTimestamp, nios_encode_retune};
+
+        for (flags, band_byte) in [(0, 0x2a), (1, 0xaa), (2, 0x6a), (3, 0xea)] {
+            for (channel, channel_byte) in [(Channel::Rx, 0x64), (Channel::Tx, 0xa4)] {
+                for xb_gpio in 0..=u8::MAX {
+                    let frequency = LmsFreq::try_from(QuickTune {
+                        freqsel: 0x24,
+                        vcocap: 0x2a,
+                        nint: 0x123,
+                        nfrac: 0x456789,
+                        flags,
+                        xb_gpio,
+                    })
+                    .unwrap();
+                    let mut packet = [0xff; 16];
+                    nios_encode_retune(
+                        &mut packet,
+                        channel,
+                        RetuneTimestamp::Scheduled(0x0807_0605_0403_0201),
+                        frequency.nint,
+                        frequency.nfrac,
+                        frequency.freqsel.bits(),
+                        frequency.vcocap,
+                        frequency.flags.band(),
+                        frequency.flags.tune(),
+                        frequency.xb_gpio,
+                    )
+                    .unwrap();
+                    assert_eq!(
+                        packet,
+                        [
+                            0x54,
+                            1,
+                            2,
+                            3,
+                            4,
+                            5,
+                            6,
+                            7,
+                            8,
+                            0x91,
+                            0xc5,
+                            0x67,
+                            0x89,
+                            channel_byte,
+                            band_byte,
+                            xb_gpio,
+                        ]
+                    );
+                }
+            }
+        }
+    }
 
     #[test]
     fn selectors_and_quick_tunes_preserve_frequency_at_band_boundaries() {

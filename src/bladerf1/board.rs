@@ -39,6 +39,7 @@ mod timestamp;
 mod trigger;
 mod vctcxo_tamer;
 pub mod xb;
+use crate::bladerf1::GpioFlags;
 use crate::bladerf1::calibration::DcCalTable;
 use crate::bladerf1::hardware::dac161s055::Dac161s055;
 use crate::bladerf1::hardware::lms6002d::dc_calibration::DcCals;
@@ -101,7 +102,7 @@ pub const BLADERF1_USB_VID: u16 = 0x2CF0;
 pub const BLADERF1_USB_PID: u16 = 0x5246;
 
 /// GPIO bit that enables small DMA transfers on Hi-Speed USB.
-pub const BLADERF_GPIO_FEATURE_SMALL_DMA_XFER: u16 = 1 << 7;
+pub const BLADERF_GPIO_FEATURE_SMALL_DMA_XFER: u16 = GpioFlags::SMALL_DMA_XFER.bits() as u16;
 
 #[cfg(not(target_os = "android"))]
 fn is_bladerf1(dev: &DeviceInfo) -> bool {
@@ -614,7 +615,7 @@ impl RfLinkSession<'_> {
     fn require_initialized(&mut self) -> impl MaybeFuture<Output = crate::Result<()>> {
         self.config_gpio_read().map(|result| {
             let cfg = result?;
-            if (cfg & 0x7f) == 0 {
+            if !cfg.is_initialized() {
                 return Err(Error::NotInitialized);
             }
             Ok(())
@@ -629,29 +630,30 @@ impl RfLinkSession<'_> {
     }
 
     /// Reads the full 32-bit config GPIO register.
-    pub fn config_gpio_read(&mut self) -> impl MaybeFuture<Output = crate::Result<u32>> {
+    ///
+    /// The returned [`GpioFlags`] preserves unnamed bits and selector fields.
+    /// Use [`GpioFlags::bits`] to inspect the raw word.
+    ///
+    /// # Errors
+    /// Returns an error if the register read or retained-operation recovery fails.
+    pub fn config_gpio_read(&mut self) -> impl MaybeFuture<Output = crate::Result<GpioFlags>> {
         self.nios.nios_config_read()
     }
 
-    /// Writes the config GPIO register, automatically setting the small DMA
-    /// transfer bit when connected at Hi-Speed USB.
+    /// Writes the config GPIO register with speed-dependent DMA configuration.
+    ///
+    /// Use [`GpioFlags::from_bits_retain`] to write a raw register value.
+    /// The DMA bit and stream-claim checks follow [`Self::config_gpio_modify`].
+    ///
+    /// # Errors
+    /// Returns [`Error::StreamsActive`] if stream-owned bits would change while
+    /// an endpoint is claimed, [`Error::RecoveryRequired`] for abandoned active
+    /// claims, or an error from register I/O or retained-operation recovery.
     pub fn config_gpio_write(
         &mut self,
-        mut data: u32,
+        data: GpioFlags,
     ) -> impl MaybeFuture<Output = crate::Result<()>> {
-        Op::new(async move {
-            log::trace!("[config_gpio_write] data: {data}");
-            let speed = self.nios.transport().speed();
-            if speed == Speed::High {
-                data |= BLADERF_GPIO_FEATURE_SMALL_DMA_XFER as u32;
-            } else {
-                data &= !(BLADERF_GPIO_FEATURE_SMALL_DMA_XFER as u32);
-            }
-            log::trace!("[config_gpio_write] data after speed check: {data}");
-            let old = self.nios.nios_config_read().await?;
-            self.nios.streams.validate_gpio(old, data)?;
-            self.nios.nios_config_write(data).await
-        })
+        self.config_gpio_modify(move |gpio| *gpio = data)
     }
 
     /// Read-modify-write on the config GPIO register.
@@ -659,17 +661,35 @@ impl RfLinkSession<'_> {
     /// The provided closure mutates the current GPIO value. The small DMA
     /// transfer bit is forced to the correct value for the current USB speed
     /// after the closure returns.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use libbladerf_rs::bladerf1::{GpioFlags, RfLinkSession};
+    ///
+    /// # async fn configure(rf: &mut RfLinkSession<'_>) -> libbladerf_rs::Result<()> {
+    /// rf.config_gpio_modify(|gpio| gpio.set(GpioFlags::AGC_ENABLE, true))
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Errors
+    /// Returns [`Error::StreamsActive`] if stream-owned bits would change while
+    /// an endpoint is claimed, [`Error::RecoveryRequired`] for abandoned active
+    /// claims, or an error from register I/O or retained-operation recovery.
     pub fn config_gpio_modify(
         &mut self,
-        f: impl FnOnce(u32) -> u32 + Send,
+        f: impl FnOnce(&mut GpioFlags) + Send,
     ) -> impl MaybeFuture<Output = crate::Result<()>> {
-        let small_dma = BLADERF_GPIO_FEATURE_SMALL_DMA_XFER as u32;
         let speed = self.nios.transport().speed();
-        let mask = if speed == Speed::High { small_dma } else { 0 };
         Op::new(async move {
             let old = self.nios.nios_config_read().await?;
-            let data = (f(old) & !small_dma) | mask;
+            let mut data = old;
+            f(&mut data);
+            data.apply_usb_speed(speed);
             self.nios.streams.validate_gpio(old, data)?;
+            log::trace!("Config GPIO: {old:#010x} -> {data:#010x}");
             self.nios.nios_config_write(data).await
         })
     }
@@ -694,13 +714,14 @@ impl RfLinkSession<'_> {
                 log::trace!("[*] Init - Set Alt Setting to 0x01");
             }
             let cfg = self.config_gpio_read().await?;
-            if force || (cfg & 0x7f) == 0 {
+            if force || !cfg.is_initialized() {
                 self.nios.streams.require_idle()?;
                 log::trace!(
                     "[*] Init - {}initializing device (GPIO={cfg:#04x})",
                     if force { "Force " } else { "" }
                 );
-                self.config_gpio_write(0x57).await?;
+                self.config_gpio_write(GpioFlags::from_bits_retain(0x57))
+                    .await?;
                 self.lms().enable_rffe(Channel::Tx, false).await?;
                 self.lms().enable_rffe(Channel::Rx, false).await?;
                 self.lms().write(0x05, 0x3e).await?;
@@ -850,26 +871,10 @@ impl RfLinkSession<'_> {
         band: Band,
     ) -> impl MaybeFuture<Output = crate::Result<()>> {
         Op::new(async move {
-            let band_value = match band {
-                Band::Low => 2,
-                Band::High => 1,
-            };
             log::trace!("Selecting {band:?} band");
             self.lms().select_band(channel, band).await?;
-            self.config_gpio_modify(|gpio| {
-                let clear_mask = if channel == Channel::Tx {
-                    3 << 3
-                } else {
-                    3 << 5
-                };
-                let shift = if channel == Channel::Tx {
-                    band_value << 3
-                } else {
-                    band_value << 5
-                };
-                (gpio & !clear_mask) | shift
-            })
-            .await
+            self.config_gpio_modify(|gpio| gpio.set_band(channel, band))
+                .await
         })
     }
 }

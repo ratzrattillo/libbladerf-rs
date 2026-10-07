@@ -40,7 +40,7 @@ fn bench_gpio_modify(c: &mut Criterion) {
     group.measurement_time(std::time::Duration::from_secs(5));
 
     group.bench_function("config_gpio_modify", |b| {
-        b.iter(|| rf.config_gpio_modify(|gpio| gpio).wait().unwrap())
+        b.iter(|| rf.config_gpio_modify(|_| {}).wait().unwrap())
     });
 }
 

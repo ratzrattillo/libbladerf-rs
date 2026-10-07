@@ -44,11 +44,6 @@ impl TryFrom<u32> for RxMux {
     }
 }
 
-/// Bit mask for the RX mux field in the config GPIO register.
-pub const BLADERF_GPIO_RX_MUX_MASK: u16 = 7 << BLADERF_GPIO_RX_MUX_SHIFT;
-/// Bit shift for the RX mux field in the config GPIO register.
-pub const BLADERF_GPIO_RX_MUX_SHIFT: u16 = 8;
-
 impl RfLinkSession<'_> {
     /// Sets the RX input mux to the specified source.
     ///
@@ -59,9 +54,7 @@ impl RfLinkSession<'_> {
     pub fn set_rx_mux(&mut self, mode: RxMux) -> impl MaybeFuture<Output = Result<()>> {
         Op::new(async move {
             self.require_initialized().await?;
-            let rx_mux_val = (mode as u32) << BLADERF_GPIO_RX_MUX_SHIFT;
-            self.config_gpio_modify(|gpio| (gpio & !(BLADERF_GPIO_RX_MUX_MASK as u32)) | rx_mux_val)
-                .await
+            self.config_gpio_modify(|gpio| gpio.set_rx_mux(mode)).await
         })
     }
 
@@ -72,10 +65,7 @@ impl RfLinkSession<'_> {
     pub fn get_rx_mux(&mut self) -> impl MaybeFuture<Output = Result<RxMux>> {
         Op::new(async move {
             self.require_initialized().await?;
-            let mut config_gpio = self.config_gpio_read().await?;
-            config_gpio &= BLADERF_GPIO_RX_MUX_MASK as u32;
-            config_gpio >>= BLADERF_GPIO_RX_MUX_SHIFT;
-            RxMux::try_from(config_gpio)
+            self.config_gpio_read().await?.rx_mux()
         })
     }
 }

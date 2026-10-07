@@ -8,6 +8,7 @@
 //! All register I/O methods return [`MaybeFuture`]: call `.wait()` to block
 //! (native only) or `.await` from async code.
 
+use crate::bladerf1::GpioFlags;
 use crate::bladerf1::hardware::lms6002d::{Band, Tune};
 use crate::bladerf1::protocol::{RetuneResult, nios_encode_retune};
 use crate::channel::Channel;
@@ -188,23 +189,25 @@ impl NiosCore {
         })
     }
     /// Reads the config GPIO register.
-    pub fn nios_config_read(&mut self) -> impl MaybeFuture<Output = Result<u32>> {
+    pub fn nios_config_read(&mut self) -> impl MaybeFuture<Output = Result<GpioFlags>> {
         self.nios_read::<u8, u32>(NiosPkt8x32Target::Control, 0)
+            .map_ok(GpioFlags::from_bits_retain)
     }
     /// Writes the config GPIO register.
-    pub fn nios_config_write(&mut self, value: u32) -> impl MaybeFuture<Output = Result<()>> {
-        self.nios_write::<u8, u32>(NiosPkt8x32Target::Control, 0, value)
+    pub fn nios_config_write(&mut self, value: GpioFlags) -> impl MaybeFuture<Output = Result<()>> {
+        self.nios_write::<u8, u32>(NiosPkt8x32Target::Control, 0, value.bits())
     }
     /// Performs an atomic read-modify-write on the config GPIO register.
     ///
     /// Reads the current value, applies `f`, then writes the result back.
     pub fn nios_config_modify(
         &mut self,
-        f: impl FnOnce(u32) -> u32 + Send,
+        f: impl FnOnce(&mut GpioFlags) + Send,
     ) -> impl MaybeFuture<Output = Result<()>> {
         Op::new(async move {
-            let data = self.nios_config_read().await?;
-            self.nios_config_write(f(data)).await
+            let mut data = self.nios_config_read().await?;
+            f(&mut data);
+            self.nios_config_write(data).await
         })
     }
     /// Reads the expansion GPIO data register.

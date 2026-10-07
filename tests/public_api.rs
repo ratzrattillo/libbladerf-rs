@@ -8,8 +8,8 @@
 #![cfg(feature = "bladerf1")]
 
 use libbladerf_rs::bladerf1::{
-    BladeRf1, ConfigSession, ExpansionBoard, FlashSession, GainDb, GainMode, RfLinkSession,
-    RxStream, SampleFormat, TuningMode, TxStream,
+    BladeRf1, ConfigSession, ExpansionBoard, FlashSession, GainDb, GainMode, GpioFlags,
+    RfLinkSession, RxStream, SampleFormat, TuningMode, TxStream,
 };
 use libbladerf_rs::{Buffer, Channel, Error, ErrorKind, MaybeFuture, Result};
 use std::future::IntoFuture;
@@ -68,6 +68,60 @@ async fn validated_data_and_retunes(rf: &mut RfLinkSession<'_>) -> Result<()> {
 fn assert_send<T: Send>(_: &T) {}
 
 fn maybe_future<T>(_: &impl MaybeFuture<Output = T>) {}
+
+#[test]
+fn gpio_flags_and_numeric_aliases_are_public() {
+    use libbladerf_rs::bladerf1::board;
+    use libbladerf_rs::bladerf1::hardware::lms6002d;
+
+    fn flags<T: Copy + Default + Eq + std::hash::Hash + std::fmt::Debug + Send + Sync>() {}
+    flags::<GpioFlags>();
+    assert_eq!(GpioFlags::all().bits(), u32::MAX);
+    let small_dma: u16 = board::BLADERF_GPIO_FEATURE_SMALL_DMA_XFER;
+    assert_eq!(u32::from(small_dma), GpioFlags::SMALL_DMA_XFER.bits());
+    let packet: u32 = board::sample_format::BLADERF_GPIO_PACKET;
+    assert_eq!(packet, GpioFlags::PACKET.bits());
+    assert_eq!(
+        board::stream::BLADERF_GPIO_TIMESTAMP,
+        GpioFlags::TIMESTAMP.bits()
+    );
+    assert_eq!(
+        board::BLADERF_GPIO_TIMESTAMP_DIV2,
+        GpioFlags::TIMESTAMP_DIV2.bits()
+    );
+    assert_eq!(
+        board::BLADERF_GPIO_8BIT_MODE,
+        GpioFlags::EIGHT_BIT_MODE.bits()
+    );
+    assert_eq!(
+        board::BLADERF_GPIO_HIGHLY_PACKED_MODE,
+        GpioFlags::HIGHLY_PACKED_MODE.bits()
+    );
+    let low_band: u8 = lms6002d::LMS_FREQ_FLAGS_LOW_BAND;
+    let force_vcocap: u8 = lms6002d::LMS_FREQ_FLAGS_FORCE_VCOCAP;
+    assert_eq!((low_band, force_vcocap), (1, 2));
+}
+
+#[allow(dead_code)]
+async fn gpio(rf: &mut RfLinkSession<'_>) -> Result<()> {
+    let read = rf.config_gpio_read();
+    maybe_future(&read);
+    #[cfg(not(target_arch = "wasm32"))]
+    assert_send(&read);
+    let value: GpioFlags = read.await?;
+    let write = rf.config_gpio_write(GpioFlags::from_bits_retain(value.bits()));
+    maybe_future(&write);
+    #[cfg(not(target_arch = "wasm32"))]
+    assert_send(&write);
+    write.await?;
+    let modify = rf.config_gpio_modify(|gpio: &mut GpioFlags| {
+        gpio.set(GpioFlags::AGC_ENABLE, true);
+    });
+    maybe_future(&modify);
+    #[cfg(not(target_arch = "wasm32"))]
+    assert_send(&modify);
+    modify.await
+}
 
 #[allow(dead_code)]
 async fn open_paths(device: nusb::Device) -> Result<()> {

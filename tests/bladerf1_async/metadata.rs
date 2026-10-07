@@ -1,6 +1,6 @@
 use super::*;
 use libbladerf_rs::Error;
-use libbladerf_rs::bladerf1::{MetadataLayout, RxMux};
+use libbladerf_rs::bladerf1::{GpioFlags, MetadataLayout, RxMux};
 
 #[derive(Default)]
 struct Continuity {
@@ -85,7 +85,7 @@ async fn counter_metadata_restart_and_duplex_format_preservation() -> Result<()>
                 if index == 7 {
                     tx.stop(&mut rf).await?;
                     let gpio = rf.config_gpio_read().await?;
-                    if (gpio & ((1 << 16) | (1 << 17))) != ((1 << 16) | (1 << 17)) {
+                    if !gpio.contains(GpioFlags::TIMESTAMP | GpioFlags::TIMESTAMP_DIV2) {
                         return Err(Error::Internal("peer stop cleared timestamp bits"));
                     }
                 }

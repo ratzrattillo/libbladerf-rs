@@ -1,15 +1,20 @@
-use crate::bladerf1::board::stream::{
-    BLADERF_GPIO_8BIT_MODE, BLADERF_GPIO_HIGHLY_PACKED_MODE, BLADERF_GPIO_PACKET,
-    BLADERF_GPIO_TIMESTAMP, BLADERF_GPIO_TIMESTAMP_DIV2, SampleFormat,
-};
+use crate::bladerf1::{GpioFlags, SampleFormat};
 use crate::{Channel, Error, Result};
 use std::sync::{Arc, Weak};
 
-pub(crate) const FORMAT_MASK: u32 = BLADERF_GPIO_PACKET
-    | BLADERF_GPIO_TIMESTAMP
-    | BLADERF_GPIO_TIMESTAMP_DIV2
-    | BLADERF_GPIO_8BIT_MODE
-    | BLADERF_GPIO_HIGHLY_PACKED_MODE;
+const FORMAT_MASK: GpioFlags = GpioFlags::PACKET
+    .union(GpioFlags::TIMESTAMP)
+    .union(GpioFlags::TIMESTAMP_DIV2)
+    .union(GpioFlags::EIGHT_BIT_MODE)
+    .union(GpioFlags::HIGHLY_PACKED_MODE);
+const STREAM_OWNED_GPIO_MASK: GpioFlags = FORMAT_MASK.union(GpioFlags::from_bits_retain(0x07));
+
+impl GpioFlags {
+    pub(crate) fn set_stream_format(&mut self, format: Option<StreamFormat>) {
+        self.remove(FORMAT_MASK);
+        self.insert(format.map_or(Self::empty(), StreamFormat::gpio_flags));
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum StreamFormat {
@@ -48,13 +53,11 @@ impl StreamFormat {
             }
         }
     }
-    pub(crate) fn bits(self) -> u32 {
+    fn gpio_flags(self) -> GpioFlags {
         match self {
-            Self::Samples => 0,
-            Self::Timestamps => BLADERF_GPIO_TIMESTAMP | BLADERF_GPIO_TIMESTAMP_DIV2,
-            Self::Packets => {
-                BLADERF_GPIO_TIMESTAMP | BLADERF_GPIO_TIMESTAMP_DIV2 | BLADERF_GPIO_PACKET
-            }
+            Self::Samples => GpioFlags::empty(),
+            Self::Timestamps => GpioFlags::TIMESTAMP | GpioFlags::TIMESTAMP_DIV2,
+            Self::Packets => GpioFlags::TIMESTAMP | GpioFlags::TIMESTAMP_DIV2 | GpioFlags::PACKET,
         }
     }
 }
@@ -218,10 +221,10 @@ impl StreamClaims {
         self.registrations[lease.channel as usize] = None;
     }
 
-    pub(crate) fn validate_gpio(&mut self, old: u32, new: u32) -> Result<()> {
+    pub(crate) fn validate_gpio(&mut self, old: GpioFlags, new: GpioFlags) -> Result<()> {
         self.refresh()?;
         if self.registrations.iter().any(Option::is_some)
-            && ((old ^ new) & (FORMAT_MASK | 0x07)) != 0
+            && (old ^ new).intersects(STREAM_OWNED_GPIO_MASK)
         {
             return Err(Error::StreamsActive);
         }
@@ -241,6 +244,83 @@ impl StreamClaims {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn format_updates_replace_only_the_five_format_bits() {
+        for raw in [0, 0x57, 0x8004_07d7, u32::MAX]
+            .into_iter()
+            .chain((0..32).flat_map(|bit| [1 << bit, !(1 << bit)]))
+        {
+            let mut gpio = GpioFlags::from_bits_retain(raw);
+            for (format, expected) in [
+                (Some(StreamFormat::Timestamps), 0x0003_0000),
+                (Some(StreamFormat::Packets), 0x000b_0000),
+                (Some(StreamFormat::Samples), 0),
+                (None, 0),
+            ] {
+                gpio.set_stream_format(format);
+                assert_eq!(gpio.bits(), (raw & !0x003b_0000) | expected);
+                gpio.set_stream_format(format);
+                assert_eq!(gpio.bits(), (raw & !0x003b_0000) | expected);
+            }
+        }
+    }
+
+    #[test]
+    fn every_claim_protects_each_owned_gpio_bit_individually() {
+        for channel in [Channel::Rx, Channel::Tx] {
+            let mut claims = StreamClaims::default();
+            let lease = claims.claim(channel).unwrap();
+            for format in [
+                None,
+                Some(StreamFormat::Samples),
+                None,
+                Some(StreamFormat::Timestamps),
+                None,
+                Some(StreamFormat::Packets),
+                None,
+            ] {
+                if let Some(format) = format {
+                    claims.reserve_format(&lease, format).unwrap();
+                } else {
+                    claims.release_format(&lease);
+                }
+                for raw in [0, 0x57, 0x8004_07d7, u32::MAX] {
+                    let old = GpioFlags::from_bits_retain(raw);
+                    assert!(claims.validate_gpio(old, old).is_ok());
+                    for bit in 0..32 {
+                        let new = GpioFlags::from_bits_retain(raw ^ (1 << bit));
+                        let result = claims.validate_gpio(old, new);
+                        if matches!(bit, 0..=2 | 16 | 17 | 19..=21) {
+                            assert!(matches!(result, Err(Error::StreamsActive)));
+                        } else {
+                            result.unwrap();
+                        }
+                    }
+                }
+            }
+            claims.release(&lease);
+            claims
+                .validate_gpio(GpioFlags::empty(), GpioFlags::all())
+                .unwrap();
+        }
+    }
+
+    #[test]
+    fn gpio_validation_reports_abandoned_active_claims_before_bit_checks() {
+        let mut claims = StreamClaims::default();
+        let lease = claims.claim(Channel::Rx).unwrap();
+        claims
+            .reserve_format(&lease, StreamFormat::Samples)
+            .unwrap();
+        drop(lease);
+        for new in [GpioFlags::empty(), GpioFlags::AGC_ENABLE, GpioFlags::all()] {
+            assert!(matches!(
+                claims.validate_gpio(GpioFlags::empty(), new),
+                Err(Error::RecoveryRequired)
+            ));
+        }
+    }
 
     #[test]
     fn prepared_and_stopped_claims_block_reconfiguration_and_duplicates() {

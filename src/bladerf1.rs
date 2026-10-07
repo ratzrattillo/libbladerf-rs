@@ -6,6 +6,7 @@
 
 pub mod board;
 pub mod calibration;
+mod gpio;
 pub mod hardware;
 pub mod protocol;
 pub use board::QuickTune;
@@ -21,6 +22,8 @@ pub use board::{
     SampleFormat, TuningMode, TxStreamBuilder,
 };
 pub use calibration::{DcCalEntry, DcCalTable};
+#[doc(inline)]
+pub use gpio::GpioFlags;
 pub use hardware::lms6002d::dc_calibration::{
     AgcDcCorrection, DcCalModule, DcCalValue, DcCals, DcPair,
 };

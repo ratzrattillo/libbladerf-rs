@@ -229,16 +229,6 @@ impl RfLinkSession<'_> {
                 frequency.try_into()?
             };
             log::trace!("{f:?}");
-            let band = if (f.flags & lms6002d::LMS_FREQ_FLAGS_LOW_BAND) != 0 {
-                lms6002d::Band::Low
-            } else {
-                lms6002d::Band::High
-            };
-            let tune = if (f.flags & lms6002d::LMS_FREQ_FLAGS_FORCE_VCOCAP) != 0 {
-                lms6002d::Tune::Quick
-            } else {
-                lms6002d::Tune::Normal
-            };
             let result = self
                 .nios
                 .nios_retune(
@@ -248,8 +238,8 @@ impl RfLinkSession<'_> {
                     f.nfrac,
                     f.freqsel.bits(),
                     f.vcocap,
-                    band,
-                    tune,
+                    f.flags.band(),
+                    f.flags.tune(),
                     f.xb_gpio,
                 )
                 .await?;

@@ -17,6 +17,7 @@ categories = [
 members = [".", "examples/calibrate", "examples/dc-cal-table", "examples/flash-firmware", "examples/flash-fpga", "examples/info", "examples/rx-async", "examples/rx-tx"]
 
 [dependencies]
+bitflags = "2"
 thiserror = "2.0"
 nusb = "0.2.7"
 log = "0.4"

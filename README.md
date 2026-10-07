@@ -109,6 +109,25 @@ so wrap them in your executor's timeout
 RX reads deliver every completion in order; TX completion waits drain the queued
 transfers. No ordinary RX read discards completed buffers.
 
+### Config GPIO
+
+`config_gpio_read` and `config_gpio_write` use `bladerf1::GpioFlags`.
+`config_gpio_modify` takes a closure that mutates `&mut GpioFlags` in place:
+
+```rust
+use libbladerf_rs::bladerf1::{GpioFlags, RfLinkSession};
+
+async fn enable_agc(rf: &mut RfLinkSession<'_>) -> libbladerf_rs::Result<()> {
+    rf.config_gpio_modify(|gpio| gpio.set(GpioFlags::AGC_ENABLE, true))
+        .await
+}
+```
+
+When migrating raw GPIO code, construct values with `GpioFlags::from_bits_retain(raw)`
+and read the underlying word with `.bits()`. The type retains all 32 bits,
+including unnamed bits and selector fields. The session normalizes the DMA bit
+for the USB speed and checks stream claims before writing.
+
 ### Stream lifecycle and recovery
 
 - `build()` validates/claims an endpoint, clears halt, and allocates the pool.

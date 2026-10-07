@@ -27,7 +27,7 @@ use crate::bladerf1::board::RfLinkSession;
 use crate::channel::Channel;
 use crate::error::{Error, Result};
 use crate::maybe_future::{NonWasmSend, Op, await_maybe};
-use crate::nios_client::streams::{FORMAT_MASK, StreamClaims, StreamFormat, StreamLease};
+use crate::nios_client::streams::{StreamClaims, StreamFormat, StreamLease};
 use crate::usb::BulkEndpoint;
 use crate::usb::{BladeRf1DeviceCommands, pending::Pending};
 use nusb::MaybeFuture;
@@ -1382,9 +1382,8 @@ impl RfLinkSession<'_> {
         &mut self,
         format: Option<StreamFormat>,
     ) -> impl MaybeFuture<Output = Result<()>> {
-        self.nios.nios_config_modify(move |gpio| {
-            (gpio & !FORMAT_MASK) | format.map_or(0, StreamFormat::bits)
-        })
+        self.nios
+            .nios_config_modify(move |gpio| gpio.set_stream_format(format))
     }
 }
 
