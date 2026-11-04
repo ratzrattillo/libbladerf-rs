@@ -16,7 +16,7 @@ use crate::bladerf1::board::RfLinkSession;
 pub use crate::bladerf1::hardware::lms6002d::loopback::Loopback;
 use crate::error::Result;
 use crate::maybe_future::Op;
-use crate::usb::BladeRf1UsbInterfaceCommands;
+use crate::usb::Fx3UsbInterfaceCommands;
 use nusb::MaybeFuture;
 impl RfLinkSession<'_> {
     /// Sets the loopback mode.

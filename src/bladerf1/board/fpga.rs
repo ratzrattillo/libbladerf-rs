@@ -16,7 +16,7 @@ use crate::error::{Error, Result};
 use crate::flash::{binkv_encode_field, pad_to_page};
 use crate::maybe_future::Op;
 use crate::usb::{
-    BladeRf1UsbInterfaceCommands, CONTROL_ENDPOINT_OUT, UsbInterfaceCommands, VendorRequest,
+    CONTROL_ENDPOINT_OUT, Fx3UsbInterfaceCommands, UsbInterfaceCommands, VendorRequest,
 };
 use nusb::MaybeFuture;
 use std::fmt;

@@ -138,6 +138,7 @@ mod tests {
         assert!(matches!(*cleanup, Error::Timeout));
     }
 
+    #[cfg(feature = "bladerf1")]
     #[tokio::test(flavor = "current_thread")]
     #[ignore = "requires a connected BladeRF1; run hardware tests sequentially"]
     async fn hardware_temporary_registers_survive_calibration_tuning_and_cancellation() -> Result<()>

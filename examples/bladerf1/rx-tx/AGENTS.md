@@ -23,7 +23,7 @@ All commands run from the **repository root**:
 Requires the `xb200` feature in `Cargo.toml` for `ExpansionBoard::Xb200`:
 
 ```toml
-libbladerf-rs = { path = "../..", features = ["xb200"] }
+libbladerf-rs = { path = "../../..", features = ["xb200"] }
 ```
 
 ## Notes

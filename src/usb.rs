@@ -3,7 +3,7 @@
 //! Wraps the `nusb` crate for BladeRF device communication. Manages
 //! USB alternate settings, NIOS packet bulk transfers, and vendor-specific
 //! control requests. Provides traits (`UsbInterfaceCommands`,
-//! `BladeRf1UsbInterfaceCommands`, `DeviceCommands`, `BladeRf1DeviceCommands`)
+//! `Fx3UsbInterfaceCommands`, `DeviceCommands`, `Fx3DeviceCommands`)
 //! that abstract over the USB interface for use by higher layers.
 //!
 //! All I/O methods return [`MaybeFuture`]: call `.wait()` to block (native
@@ -180,14 +180,15 @@ impl DeviceCommands for Device {
     }
 }
 
-/// BladeRF1-specific USB device string descriptor operations.
+/// FX3 firmware USB device string descriptor operations.
 ///
-/// Extends `DeviceCommands` with BladeRF1-specific descriptors.
-pub trait BladeRf1DeviceCommands: DeviceCommands {
+/// Extends `DeviceCommands` with descriptors served by the FX3 firmware
+/// shared by BladeRF1 and BladeRF2.
+pub trait Fx3DeviceCommands: DeviceCommands {
     /// Returns the FX3 firmware version string.
     fn fx3_firmware_version(&self) -> impl MaybeFuture<Output = Result<String>>;
 }
-impl BladeRf1DeviceCommands for Device {
+impl Fx3DeviceCommands for Device {
     fn fx3_firmware_version(&self) -> impl MaybeFuture<Output = Result<String>> {
         self.get_string_descriptor_simple(
             NonZero::new(StringDescriptors::Fx3Firmware as u8)
@@ -308,12 +309,12 @@ fn vendor_cmd_in_u32(
         .map_ok(|vec| u32::from_le_bytes(vec[0..4].try_into().unwrap()))
 }
 
-/// BladeRF1-specific USB interface commands.
+/// FX3 firmware USB interface commands shared by BladeRF1 and BladeRF2.
 ///
 /// Extends `UsbInterfaceCommands` with operations for streaming
 /// module control, firmware loopback, device reset, FPGA programming,
 /// and bulk OUT transfers.
-pub trait BladeRf1UsbInterfaceCommands: UsbInterfaceCommands {
+pub trait Fx3UsbInterfaceCommands: UsbInterfaceCommands {
     /// Enables or disables the USB streaming module for the given channel.
     fn usb_enable_module(
         &mut self,
@@ -341,7 +342,7 @@ pub trait BladeRf1UsbInterfaceCommands: UsbInterfaceCommands {
         timeout: Duration,
     ) -> impl MaybeFuture<Output = Result<()>>;
 }
-impl BladeRf1UsbInterfaceCommands for UsbTransport {
+impl Fx3UsbInterfaceCommands for UsbTransport {
     fn usb_enable_module(
         &mut self,
         channel: Channel,

@@ -1,14 +1,18 @@
+#[cfg(feature = "bladerf1")]
 use crate::bladerf1::{GpioFlags, SampleFormat};
 use crate::{Channel, Error, Result};
 use std::sync::{Arc, Weak};
 
+#[cfg(feature = "bladerf1")]
 const FORMAT_MASK: GpioFlags = GpioFlags::PACKET
     .union(GpioFlags::TIMESTAMP)
     .union(GpioFlags::TIMESTAMP_DIV2)
     .union(GpioFlags::EIGHT_BIT_MODE)
     .union(GpioFlags::HIGHLY_PACKED_MODE);
+#[cfg(feature = "bladerf1")]
 const STREAM_OWNED_GPIO_MASK: GpioFlags = FORMAT_MASK.union(GpioFlags::LMS_CONTROL);
 
+#[cfg(feature = "bladerf1")]
 impl GpioFlags {
     pub(crate) fn set_stream_format(&mut self, format: Option<StreamFormat>) {
         self.remove(FORMAT_MASK);
@@ -23,6 +27,7 @@ pub(crate) enum StreamFormat {
     Packets,
 }
 
+#[cfg(feature = "bladerf1")]
 impl TryFrom<SampleFormat> for StreamFormat {
     type Error = Error;
 
@@ -53,6 +58,7 @@ impl StreamFormat {
             }
         }
     }
+    #[cfg(feature = "bladerf1")]
     fn gpio_flags(self) -> GpioFlags {
         match self {
             Self::Samples => GpioFlags::empty(),
@@ -221,6 +227,7 @@ impl StreamClaims {
         self.registrations[lease.channel as usize] = None;
     }
 
+    #[cfg(feature = "bladerf1")]
     pub(crate) fn validate_gpio(&mut self, old: GpioFlags, new: GpioFlags) -> Result<()> {
         self.refresh()?;
         if self.registrations.iter().any(Option::is_some)
@@ -241,7 +248,7 @@ impl StreamClaims {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "bladerf1"))]
 mod tests {
     use super::*;
 

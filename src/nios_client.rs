@@ -8,13 +8,19 @@
 //! All register I/O methods return [`MaybeFuture`]: call `.wait()` to block
 //! (native only) or `.await` from async code.
 
+#[cfg(feature = "bladerf1")]
 use crate::bladerf1::GpioFlags;
+#[cfg(feature = "bladerf1")]
 use crate::bladerf1::hardware::lms6002d::{Band, Tune};
+#[cfg(feature = "bladerf1")]
 use crate::bladerf1::protocol::{RetuneResult, nios_encode_retune};
 use crate::channel::Channel;
-use crate::error::{Error, Result};
+#[cfg(feature = "bladerf1")]
+use crate::error::Error;
+use crate::error::Result;
 use crate::maybe_future::Op;
 use crate::protocol::nios::packet_generic::NiosNum;
+#[cfg(feature = "bladerf1")]
 use crate::protocol::nios::targets::NiosPkt8x16AddrAgcCorr;
 use crate::protocol::nios::{
     NiosPkt8x16AddrIqCorr, NiosPkt8x16Target, NiosPkt8x32Target, NiosPkt8x64Target,
@@ -28,7 +34,9 @@ use nusb::MaybeFuture;
 pub(crate) mod streams;
 use streams::StreamClaims;
 mod restoration;
-use restoration::{Restoration, RestorationLease};
+use restoration::Restoration;
+#[cfg(feature = "bladerf1")]
+use restoration::RestorationLease;
 
 /// Central NIOS register I/O hub.
 ///
@@ -74,7 +82,7 @@ impl NiosCore {
     }
 
     pub fn device_reset(&mut self) -> impl MaybeFuture<Output = Result<()>> {
-        use crate::usb::BladeRf1UsbInterfaceCommands;
+        use crate::usb::Fx3UsbInterfaceCommands;
         Op::new(async move {
             self.streams.require_no_live_streams()?;
             self.transport.usb_device_reset().await
@@ -120,6 +128,7 @@ impl NiosCore {
         Ok(())
     }
 
+    #[cfg(feature = "bladerf1")]
     pub(crate) async fn save_lms_registers(
         &mut self,
         addresses: &[u8],
@@ -140,6 +149,7 @@ impl NiosCore {
         Ok(lease)
     }
 
+    #[cfg(feature = "bladerf1")]
     pub(crate) async fn finish_restoration<T>(
         &mut self,
         lease: RestorationLease,
@@ -189,17 +199,20 @@ impl NiosCore {
         })
     }
     /// Reads the config GPIO register.
+    #[cfg(feature = "bladerf1")]
     pub fn nios_config_read(&mut self) -> impl MaybeFuture<Output = Result<GpioFlags>> {
         self.nios_read::<u8, u32>(NiosPkt8x32Target::Control, 0)
             .map_ok(GpioFlags::from_bits_retain)
     }
     /// Writes the config GPIO register.
+    #[cfg(feature = "bladerf1")]
     pub fn nios_config_write(&mut self, value: GpioFlags) -> impl MaybeFuture<Output = Result<()>> {
         self.nios_write::<u8, u32>(NiosPkt8x32Target::Control, 0, value.bits())
     }
     /// Performs an atomic read-modify-write on the config GPIO register.
     ///
     /// Reads the current value, applies `f`, then writes the result back.
+    #[cfg(feature = "bladerf1")]
     pub fn nios_config_modify(
         &mut self,
         f: impl FnOnce(&mut GpioFlags) + Send,
@@ -317,6 +330,7 @@ impl NiosCore {
     /// parameters. Returns a measured result or queue acknowledgement. Returns
     /// `Error::TuningFailed` for immediate retune failures or
     /// `Error::RetuneQueueFull` for scheduled retune queue overflow.
+    #[cfg(feature = "bladerf1")]
     #[allow(clippy::too_many_arguments)]
     pub fn nios_retune(
         &mut self,
@@ -371,6 +385,7 @@ impl NiosCore {
     }
 }
 
+#[cfg(feature = "bladerf1")]
 impl NiosCore {
     /// Writes all six AGC DC correction coefficients to the device.
     ///

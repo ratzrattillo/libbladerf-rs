@@ -33,7 +33,7 @@ impl std::str::FromStr for SemanticVersion {
 }
 impl SemanticVersion {
     /// Creates a version from its components.
-    pub fn new(major: u16, minor: u16, patch: u16) -> Self {
+    pub const fn new(major: u16, minor: u16, patch: u16) -> Self {
         Self {
             major,
             minor,

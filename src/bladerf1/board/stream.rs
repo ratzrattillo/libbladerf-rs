@@ -29,7 +29,7 @@ use crate::error::{Error, Result};
 use crate::maybe_future::{NonWasmSend, Op, await_maybe};
 use crate::nios_client::streams::{StreamClaims, StreamFormat, StreamLease};
 use crate::usb::BulkEndpoint;
-use crate::usb::{BladeRf1DeviceCommands, pending::Pending};
+use crate::usb::{Fx3DeviceCommands, pending::Pending};
 use nusb::MaybeFuture;
 use nusb::transfer::{Buffer, Bulk, Completion, In, Out, TransferError};
 use std::collections::VecDeque;

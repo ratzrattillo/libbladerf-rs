@@ -53,13 +53,15 @@ impl FpgaSize {
         }
     }
 
-    /// Returns the hosted variant label for FPGA bitstream naming.
-    /// Returns an error for bladeRF2 variants (A4, A5, A9).
+    /// Returns the hosted variant label for FPGA bitstream naming
+    /// (e.g. `hostedx40`, `hostedxA4`).
     pub fn variant_label(&self) -> Result<&'static str> {
         match self {
             FpgaSize::KLE40 => Ok("hostedx40"),
             FpgaSize::KLE115 => Ok("hostedx115"),
-            _ => Err(Error::Unsupported("FPGA variant")),
+            FpgaSize::A4 => Ok("hostedxA4"),
+            FpgaSize::A5 => Ok("hostedxA5"),
+            FpgaSize::A9 => Ok("hostedxA9"),
         }
     }
 

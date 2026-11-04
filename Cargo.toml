@@ -14,7 +14,7 @@ categories = [
 ]
 
 [workspace]
-members = [".", "examples/calibrate", "examples/dc-cal-table", "examples/flash-firmware", "examples/flash-fpga", "examples/info", "examples/rx-async", "examples/rx-tx"]
+members = [".", "examples/bladerf1/calibrate", "examples/bladerf1/dc-cal-table", "examples/bladerf1/flash-firmware", "examples/bladerf1/flash-fpga", "examples/bladerf1/info", "examples/bladerf1/rx-async", "examples/bladerf1/rx-tx", "examples/bladerf2/info"]
 
 [dependencies]
 bitflags = "2"
@@ -37,22 +37,23 @@ tokio = { version = "1", features = ["rt", "macros", "time"] }
 criterion = { version = "0.8", features = ["html_reports"] }
 
 [features]
-default = ["xb100", "xb200", "xb300"]
+default = ["bladerf1", "xb100", "xb200", "xb300"]
 
 # BladeRF1 support (x40/x115)
 bladerf1 = []
 
-# BladeRF2 support (xA4/xA9)
+# BladeRF2 support (xA4/xA5/xA9) — early, device identification only.
 bladerf2 = []
 
 # JSON DC calibration table serialization: serde derives on the calibration
 # types plus `DcCalTable::load`/`save` and the filesystem auto-load helpers.
 serde = ["dep:serde", "dep:serde_json"]
 
-# Expansion board support (requires bladerf1)
-xb100 = ["bladerf1"]
-xb200 = ["bladerf1"]
-xb300 = ["bladerf1"]
+# Expansion board support (BladeRF1 only; requires bladerf1, see the
+# compile_error! in src/lib.rs)
+xb100 = []
+xb200 = []
+xb300 = []
 
 # Async runtime integration for nusb's blocking operations (device open,
 # interface claim, alternate setting, clear halt), mirroring nusb's own
@@ -65,12 +66,11 @@ xb300 = ["bladerf1"]
 smol = ["nusb/smol"]
 tokio = ["nusb/tokio"]
 
-# Configure docs.rs. `bladerf2` is intentionally excluded: it is a
-# compile_error! stub, and `--all-features` would fail the build. Default
-# features provide bladerf1 (via xb100/xb200/xb300); the opt-in `serde` and
-# runtime (`smol`/`tokio`) features are listed so their APIs appear in the docs.
+# Configure docs.rs. Default features provide bladerf1 and xb100/xb200/xb300;
+# the opt-in `bladerf2` (early, device identification only), `serde` and runtime
+# (`smol`/`tokio`) features are listed so their APIs appear in the docs.
 [package.metadata.docs.rs]
-features = ["serde", "smol", "tokio"]
+features = ["bladerf2", "serde", "smol", "tokio"]
 rustdoc-args = ["--cfg", "docsrs"]
 
 [profile.prof]
@@ -87,6 +87,11 @@ required-features = ["bladerf1"]
 name = "bladerf1_async"
 path = "tests/bladerf1_async/main.rs"
 required-features = ["bladerf1", "tokio"]
+
+[[test]]
+name = "bladerf2"
+path = "tests/bladerf2/main.rs"
+required-features = ["bladerf2"]
 
 [[test]]
 name = "unit"

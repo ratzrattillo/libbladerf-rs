@@ -55,7 +55,7 @@ use crate::flash::decode_flash_size;
 use crate::maybe_future::{Op, await_maybe, sleep};
 use crate::nios_client::NiosCore;
 use crate::usb::{
-    BladeRf1DeviceCommands, BladeRf1UsbInterfaceCommands, DeviceCommands, UsbAltSetting,
+    DeviceCommands, Fx3DeviceCommands, Fx3UsbInterfaceCommands, UsbAltSetting,
     UsbInterfaceCommands, UsbTransport,
 };
 pub use corrections::Correction;

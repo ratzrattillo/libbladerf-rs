@@ -98,7 +98,7 @@ pub fn nios_decode_write<A: NiosNum, D: NiosNum>(response: &[u8]) -> Result<(), 
     NiosPkt::<A, D>::validate_response(response, NiosPktFlags::WRITE)
 }
 
-#[cfg(feature = "bladerf1")]
+#[cfg(any(feature = "bladerf1", feature = "bladerf2"))]
 pub(crate) fn validate_response_address<A: NiosNum>(
     response: &[u8],
     target: u8,
@@ -113,7 +113,7 @@ pub(crate) fn validate_response_address<A: NiosNum>(
     Ok(())
 }
 
-#[cfg(all(test, feature = "bladerf1"))]
+#[cfg(all(test, any(feature = "bladerf1", feature = "bladerf2")))]
 mod tests {
     use super::*;
 

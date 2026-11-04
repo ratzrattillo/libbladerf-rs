@@ -27,6 +27,13 @@ jobs:
       # Runtime-free sync path: no `smol`/`tokio`, so no async runtime is compiled in.
       - run: cargo check --no-default-features --features bladerf1 --lib
       - run: cargo check --no-default-features --features bladerf1,serde --lib
+      - run: cargo check --no-default-features --features bladerf2 --lib
+      # Expansion boards are BladeRF1-only: without `bladerf1` they must not compile.
+      - run: |
+          if cargo check --no-default-features --features bladerf2,xb200 --lib; then
+            echo "xb200 without bladerf1 must fail to compile" >&2
+            exit 1
+          fi
 
   fmt:
     runs-on: ubuntu-latest
@@ -41,7 +48,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        features: [smol, tokio, bladerf1, "bladerf1,smol", "bladerf1,tokio", "bladerf1,serde", "xb100,smol", "xb200,smol", "xb300,smol", "bladerf1,smol,tokio"]
+        features: [smol, tokio, bladerf1, "bladerf1,smol", "bladerf1,tokio", "bladerf1,serde", "bladerf1,xb100,smol", "bladerf1,xb200,smol", "bladerf1,xb300,smol", "bladerf1,bladerf2,xb200", "bladerf1,smol,tokio", bladerf2, "bladerf2,smol", "bladerf2,tokio", "bladerf1,bladerf2"]
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
@@ -57,6 +64,7 @@ jobs:
       - run: cargo clippy --workspace --features bladerf1 --all-targets -- -D warnings
       - run: cargo clippy --no-default-features --features bladerf1,xb100,xb200,xb300,tokio --all-targets -- -D warnings
       - run: cargo clippy --no-default-features --features bladerf1,serde --all-targets -- -D warnings
+      - run: cargo clippy --no-default-features --features bladerf2 --lib --test bladerf2 -- -D warnings
 
   clippy-nightly:
     name: Clippy (nightly, early warning)
@@ -71,6 +79,7 @@ jobs:
       - run: cargo clippy --workspace --features bladerf1 --all-targets -- -D warnings
       - run: cargo clippy --no-default-features --features bladerf1,xb100,xb200,xb300,tokio --all-targets -- -D warnings
       - run: cargo clippy --no-default-features --features bladerf1,serde --all-targets -- -D warnings
+      - run: cargo clippy --no-default-features --features bladerf2 --lib --test bladerf2 -- -D warnings
 
   audit:
     runs-on: ubuntu-latest
@@ -107,6 +116,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --target wasm32-unknown-unknown --features bladerf1 --lib
       - run: cargo check --target wasm32-unknown-unknown --no-default-features --features bladerf1,serde --lib
+      - run: cargo check --target wasm32-unknown-unknown --no-default-features --features bladerf2 --lib
       - run: cargo check --target wasm32-unknown-unknown --no-default-features --features bladerf1,xb200 --test public_api
 
   build-examples:
@@ -116,7 +126,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: |
-          for manifest in examples/*/Cargo.toml; do
+          for manifest in examples/*/*/Cargo.toml; do
             cargo build --manifest-path "$manifest"
           done
 
@@ -141,9 +151,12 @@ jobs:
     name: Conventional Commits
     runs-on: ubuntu-latest
     steps:
+      # On pull_request, check out the PR head instead of GitHub's synthetic
+      # merge commit, which is not a Conventional Commit.
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: ./.github/actions/git-cliff
       - run: git-cliff --unreleased --output /dev/null
 
